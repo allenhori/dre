@@ -9,7 +9,7 @@
 # Output goes to $DRE_LOCAL_REGISTRY (default ~/.cache/dre-local-registry):
 #   index.json       the registry index, in the same format as the real one (docs/registry.md)
 #   artifacts/       a copy of each plugin binary, so a later rebuild can't break a checksum
-#   sandbox/         an empty plugins dir and profiles dir for a clean trial
+#   sandbox/         an empty profiles dir for a clean trial
 # It finishes by printing the environment variables that point DRE at all of this.
 set -euo pipefail
 
@@ -42,7 +42,30 @@ sha256() {
 }
 
 rm -rf "$registry/artifacts"
-mkdir -p "$registry/artifacts" "$registry/sandbox/plugins" "$registry/sandbox/profiles"
+mkdir -p "$registry/artifacts" "$registry/sandbox/profiles"
+
+# What `dre init` shows next to each plugin.
+describe() {
+  case "$1/$2" in
+    source/databricks) echo "Databricks SQL warehouses" ;;
+    source/duckdb) echo "DuckDB database files" ;;
+    source/postgres) echo "PostgreSQL" ;;
+    format/csv) echo "Comma-separated values" ;;
+    format/delimited) echo "Delimited text with any separator" ;;
+    format/fixed_width) echo "Fixed-width text" ;;
+    format/parquet) echo "Parquet" ;;
+    format/xlsx) echo "Excel workbooks, including templates" ;;
+    destination/s3) echo "Amazon S3 and S3-compatible storage" ;;
+    destination/gcs) echo "Google Cloud Storage" ;;
+    destination/azure_blob) echo "Azure Blob Storage" ;;
+    destination/sftp) echo "SFTP servers" ;;
+    destination/ftp) echo "FTP and FTPS servers" ;;
+    destination/email) echo "Email, with the output attached" ;;
+    destination/slack) echo "A Slack channel" ;;
+    destination/databricks_volumes) echo "Databricks Unity Catalog Volumes" ;;
+    *) echo "$2 $1" ;;
+  esac
+}
 
 entries=()
 for exe in "$bin_dir"/dre-*-*; do
@@ -55,8 +78,8 @@ for exe in "$bin_dir"/dre-*-*; do
   [[ "$name" == fixture ]] && continue # test-only plugins
   artifact="$registry/artifacts/$file-$version-$platform"
   cp "$exe" "$artifact"
-  entries+=("$(printf '    {"kind": "%s", "name": "%s", "description": "%s %s (local build)",\n     "versions": [{"version": "%s", "protocol": %d, "artifacts": {"%s": {"url": "%s", "sha256": "%s"}}}]}' \
-    "$kind" "$name" "$name" "$kind" "$version" "$protocol" "$platform" "$artifact" "$(sha256 "$artifact")")")
+  entries+=("$(printf '    {"kind": "%s", "name": "%s", "description": "%s",\n     "versions": [{"version": "%s", "protocol": %d, "artifacts": {"%s": {"url": "%s", "sha256": "%s"}}}]}' \
+    "$kind" "$name" "$(describe "$kind" "$name")" "$version" "$protocol" "$platform" "$artifact" "$(sha256 "$artifact")")")
 done
 
 {
@@ -72,13 +95,16 @@ done
 cat <<MSG
 Published ${#entries[@]} plugins ($version, $platform) to $registry/index.json
 
-To try the full flow in a clean sandbox (your real ~/.dre is untouched), run in your shell:
+To try the full flow, run in your shell (profiles go to a sandbox, not your ~/.dre/profiles.yml):
 
   export PATH="$bin_dir:\$PATH"
   export DRE_REGISTRY_URL="$registry/index.json"
-  export DRE_PLUGINS_DIR="$registry/sandbox/plugins"
   export DRE_PROFILES_DIR="$registry/sandbox/profiles"
+  unset DRE_PLUGINS_DIR
 
 then: dre init   (or: dre new my_reports && cd my_reports && dre deps && dre run)
+Plugins install into each project's dre_deps/, via the download cache in ~/.dre/plugins.
+Rebuilt plugins keep the same version with new checksums: delete the project's dre.lock (or set
+DRE_LOCAL_VERSION) before \`dre deps\`.
 To start over: rm -rf "$registry/sandbox"
 MSG
