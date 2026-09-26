@@ -1,0 +1,22 @@
+[package]
+name = "dre-destination-object_store"
+description = "DRE destination plugins: S3, Google Cloud Storage and Azure Blob Storage"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dre-protocol = { path = "../../crates/dre-protocol" }
+serde_json.workspace = true
+object_store = { version = "0.14", features = ["aws", "gcp", "azure"] }
+tokio = { version = "1", features = ["rt", "fs", "io-util"] }
+bytes = "1"
+ureq = "3"
+
+[dev-dependencies]
+tempfile.workspace = true
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+httpdate = "1"

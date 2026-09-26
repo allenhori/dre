@@ -213,40 +213,8 @@ pub struct SetDef {
     pub vars: JsonMap<String, Json>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum PluginKind {
-    Source,
-    Format,
-    Destination,
-}
-
-impl PluginKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            PluginKind::Source => "source",
-            PluginKind::Format => "format",
-            PluginKind::Destination => "destination",
-        }
-    }
-
-    pub fn block(self) -> &'static str {
-        match self {
-            PluginKind::Source => "sources",
-            PluginKind::Format => "formats",
-            PluginKind::Destination => "destinations",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<PluginKind> {
-        match s {
-            "source" | "sources" => Some(PluginKind::Source),
-            "format" | "formats" => Some(PluginKind::Format),
-            "destination" | "destinations" => Some(PluginKind::Destination),
-            _ => None,
-        }
-    }
-}
+/// A plugin's kind; the same type the protocol uses.
+pub use dre_protocol::Kind as PluginKind;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginRequirement {
@@ -1626,13 +1594,14 @@ impl Loader {
         queries: &[QueryEntry],
         used: &mut Usage,
     ) -> Output {
-        let file = Some(file.to_path_buf());
+        let file_path = file.to_path_buf();
+        let file = Some(file_path.clone());
         let format = m
             .get("format")
             .and_then(Value::as_str)
             .unwrap_or("csv")
             .to_string();
-        used.format(&format, ctx);
+        used.format(&format, ctx, &file_path);
         let mut opts = JsonMap::new();
         for (k, v) in m {
             let Some(k) = k.as_str() else { continue };
@@ -1779,7 +1748,9 @@ impl Loader {
             {
                 err(
                     self,
-                    format!("template binding {n} uses query `{q}`, which isn't one of the report's queries"),
+                    format!(
+                        "template binding {n} uses query `{q}`, which isn't one of this Binding's queries"
+                    ),
                 );
             }
             if let Some(ri) = m.get("result_index")
@@ -1954,7 +1925,7 @@ impl Loader {
                     Some(line),
                     format!(
                         "unmanaged report `{name}` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `{}`; rewrite the statement, or give the report a YAML to declare it",
-                        summarize(body)
+                        dre_protocol::util::summarize(body, 60)
                     ),
                 );
             }
@@ -2362,10 +2333,11 @@ impl Loader {
                         continue;
                     }
                     if !declared(kind, &out_.kind) {
+                        let pf = profiles.file.as_ref();
                         self.diags.error(
                             "undeclared-plugin",
-                            None,
-                            None,
+                            pf.map(|f| f.display.clone()),
+                            pf.and_then(|f| f.line_of(name, None)),
                             format!(
                                 "`type: {t}` used by {role} profile `{name}`, but `{t}` isn't declared as a required {role} plugin anywhere in the project — add it under `{}:`",
                                 kind.block(),
@@ -2376,7 +2348,7 @@ impl Loader {
                 }
             }
         }
-        for (fmt, ctx) in &used.formats {
+        for (fmt, (ctx, file)) in &used.formats {
             if !declared(PluginKind::Format, fmt) {
                 let note = if fmt == "csv" {
                     " (csv is the built-in default output)"
@@ -2385,7 +2357,7 @@ impl Loader {
                 };
                 self.diags.error(
                     "undeclared-plugin",
-                    None,
+                    Some(file.clone()),
                     None,
                     format!("format `{fmt}` is used by {ctx}{note}, but isn't declared anywhere in the project — add it under `formats:`"),
                 );
@@ -2410,11 +2382,15 @@ impl Loader {
         };
         let mut checked: BTreeSet<PathBuf> = BTreeSet::new();
         let root = self.root.clone();
-        // Macros: syntax, env_var, run.*.
+        // Macros: syntax, env_var, run.*; their definitions, for var() checks per Binding.
+        let mut defs: BTreeMap<String, (PathBuf, preflight::MacroDef)> = BTreeMap::new();
         for m in &project.macros {
             if let Some(src) = read(&root, m) {
                 self.check_template_text(m, &src, 0, None, &cli);
                 checked.insert(m.clone());
+                for d in preflight::macro_defs(&src) {
+                    defs.insert(d.name.clone(), (m.clone(), d));
+                }
             }
         }
         for r in &project.reports {
@@ -2423,6 +2399,7 @@ impl Loader {
                     Some(s) => format!("report `{}`, Set `{s}`", r.name),
                     None => format!("report `{}`", r.name),
                 };
+                let mut called: Vec<String> = Vec::new();
                 for q in &b.queries {
                     let Some(src) = read(&root, &q.path) else { continue };
                     let first = checked.insert(q.path.clone());
@@ -2430,6 +2407,19 @@ impl Loader {
                     if first {
                         self.check_template_text(&q.path, &src, 0, None, &cli);
                     }
+                    called.extend(preflight::called_names(&src));
+                }
+                // Macros this Binding calls, directly or through other macros.
+                let mut seen = BTreeSet::new();
+                while let Some(name) = called.pop() {
+                    let Some((file, def)) = defs.get(&name) else {
+                        continue;
+                    };
+                    if !seen.insert(name) {
+                        continue;
+                    }
+                    self.check_vars(file, &def.body, def.line_offset, &b.vars, &cli, &ctx);
+                    called.extend(preflight::called_names(&def.body));
                 }
                 // Templated output values render with the same context.
                 let mut values: Vec<String> = Vec::new();
@@ -2606,7 +2596,7 @@ struct Usage {
     sources: BTreeMap<String, (Option<PathBuf>, Option<usize>)>,
     destinations: BTreeMap<String, (Option<PathBuf>, Option<usize>)>,
     /// format → first user, for messages.
-    formats: BTreeMap<String, String>,
+    formats: BTreeMap<String, (String, PathBuf)>,
 }
 
 impl Usage {
@@ -2622,10 +2612,10 @@ impl Usage {
             *e = (file, line);
         }
     }
-    fn format(&mut self, f: &str, ctx: &str) {
+    fn format(&mut self, f: &str, ctx: &str, file: &Path) {
         self.formats
             .entry(f.to_string())
-            .or_insert_with(|| ctx.to_string());
+            .or_insert_with(|| (ctx.to_string(), file.to_path_buf()));
     }
 }
 
@@ -2740,15 +2730,6 @@ fn nth_item_line(text: &str, n: usize) -> Option<usize> {
         .filter(|(_, l)| l.starts_with("- ") || l.trim() == "-")
         .nth(n)
         .map(|(i, _)| i + 1)
-}
-
-fn summarize(stmt: &str) -> String {
-    let one: String = stmt.split_whitespace().collect::<Vec<_>>().join(" ");
-    if one.chars().count() > 60 {
-        format!("{}…", one.chars().take(60).collect::<String>())
-    } else {
-        one
-    }
 }
 
 pub fn yaml_to_json(v: &Value) -> Json {

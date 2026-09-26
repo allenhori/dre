@@ -61,6 +61,8 @@ pub trait Source {
     fn check(&mut self, _sql: &str) -> Result<()> {
         Err("this source can't check statements".into())
     }
+    /// End the session cleanly (called on `close` and at end of input, before exiting).
+    fn close(&mut self) {}
 }
 
 /// One incoming result set, streamed from core.
@@ -241,7 +243,12 @@ fn serve(about: About, mut h: Handler<'_>) -> ! {
     loop {
         let frame = match frame::read_frame(&mut input.r) {
             Ok(f) => f,
-            Err(FrameError::Eof) => std::process::exit(0),
+            Err(FrameError::Eof) => {
+                if let Handler::Source(src) = &mut h {
+                    src.close();
+                }
+                std::process::exit(0)
+            }
             Err(e) => {
                 eprintln!("{e}");
                 out.send(&Response::Error {
@@ -298,6 +305,9 @@ fn serve(about: About, mut h: Handler<'_>) -> ! {
             continue;
         }
         if let Request::Close {} = req {
+            if let Handler::Source(src) = &mut h {
+                src.close();
+            }
             out.send(&Response::Ok {});
             std::process::exit(0);
         }

@@ -1,0 +1,12 @@
+queries: [q1, q2]
+default_set: client_a
+output:
+  format: xlsx
+  template:
+    file: templates/branded.xlsx
+    bindings:
+      - {query: q2, sheet: Summary, anchor: A5}
+sets:
+  - client_a
+  - name: client_b
+    exclude: [q2]

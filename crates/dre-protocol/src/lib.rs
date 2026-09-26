@@ -15,6 +15,7 @@ pub mod frame;
 pub mod host;
 pub mod msg;
 pub mod plugin;
+pub mod util;
 
 /// Protocol versions this build speaks.
 pub const MIN_VERSION: u32 = 0;
@@ -44,11 +45,21 @@ impl Kind {
         }
     }
 
+    /// The declaration block listing plugins of this kind (`sources:` ...).
+    pub fn block(self) -> &'static str {
+        match self {
+            Kind::Source => "sources",
+            Kind::Format => "formats",
+            Kind::Destination => "destinations",
+        }
+    }
+
+    /// Parse a kind, singular or plural (`source`, `sources`).
     pub fn parse(s: &str) -> Option<Kind> {
         match s {
-            "source" => Some(Kind::Source),
-            "format" => Some(Kind::Format),
-            "destination" => Some(Kind::Destination),
+            "source" | "sources" => Some(Kind::Source),
+            "format" | "formats" => Some(Kind::Format),
+            "destination" | "destinations" => Some(Kind::Destination),
             _ => None,
         }
     }

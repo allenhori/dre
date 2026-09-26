@@ -122,21 +122,4 @@ pub fn normalize(batch: &RecordBatch) -> Result<RecordBatch> {
     )?)
 }
 
-/// `B12` → zero-based `(row, col)`.
-pub fn parse_cell(s: &str) -> Option<(u32, u16)> {
-    let s = s.trim().replace('$', "");
-    let split = s.find(|c: char| c.is_ascii_digit())?;
-    let (letters, digits) = s.split_at(split);
-    if letters.is_empty() || letters.len() > 3 || !letters.chars().all(|c| c.is_ascii_alphabetic()) {
-        return None;
-    }
-    let col = letters
-        .to_ascii_uppercase()
-        .bytes()
-        .fold(0u32, |acc, b| acc * 26 + (b - b'A' + 1) as u32);
-    let row: u32 = digits.parse().ok()?;
-    if col == 0 || col > 16_384 || row == 0 || row > 1_048_576 {
-        return None;
-    }
-    Some((row - 1, (col - 1) as u16))
-}
+pub use dre_protocol::util::parse_cell;

@@ -148,24 +148,42 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
         fill_block(&mut book, b, r0, c0, &results[i])?;
     }
 
-    // 3. Result sets not bound anywhere become plain sheets after the template's own.
+    // 3. Result sets not bound anywhere become plain sheets after the template's own, continued
+    //    on `Name (2)`, ... past `max_rows_per_sheet`, like plain xlsx output.
+    let header = req.options.get("header").and_then(Value::as_bool).unwrap_or(true);
+    let max_rows = req
+        .options
+        .get("max_rows_per_sheet")
+        .and_then(Value::as_u64)
+        .unwrap_or(1_000_000) as usize;
     for (res, _) in results.iter().zip(&bound).filter(|(_, b)| !**b) {
-        let ws = book
-            .new_sheet(&res.name)
-            .map_err(|e| format!("can't add sheet `{}`: {e}", res.name))?;
-        for (c, n) in res.names.iter().enumerate() {
-            let cell = ws.cell_mut((c as u32 + 1, 1));
-            cell.set_value(n.clone());
-            cell.style_mut().font_mut().set_bold(true);
-        }
-        for row in 0..res.batch.num_rows() {
-            for c in 0..res.names.len() {
-                write_value(
-                    ws,
-                    (c as u32 + 1, row as u32 + 2),
-                    res.batch.column(c).as_ref(),
-                    row,
-                );
+        let total = res.batch.num_rows();
+        for part in 0..total.div_ceil(max_rows).max(1) {
+            let name = if part == 0 {
+                res.name.clone()
+            } else {
+                crate::continuation_name(&res.name, part as u32 + 1)
+            };
+            let ws = book
+                .new_sheet(&name)
+                .map_err(|e| format!("can't add sheet `{name}`: {e}"))?;
+            if header {
+                for (c, n) in res.names.iter().enumerate() {
+                    let cell = ws.cell_mut((c as u32 + 1, 1));
+                    cell.set_value(n.clone());
+                    cell.style_mut().font_mut().set_bold(true);
+                }
+            }
+            let first = u32::from(header) + 1;
+            for (k, row) in (part * max_rows..((part + 1) * max_rows).min(total)).enumerate() {
+                for c in 0..res.names.len() {
+                    write_value(
+                        ws,
+                        (c as u32 + 1, first + k as u32),
+                        res.batch.column(c).as_ref(),
+                        row,
+                    );
+                }
             }
         }
     }
