@@ -108,6 +108,9 @@ pub struct Report {
     /// Whether the report declares `sets:` (a Binding per Set) or runs as a single Binding.
     pub has_sets: bool,
     pub bindings: Vec<Binding>,
+    /// Report-level resolution with no Set applied: the starting point for an ad hoc `--set`.
+    #[serde(skip)]
+    pub base: Binding,
 }
 
 impl Report {
@@ -137,7 +140,7 @@ pub enum TabName {
 }
 
 /// A Report paired with a Set (or the report's single default Binding): everything a run needs.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Binding {
     /// The Set name; `None` for a report without `sets:`.
     pub set: Option<String>,
@@ -158,7 +161,7 @@ impl Binding {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Output {
     pub format: String,
     /// Format options: every key except `format`, `destination` and `template`.
@@ -1255,6 +1258,7 @@ impl Loader {
             schedule,
         };
         let has_sets = key("sets").is_some();
+        let report_base = self.silent_binding(&name, &base, &queries, &r.file.display);
         let mut bindings = Vec::new();
         if let Some(s) = key("sets") {
             bindings = self.resolve_sets(&name, s, &queries, &base, project, used);
@@ -1302,6 +1306,7 @@ impl Loader {
             default_set,
             has_sets,
             bindings,
+            base: report_base,
         })
     }
 
@@ -1528,6 +1533,29 @@ impl Loader {
             out.push(bind);
         }
         out
+    }
+
+    /// Resolve a Binding without recording diagnostics or usage (they're reported elsewhere).
+    fn silent_binding(
+        &mut self,
+        report: &str,
+        base: &BindingBase,
+        queries: &[QueryEntry],
+        file: &Path,
+    ) -> Binding {
+        let saved = std::mem::take(&mut self.diags);
+        let mut scratch = Usage::default();
+        let b = self.finish_binding(
+            report,
+            None,
+            base,
+            None,
+            queries.to_vec(),
+            file.to_path_buf(),
+            &mut scratch,
+        );
+        self.diags = saved;
+        b
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1902,6 +1930,7 @@ impl Loader {
             queries: vec![query],
             default_set: None,
             has_sets: false,
+            base: b.clone(),
             bindings: vec![b],
         }
     }

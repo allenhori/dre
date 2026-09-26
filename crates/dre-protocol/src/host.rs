@@ -170,12 +170,19 @@ pub struct PluginProcess {
 impl PluginProcess {
     /// Spawn the plugin at `path` and complete the handshake.
     pub fn start(path: &Path, log: LogSink) -> Result<PluginProcess> {
+        Self::start_in(path, log, None)
+    }
+
+    /// Like `start`, running the plugin in `cwd` (core uses the project directory).
+    pub fn start_in(path: &Path, log: LogSink, cwd: Option<&Path>) -> Result<PluginProcess> {
         let timeout = std::env::var("DRE_PLUGIN_HANDSHAKE_TIMEOUT_MS")
             .ok()
             .and_then(|v| v.parse().ok())
             .map(Duration::from_millis)
             .unwrap_or(DEFAULT_HANDSHAKE_TIMEOUT);
-        Self::start_with(path, log, (MIN_VERSION, MAX_VERSION), timeout)
+        let mut p = Self::spawn_in(path, log, &[], cwd)?;
+        p.handshake((MIN_VERSION, MAX_VERSION), timeout)?;
+        Ok(p)
     }
 
     /// Spawn and handshake offering an explicit version range (the conformance suite uses this).
@@ -197,11 +204,25 @@ impl PluginProcess {
 
     /// Spawn with extra environment variables, without a handshake.
     pub fn spawn_env(path: &Path, log: LogSink, env: &[(&str, &str)]) -> Result<PluginProcess> {
+        Self::spawn_in(path, log, env, None)
+    }
+
+    /// Spawn with extra environment variables and a working directory, without a handshake.
+    pub fn spawn_in(
+        path: &Path,
+        log: LogSink,
+        env: &[(&str, &str)],
+        cwd: Option<&Path>,
+    ) -> Result<PluginProcess> {
         let label = path
             .file_name()
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_default();
-        let mut child = Command::new(path)
+        let mut cmd = Command::new(path);
+        if let Some(dir) = cwd {
+            cmd.current_dir(dir);
+        }
+        let mut child = cmd
             .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

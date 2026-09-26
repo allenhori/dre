@@ -15,9 +15,51 @@ struct Cli {
 enum Command {
     /// Check the whole project offline: config, references, templates, schedules.
     Validate(ValidateArgs),
+    /// Run reports: render, execute, format into target/, and deliver.
+    Run(RunArgs),
+    /// Remove target/ (compiled SQL, run outputs, schema snapshots).
+    Clean(CleanArgs),
     /// Manage plugins (sources, formats, destinations).
     #[command(subcommand)]
     Plugin(PluginCommand),
+}
+
+#[derive(Args)]
+struct RunArgs {
+    /// What to run: a report name, `tag:<tag>`, a folder name or a dotted folder path.
+    /// Runs every report when omitted.
+    selector: Option<String>,
+    #[command(flatten)]
+    project: ProjectArgs,
+    /// Run one Set (declared or ad hoc), or `all` of a report's Sets.
+    #[arg(long)]
+    set: Option<String>,
+    /// Use this source profile instead of the resolved one (e.g. for an ad hoc Set).
+    #[arg(long)]
+    profile: Option<String>,
+    /// Override the output file name for this run.
+    #[arg(long)]
+    output_name: Option<String>,
+    /// Override the full output (delivery) path for this run.
+    #[arg(long)]
+    output_path: Option<String>,
+    /// Render SQL into target/compiled/ and stop; no report query is executed.
+    #[arg(long)]
+    dry_run: bool,
+    /// Execute with a row limit (default 100); output stays in target/ and is never delivered.
+    #[arg(long, value_name = "ROWS", num_args = 0..=1, default_missing_value = "100")]
+    preview: Option<u64>,
+    /// Deliver even if the output schema changed since the last successful run, and accept
+    /// the new schema. Snapshots live in target/, so a fresh CI runner has no history.
+    #[arg(long)]
+    accept_schema_change: bool,
+}
+
+#[derive(Args)]
+struct CleanArgs {
+    /// Project directory (default: the current directory).
+    #[arg(long, default_value = ".")]
+    project_dir: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -75,6 +117,8 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Validate(a) => validate(a),
+        Command::Run(a) => run(a),
+        Command::Clean(a) => clean(a),
         Command::Plugin(PluginCommand::List) => plugin_list(),
     }
 }
@@ -157,4 +201,136 @@ fn plugin_list() -> ExitCode {
         println!("{}", line.join("  ").trim_end());
     }
     ExitCode::SUCCESS
+}
+
+struct TermUi {
+    log: dre_protocol::host::LogSink,
+}
+
+impl dre_core::run::Ui for TermUi {
+    fn info(&mut self, msg: &str) {
+        eprintln!("{msg}");
+    }
+
+    fn warn(&mut self, msg: &str) {
+        eprintln!("warning: {msg}");
+    }
+
+    fn choose_set(&mut self, report: &str, sets: &[String]) -> Result<Option<String>, String> {
+        use std::io::Write;
+        eprintln!("Report `{report}` has several Sets:");
+        for (i, s) in sets.iter().enumerate() {
+            eprintln!("  {}) {s}", i + 1);
+        }
+        eprintln!("  a) all");
+        loop {
+            eprint!("Which one? ");
+            let _ = std::io::stderr().flush();
+            let mut line = String::new();
+            if std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+                return Err("no Set chosen".into());
+            }
+            let answer = line.trim();
+            if answer == "a" || answer == "all" {
+                return Ok(None);
+            }
+            if let Ok(n) = answer.parse::<usize>()
+                && (1..=sets.len()).contains(&n)
+            {
+                return Ok(Some(sets[n - 1].clone()));
+            }
+            if sets.iter().any(|s| s == answer) {
+                return Ok(Some(answer.to_string()));
+            }
+        }
+    }
+
+    fn plugin_log(&self) -> dre_protocol::host::LogSink {
+        self.log.clone()
+    }
+}
+
+/// Load and validate the project; print problems. `None` when it can't run.
+fn load_for_run(p: &ProjectArgs) -> Option<dre_core::project::Project> {
+    let (project, diags) = project::load(&p.project_dir, &p.load_options());
+    for d in diags.sorted() {
+        // Unmanaged reports warn again when they run.
+        if d.severity == dre_core::Severity::Warning && d.code == "unmanaged-report" {
+            continue;
+        }
+        eprintln!("{d}");
+    }
+    if diags.has_errors() {
+        eprintln!(
+            "The project has {} error(s); fix them before running (see `dre validate`).",
+            diags.error_count()
+        );
+        return None;
+    }
+    project
+}
+
+fn run_date() -> Option<chrono::NaiveDate> {
+    std::env::var("DRE_RUN_DATE")
+        .ok()
+        .and_then(|d| chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok())
+}
+
+fn run(a: RunArgs) -> ExitCode {
+    use std::io::IsTerminal;
+    let Some(project) = load_for_run(&a.project) else {
+        return ExitCode::FAILURE;
+    };
+    let opts = dre_core::run::RunOptions {
+        selector: a.selector,
+        set: a.set,
+        target: a.project.target.clone(),
+        profile: a.profile,
+        vars: a.project.vars.iter().cloned().collect(),
+        output_name: a.output_name,
+        output_path: a.output_path,
+        dry_run: a.dry_run,
+        preview: a.preview,
+        accept_schema_change: a.accept_schema_change,
+        interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
+        date: run_date(),
+        live_check: false,
+    };
+    let mut ui = TermUi {
+        log: dre_protocol::host::stderr_log(),
+    };
+    let summary = dre_core::run::run(&project, &opts, &mut ui);
+    if let Some(e) = &summary.error {
+        eprintln!("error: {e}");
+        return ExitCode::FAILURE;
+    }
+    let ok = summary
+        .outcomes
+        .iter()
+        .filter(|o| o.status != dre_core::run::Status::Error)
+        .count();
+    let failed = summary.outcomes.len() - ok;
+    eprintln!("Done: {ok} succeeded, {failed} failed.");
+    if summary.failed() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn clean(a: CleanArgs) -> ExitCode {
+    match dre_core::run::clean(&a.project_dir) {
+        Ok(true) => {
+            eprintln!("Removed target/");
+            ExitCode::SUCCESS
+        }
+        Ok(false) => {
+            eprintln!("Nothing to clean: no target/ directory");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: can't remove target/: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

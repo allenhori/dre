@@ -275,7 +275,10 @@ fn serve(about: About, mut h: Handler<'_>) -> ! {
         } = req
         {
             let Some(chosen) = negotiate((min_version, max_version), (MIN_VERSION, MAX_VERSION)) else {
-                out.send(&Response::VersionMismatch { min_version: MIN_VERSION, max_version: MAX_VERSION });
+                out.send(&Response::VersionMismatch {
+                    min_version: MIN_VERSION,
+                    max_version: MAX_VERSION,
+                });
                 std::process::exit(1);
             };
             greeted = true;
