@@ -93,6 +93,8 @@ output:
   apply to every entry that has a path.
 - Credentials stay in `profiles.yml`. Options belong to the report, so a Set can address its own
   recipients.
+- A destination that takes no options (`local`, `s3`, `sftp`, ...) fails the delivery if its
+  entry has any other key, so a misspelt `path` is caught instead of ignored.
 
 ### `s3`
 
@@ -199,7 +201,8 @@ token. Bot scopes:
 
 The bot must be a member of the channel. Invite it with `/invite @your-bot`.
 
-If Slack rate-limits a call, the plugin retries it once after Slack's `Retry-After`. Errors such
+If Slack rate-limits a call, the plugin retries it once after Slack's `Retry-After`, waiting at
+most 60 seconds. Errors such
 as a rejected token, a missing scope, or the bot not being in the channel are reported with what
 to fix. The delivered location is the uploaded files' permalinks.
 

@@ -826,7 +826,17 @@ impl<'a> BindingRun<'a> {
         let mut failures = Vec::new();
         let mut skipped = Vec::new();
         for d in &dests {
-            let kind = self.dest_output(&d.profile).map(|(_, o)| o.kind.clone());
+            // The type of the output used, or for a skipped entry the profile's default one.
+            let kind = self
+                .dest_output(&d.profile)
+                .map(|(_, o)| o.kind.clone())
+                .or_else(|| {
+                    let p = self.project.profiles.get(&d.profile)?;
+                    p.outputs
+                        .get(&p.target)
+                        .or(p.outputs.values().next())
+                        .map(|o| o.kind.clone())
+                });
             let (status, location, error) = match self.deliver_one(d) {
                 Ok(Some(loc)) => ("delivered", Some(loc), None),
                 Ok(None) => {
@@ -838,13 +848,14 @@ impl<'a> BindingRun<'a> {
                     ("failed", None, Some(e))
                 }
             };
-            self.deliveries.push(json!({
-                "profile": d.profile,
-                "type": kind,
-                "status": status,
-                "location": location,
-                "error": error,
-            }));
+            let mut record = json!({"profile": d.profile, "type": kind, "status": status});
+            if let Some(l) = location {
+                record["location"] = json!(l);
+            }
+            if let Some(e) = error {
+                record["error"] = json!(e);
+            }
+            self.deliveries.push(record);
         }
         self.dests = dests;
         if self.files.iter().all(|(_, d)| d.is_none()) && !skipped.is_empty() {
@@ -863,21 +874,21 @@ impl<'a> BindingRun<'a> {
 
     /// The destination profile's output for the active target.
     fn dest_output(&self, profile: &str) -> Option<(String, &ProfileOutput)> {
-        let p = self.project.profiles.get(profile)?;
-        let dtarget = self.opts.target.clone().unwrap_or_else(|| p.target.clone());
+        let dtarget = self.dest_target(profile)?;
         self.project
             .profiles
             .output(profile, Some(&dtarget))
             .map(|(_, o)| (dtarget, o))
     }
 
+    /// The target a destination profile delivers for: `--target`, else the profile's own.
+    fn dest_target(&self, profile: &str) -> Option<String> {
+        let p = self.project.profiles.get(profile)?;
+        Some(self.opts.target.clone().unwrap_or_else(|| p.target.clone()))
+    }
+
     fn skip_note(&self, profile: &str) -> String {
-        let dtarget = self
-            .opts
-            .target
-            .clone()
-            .or_else(|| self.project.profiles.get(profile).map(|p| p.target.clone()))
-            .unwrap_or_default();
+        let dtarget = self.dest_target(profile).unwrap_or_default();
         format!(
             "destination profile `{profile}` has no `{dtarget}` output: not delivered, output stays in target/"
         )
@@ -922,6 +933,12 @@ impl<'a> BindingRun<'a> {
             .collect();
         let mut locations = Vec::new();
         if kind == LOCAL_TYPE {
+            if let Some(k) = d.options.keys().next() {
+                return Err(format!(
+                    "the local destination takes no options, but `{}` has `{k}`; check the key's spelling",
+                    d.profile
+                ));
+            }
             for (i, f) in targets.iter().enumerate() {
                 let t = Instant::now();
                 let r = f
@@ -1249,7 +1266,6 @@ impl QueryRunner for SessionRunner {
     }
 }
 
-/// Render `env_var()` (and only that) inside a profile output's string fields.
 /// Render every string inside a destination option value.
 fn render_json(renderer: &Renderer, file: &Path, v: &Json) -> Result<Json, RenderError> {
     Ok(match v {
@@ -1268,6 +1284,7 @@ fn render_json(renderer: &Renderer, file: &Path, v: &Json) -> Result<Json, Rende
     })
 }
 
+/// Render `env_var()` (and only that) inside a profile output's string fields.
 fn render_connection(output: &ProfileOutput) -> Result<JsonMap<String, Json>, String> {
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);

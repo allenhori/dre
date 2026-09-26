@@ -37,12 +37,20 @@ impl Destination for Email {
             ConnectionField::new("password", "SMTP password").secret(),
             ConnectionField::new("from", "sender address, e.g. \"Reports <reports@example.com>\"").required(),
             ConnectionField::new("to", "default recipients when a report names none"),
+            ConnectionField::new("cc", "default cc recipients"),
+            ConnectionField::new("bcc", "default bcc recipients"),
+            ConnectionField::new("max_attachment_mb", "largest total attachment size to send").default(20),
+            ConnectionField::new(
+                "tls_accept_invalid_certs",
+                "accept a self-signed server certificate",
+            )
+            .default(false),
         ]
     }
 
     fn deliver_files(&mut self, d: &Delivery) -> Result<String> {
-        let email = Plan::new(d)?;
-        let message = email.message()?;
+        let plan = Plan::new(d)?;
+        let message = plan.message()?;
         let message_id = message
             .headers()
             .get_raw("Message-ID")
@@ -50,7 +58,7 @@ impl Destination for Email {
             .to_string();
         let smtp = Smtp::from_connection(&d.connection)?;
         smtp.send(&message)?;
-        let n = email.recipients();
+        let n = plan.recipients();
         Ok(format!(
             "email {message_id} to {n} recipient{}",
             if n == 1 { "" } else { "s" }
@@ -175,11 +183,18 @@ impl Plan {
     }
 }
 
+#[derive(Clone, Copy)]
+enum TlsMode {
+    StartTls,
+    Implicit,
+    None,
+}
+
 /// How to reach the SMTP server.
 struct Smtp {
     host: String,
     port: u16,
-    tls: String,
+    tls: TlsMode,
     credentials: Option<Credentials>,
     accept_invalid_certs: bool,
 }
@@ -187,11 +202,10 @@ struct Smtp {
 impl Smtp {
     fn from_connection(c: &Map<String, Value>) -> Result<Smtp> {
         let host = conn_required(c, "host")?.to_string();
-        let tls = conn_str(c, "tls").unwrap_or("starttls").to_string();
-        let default_port = match tls.as_str() {
-            "starttls" => 587,
-            "implicit" => 465,
-            "none" => 25,
+        let (tls, default_port) = match conn_str(c, "tls").unwrap_or("starttls") {
+            "starttls" => (TlsMode::StartTls, 587),
+            "implicit" => (TlsMode::Implicit, 465),
+            "none" => (TlsMode::None, 25),
             other => {
                 return Err(format!("`tls` must be starttls, implicit or none, got `{other}`").into());
             }
@@ -230,10 +244,10 @@ impl Smtp {
                 .build()
                 .map_err(|e| format!("can't set up TLS for {at}: {e}"))
         };
-        let tls = match self.tls.as_str() {
-            "starttls" => Tls::Required(params()?),
-            "implicit" => Tls::Wrapper(params()?),
-            _ => Tls::None,
+        let tls = match self.tls {
+            TlsMode::StartTls => Tls::Required(params()?),
+            TlsMode::Implicit => Tls::Wrapper(params()?),
+            TlsMode::None => Tls::None,
         };
         let mut b = SmtpTransport::builder_dangerous(&self.host)
             .port(self.port)

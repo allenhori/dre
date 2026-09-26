@@ -164,11 +164,12 @@ pub fn run_with_env(path: &Path, env: &[(&str, &str)]) -> Vec<Check> {
             local_path: format!("/nonexistent/dre-conformance/{n}"),
             remote_path: Some(format!("dre-conformance/{n}")),
         };
+        let one = missing("a.csv");
         let mut forms = vec![(
             "deliver with options gets a reply and the plugin keeps serving",
             Request::Deliver {
-                local_path: Some(missing("a.csv").local_path),
-                remote_path: missing("a.csv").remote_path,
+                local_path: Some(one.local_path),
+                remote_path: one.remote_path,
                 files: Vec::new(),
                 connection: Map::new(),
                 options: json!({"conformance": true}).as_object().unwrap().clone(),

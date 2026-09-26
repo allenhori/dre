@@ -184,7 +184,9 @@ in `target/` whatever the outcome.
 `options` holds the destination entry's plugin options: every key of the entry in
 `output.destination` other than `profile` and `path` (for example `to` and `subject` for email,
 `channel` and `message` for Slack). Core renders their Jinja before sending, so string values
-arrive final. It is `{}` when the entry has none, and a plugin that takes no options ignores it.
+arrive final. It is `{}` when the entry has none. A plugin should reject keys it doesn't know, so
+a misspelt key in a report is an error rather than silently dropped; the SDK's default does this
+for plugins that take no options.
 
 A destination that advertises the `multi_file` capability receives every file of one output in a
 single request, in place of `local_path`/`remote_path`:

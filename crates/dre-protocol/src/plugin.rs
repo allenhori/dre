@@ -187,9 +187,16 @@ pub trait Destination {
     ) -> Result<String> {
         Err("this destination doesn't implement `deliver`".into())
     }
-    /// The whole request, options included. The default ignores options and hands a single
-    /// file to [`Destination::deliver`]; several files arrive only with `multi_file` advertised.
+    /// The whole request, options included. The default refuses options (so a misspelt key in
+    /// the report is an error, not silently dropped) and hands a single file to
+    /// [`Destination::deliver`]; several files arrive only with `multi_file` advertised.
     fn deliver_files(&mut self, d: &Delivery) -> Result<String> {
+        if let Some(k) = d.options.keys().next() {
+            return Err(format!(
+                "this destination takes no options, but the destination entry has `{k}`; check the key's spelling"
+            )
+            .into());
+        }
         match d.files.as_slice() {
             [f] => self.deliver(&f.local, f.remote.as_deref(), &d.connection),
             _ => Err("this destination takes one file per delivery".into()),

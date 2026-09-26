@@ -316,19 +316,45 @@ fn delivers_to_mailpit() {
         ],
         json!({"host": host, "port": port, "tls": "none", "username": "dre", "password": "dre-pass",
                "from": "reports@example.com"}),
-        json!({"to": "finance@example.com", "subject": subject}),
+        json!({"to": "finance@example.com", "cc": "audit@example.com", "subject": subject,
+               "body": "Monthly figures attached."}),
     )
     .unwrap();
-    let body = ureq::get(&format!("{api}/api/v1/search"))
-        .query("query", format!("subject:\"{subject}\""))
-        .call()
-        .unwrap()
-        .body_mut()
-        .read_to_string()
-        .unwrap();
-    let search: Value = serde_json::from_str(&body).unwrap();
-    let m = &search["messages"][0];
+    let get = |path: &str| -> Vec<u8> {
+        ureq::get(&format!("{api}{path}"))
+            .call()
+            .unwrap()
+            .body_mut()
+            .read_to_vec()
+            .unwrap()
+    };
+    let json = |path: &str| -> Value { serde_json::from_slice(&get(path)).unwrap() };
+    let query: String = format!("subject:\"{subject}\"")
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    let search = json(&format!("/api/v1/search?query={query}"));
+    let id = search["messages"][0]["ID"]
+        .as_str()
+        .expect("message not found in Mailpit")
+        .to_string();
+    let m = json(&format!("/api/v1/message/{id}"));
     assert_eq!(m["Subject"], subject.as_str());
     assert_eq!(m["To"][0]["Address"], "finance@example.com");
-    assert_eq!(m["Attachments"], 2);
+    assert_eq!(m["Cc"][0]["Address"], "audit@example.com");
+    assert_eq!(m["Text"].as_str().unwrap().trim(), "Monthly figures attached.");
+    let atts = m["Attachments"].as_array().unwrap();
+    assert_eq!(atts.len(), 2);
+    let part = |name: &str| {
+        let a = atts.iter().find(|a| a["FileName"] == name).unwrap();
+        get(&format!(
+            "/api/v1/message/{id}/part/{}",
+            a["PartID"].as_str().unwrap()
+        ))
+    };
+    assert_eq!(part("monthly.csv"), b"a,b\r\n1,2\r\n");
+    assert_eq!(part("notes.txt"), b"hello");
 }

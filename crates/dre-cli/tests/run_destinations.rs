@@ -226,3 +226,48 @@ fn validate_rejects_malformed_destination_lists() {
         .says("inherits 2 destinations")
         .says("override the full list");
 }
+
+#[test]
+fn a_misspelt_key_on_a_destination_without_options_is_an_error_not_ignored() {
+    let (p, _rec) = project(
+        "queries: [q]\noutput:\n  destination: {profile: inbox, pth: out/daily.csv}\n",
+        &[Q],
+    );
+    p.dre("run", &["daily"])
+        .failed()
+        .says("the local destination takes no options, but `inbox` has `pth`");
+    let r = results(&p);
+    assert_eq!(r["deliveries"][0]["status"], "failed");
+}
+
+#[test]
+fn a_plugin_without_options_refuses_them() {
+    // The SFTP plugin uses the SDK's default, which rejects options before connecting.
+    let (p, _rec) = project(
+        "queries: [q]\noutput:\n  destination: {profile: box, path: /in/daily.csv, pasth: x}\n",
+        &[Q],
+    );
+    let mut profiles = std::fs::read_to_string(p.dir.path().join("profiles/profiles.yml")).unwrap();
+    profiles.push_str("box:\n  target: dev\n  outputs:\n    dev: {type: sftp, host: 127.0.0.1, port: 1, username: u, password: x}\n");
+    std::fs::write(p.dir.path().join("profiles/profiles.yml"), profiles).unwrap();
+    p.write(
+        "plugins.yml",
+        "sources: [duckdb]\nformats: [csv]\ndestinations: [fixture, sftp]\n",
+    );
+    p.dre("run", &["daily"])
+        .failed()
+        .says("this destination takes no options, but the destination entry has `pasth`");
+}
+
+#[test]
+fn a_skipped_entry_still_records_its_type() {
+    let (p, _rec) = project(
+        "queries: [q]\noutput:\n  destination: [{profile: mail, to: a@example.com}]\n",
+        &[Q],
+    );
+    p.dre("run", &["daily", "--target", "dev"]).ok();
+    let d = &results(&p)["deliveries"][0];
+    assert_eq!(d["status"], "skipped");
+    assert_eq!(d["type"], "fixture");
+    assert!(d.get("location").is_none() && d.get("error").is_none(), "{d}");
+}
