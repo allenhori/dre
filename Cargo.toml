@@ -22,3 +22,5 @@ walkdir = "2"
 semver = { version = "1", features = ["serde"] }
 tempfile = "3"
 assert_cmd = "2"
+arrow = "58"
+parquet = "58"

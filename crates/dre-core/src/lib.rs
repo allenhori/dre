@@ -3,6 +3,7 @@
 pub mod constraints;
 pub mod diag;
 pub mod options;
+pub mod plugins;
 pub mod preflight;
 pub mod profiles;
 pub mod project;

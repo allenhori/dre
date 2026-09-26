@@ -15,6 +15,15 @@ struct Cli {
 enum Command {
     /// Check the whole project offline: config, references, templates, schedules.
     Validate(ValidateArgs),
+    /// Manage plugins (sources, formats, destinations).
+    #[command(subcommand)]
+    Plugin(PluginCommand),
+}
+
+#[derive(Subcommand)]
+enum PluginCommand {
+    /// List installed plugins, with each one's version and protocol version.
+    List,
 }
 
 #[derive(Args)]
@@ -66,6 +75,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Command::Validate(a) => validate(a),
+        Command::Plugin(PluginCommand::List) => plugin_list(),
     }
 }
 
@@ -98,4 +108,53 @@ fn validate(a: ValidateArgs) -> ExitCode {
 
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+fn plugin_list() -> ExitCode {
+    let dir = dre_core::plugins::plugins_dir();
+    let found = dre_core::plugins::discover(&dir);
+    if found.is_empty() {
+        println!("No plugins installed in {}", dir.display());
+        return ExitCode::SUCCESS;
+    }
+    let quiet: dre_protocol::host::LogSink = std::sync::Arc::new(|_, _| {});
+    let mut rows = vec![[
+        "KIND".to_string(),
+        "NAME".into(),
+        "VERSION".into(),
+        "PROTOCOL".into(),
+        "PATH".into(),
+    ]];
+    for p in found {
+        let (version, protocol) = match dre_protocol::host::PluginProcess::start(&p.path, quiet.clone()) {
+            Ok(proc_) => {
+                let info = proc_.info().clone();
+                let _ = proc_.close();
+                (info.version, format!("v{}", info.protocol_version))
+            }
+            Err(e) => (
+                p.version.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
+                format!("error: {e}"),
+            ),
+        };
+        rows.push([
+            p.kind.to_string(),
+            p.name,
+            version,
+            protocol,
+            p.path.display().to_string(),
+        ]);
+    }
+    let widths: Vec<usize> = (0..5)
+        .map(|i| rows.iter().map(|r| r[i].len()).max().unwrap_or(0))
+        .collect();
+    for r in rows {
+        let line: Vec<String> = r
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("{c:<w$}", w = widths[i]))
+            .collect();
+        println!("{}", line.join("  ").trim_end());
+    }
+    ExitCode::SUCCESS
 }
