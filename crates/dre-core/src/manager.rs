@@ -219,7 +219,7 @@ pub fn sync(
     install_missing: bool,
     mut log: impl FnMut(&str),
 ) -> Result<Vec<Synced>, Vec<String>> {
-    let dir = crate::plugins::plugins_dir();
+    let dir = crate::plugins::plugins_dir(Some(&project.root));
     let mut lock = Lock::load(&project.root).map_err(|e| vec![e])?;
     let mut index: Option<Index> = None;
     let mut out = Vec::new();
@@ -244,6 +244,23 @@ pub fn sync(
                     kind: req.kind,
                     name: req.name.clone(),
                     version: p.version,
+                });
+                continue;
+            }
+        }
+        // Already downloaded for another project: link the pinned version from the cache.
+        if let Some(l) = &pin
+            && dir != crate::plugins::cache_dir()
+        {
+            let cached = install_path(&crate::plugins::cache_dir(), req.kind, &req.name, &l.version);
+            if cached.is_file()
+                && crate::plugins::link_or_copy(&cached, &install_path(&dir, req.kind, &req.name, &l.version))
+                    .is_ok()
+            {
+                out.push(Synced::AlreadyInstalled {
+                    kind: req.kind,
+                    name: req.name.clone(),
+                    version: Some(l.version.clone()),
                 });
                 continue;
             }
@@ -320,5 +337,23 @@ fn install_one(
             )
         })?,
     };
-    install(dir, plugin, v, pin.map(|l| l.sha256.as_str()))
+    install_linked(dir, plugin, v, pin.map(|l| l.sha256.as_str()))
+}
+
+/// Install into `dir` through the shared cache: download there once, then link into `dir`.
+pub fn install_linked(
+    dir: &Path,
+    plugin: &IndexPlugin,
+    v: &IndexVersion,
+    expect_sha: Option<&str>,
+) -> Result<Locked, String> {
+    let cache = crate::plugins::cache_dir();
+    let locked = install(&cache, plugin, v, expect_sha)?;
+    if dir != cache {
+        crate::plugins::link_or_copy(
+            &install_path(&cache, plugin.kind, &plugin.name, &v.version),
+            &install_path(dir, plugin.kind, &plugin.name, &v.version),
+        )?;
+    }
+    Ok(locked)
 }

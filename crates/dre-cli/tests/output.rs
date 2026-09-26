@@ -18,7 +18,7 @@ fn project() -> TestProject {
                 "dre_project.yml",
                 "name: acme_reports\ndefault_profile: warehouse\n",
             ),
-            ("plugins.yml", PLUGINS_YML),
+            ("dependencies.yml", PLUGINS_YML),
             ("reports/ops/daily/daily.yml", "queries: [setup, summary]\n"),
             (
                 "reports/ops/daily/setup.sql",

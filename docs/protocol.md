@@ -20,7 +20,7 @@ A plugin executable is named `dre-<kind>-<name>` (plus `.exe` on Windows).
 
 Examples: `dre-source-duckdb`, `dre-format-xlsx`, `dre-destination-azure_blob`.
 
-Core looks in `DRE_PLUGINS_DIR`, or `~/.dre/plugins` when that isn't set, in two layouts:
+Core looks in the project's `dre_deps/plugins` (or `DRE_PLUGINS_DIR`), in two layouts:
 
 - `<dir>/<kind>/<name>/<version>/dre-<kind>-<name>`: versioned installs, side by side, as the
   plugin manager lays them out.

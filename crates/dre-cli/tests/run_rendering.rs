@@ -14,7 +14,7 @@ fn project(files: &[(&str, &str)]) -> TestProject {
             "name: acme_reports\ndefault_profile: warehouse\nvars: {level: project, region: AU}\n\
              reports:\n  finance:\n    +vars: {level: folder}\n",
         ),
-        ("plugins.yml", PLUGINS_YML),
+        ("dependencies.yml", PLUGINS_YML),
     ];
     all.extend_from_slice(files);
     let p = TestProject::new(&all, &format!("{DUCK_PROFILES}{LOCAL_FS}"));

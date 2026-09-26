@@ -14,6 +14,10 @@ use serde_yaml_ng::{Mapping, Value};
 
 use crate::diag::Diagnostics;
 use crate::lookups::{self, DEFAULT_INLINE_MAX_ROWS, LOOKUPS_DIR, Lookup};
+use crate::packages::{self, DispatchOrder, Package};
+
+/// Names DRE puts in every Jinja context; a package can't take one.
+const RESERVED_NAMES: &[&str] = &["run", "var", "env_var", "run_query", "ref", "lookup", "dispatch"];
 use crate::profiles::{LOCAL_TYPE, Profiles, Role};
 use crate::yaml::YamlFile;
 use crate::{constraints, options, preflight, schedule, selector, sqlsplit};
@@ -22,6 +26,8 @@ pub const PROJECT_FILE: &str = "dre_project.yml";
 pub const REPORTS_DIR: &str = "reports";
 pub const MACROS_DIR: &str = "macros";
 pub const TARGET_DIR: &str = "target";
+pub const LOGS_DIR: &str = "logs";
+pub use crate::plugins::DEPS_DIR;
 pub const DEFAULT_RUN_QUERY_MAX_ROWS: u64 = 10_000;
 
 const REPORT_KEYS: &[&str] = &[
@@ -44,6 +50,7 @@ const PROJECT_KEYS: &[&str] = &[
     "vars",
     "run_query_max_rows",
     "lookup_inline_max_rows",
+    "dispatch",
     "reports",
 ];
 const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars"];
@@ -82,6 +89,11 @@ pub struct Project {
     pub schedules: Vec<ScheduleEntry>,
     /// Macro files under `macros/`, relative to the root.
     pub macros: Vec<PathBuf>,
+    /// Macro packages, each called through its name (`{{ dre_utils.x() }}`).
+    pub packages: Vec<Package>,
+    /// `dispatch:` search orders, by macro namespace.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub dispatch: DispatchOrder,
     /// Every uniquely named `.sql` file under `reports/`, by basename: what `ref()` resolves.
     #[serde(skip)]
     pub sql: BTreeMap<String, PathBuf>,
@@ -354,6 +366,9 @@ impl Loader {
         let found = self.discover();
         project.folders = found.folders.clone();
         project.macros = found.macros.clone();
+        let declared = packages::declared(&self.root, &mut self.diags);
+        project.packages = packages::resolve(&self.root, &declared, &mut self.diags);
+        self.check_macro_namespaces(&project);
 
         let profiles_dir = crate::profiles::profiles_dir(self.opts.profiles_dir.as_deref());
         project.profiles = Profiles::load(&profiles_dir, &mut self.diags);
@@ -539,6 +554,7 @@ impl Loader {
                 }
             },
         };
+        let dispatch = self.parse_dispatch(yf, m.get("dispatch"));
         let lookup_inline_max_rows = match m.get("lookup_inline_max_rows") {
             None => DEFAULT_INLINE_MAX_ROWS,
             Some(v) => match v.as_u64() {
@@ -566,6 +582,8 @@ impl Loader {
             plugins: Vec::new(),
             schedules: Vec::new(),
             macros: Vec::new(),
+            packages: Vec::new(),
+            dispatch,
             sql: BTreeMap::new(),
             lookups: BTreeMap::new(),
             lookup_inline_max_rows,
@@ -585,6 +603,86 @@ impl Loader {
                     format!("`{key}` must be a string"),
                 );
                 None
+            }
+        }
+    }
+
+    /// `dispatch: [{macro_namespace: dre_utils, search_order: [my_project, dre_utils]}]`.
+    fn parse_dispatch(&mut self, yf: &YamlFile, v: Option<&Value>) -> DispatchOrder {
+        let mut out = DispatchOrder::new();
+        let Some(v) = v else { return out };
+        let line = yf.line_of("dispatch", None);
+        let Some(list) = v.as_sequence() else {
+            self.diags.error(
+                "invalid-field",
+                Some(yf.display.clone()),
+                line,
+                "`dispatch` must be a list of `{macro_namespace, search_order}`",
+            );
+            return out;
+        };
+        for e in list {
+            let ns = e.get("macro_namespace").and_then(Value::as_str);
+            let order: Option<Vec<String>> = e
+                .get("search_order")
+                .and_then(Value::as_sequence)
+                .map(|s| s.iter().filter_map(|x| x.as_str().map(str::to_string)).collect());
+            match (ns, order) {
+                (Some(ns), Some(order)) if !order.is_empty() => {
+                    out.insert(ns.to_string(), order);
+                }
+                _ => self.diags.error(
+                    "invalid-field",
+                    Some(yf.display.clone()),
+                    line,
+                    "each `dispatch` entry needs `macro_namespace` and a non-empty `search_order` list",
+                ),
+            }
+        }
+        out
+    }
+
+    /// Package names are Jinja variables: they can't clash with each other's macros, the
+    /// project's own macros, or DRE's functions.
+    fn check_macro_namespaces(&mut self, project: &Project) {
+        let own: BTreeSet<String> = project
+            .macros
+            .iter()
+            .filter_map(|m| std::fs::read_to_string(self.root.join(m)).ok())
+            .flat_map(|src| preflight::macro_defs(&src).into_iter().map(|d| d.name))
+            .collect();
+        for p in &project.packages {
+            let clash = if RESERVED_NAMES.contains(&p.name.as_str()) {
+                Some("a DRE function or variable".to_string())
+            } else if own.contains(&p.name) {
+                Some("a macro in macros/".to_string())
+            } else if p.name == project.name {
+                Some("this project".to_string())
+            } else {
+                None
+            };
+            if let Some(c) = clash {
+                self.diags.error(
+                    "package-name-clash",
+                    None,
+                    None,
+                    format!(
+                        "package `{}` has the same name as {c}; macros couldn't be called through it",
+                        p.name
+                    ),
+                );
+            }
+        }
+        for (ns, order) in &project.dispatch {
+            for n in order {
+                if n != &project.name && !project.packages.iter().any(|p| &p.name == n) {
+                    self.diags.error(
+                        "invalid-field",
+                        Some(PathBuf::from(PROJECT_FILE)),
+                        None,
+                        format!("`dispatch` for `{ns}` searches `{n}`, which is neither this project nor an installed package"),
+                    );
+                }
             }
         }
     }
@@ -715,7 +813,10 @@ impl Loader {
             .into_iter()
             .filter_entry(|e| {
                 let name = e.file_name().to_string_lossy();
-                e.depth() == 0 || !(name.starts_with('.') || (e.depth() == 1 && name == TARGET_DIR))
+                // Generated or installed, never part of the project's own sources.
+                e.depth() == 0
+                    || !(name.starts_with('.')
+                        || (e.depth() == 1 && [TARGET_DIR, DEPS_DIR, LOGS_DIR].contains(&name.as_ref())))
             });
         for e in walker.filter_map(Result::ok) {
             let rel = self.rel(e.path());
@@ -765,9 +866,21 @@ impl Loader {
                 if !pl.is_empty() {
                     plugins.push((yf.clone(), pl));
                 }
+                // `packages:` belongs to the root dependency files, read by `packages::declared`.
+                let dependency_file = packages::DEPENDENCY_FILES
+                    .iter()
+                    .any(|f| yf.display == Path::new(f));
+                if !dependency_file && m.contains_key("packages") {
+                    self.diags.error(
+                        "misplaced-packages",
+                        Some(yf.display.clone()),
+                        yf.line_of("packages", None),
+                        "`packages:` goes in dependencies.yml or packages.yml at the project root",
+                    );
+                }
                 let rest: Mapping = m
                     .iter()
-                    .filter(|(k, _)| !is_one_of(k, PLUGIN_KEYS))
+                    .filter(|(k, _)| !is_one_of(k, PLUGIN_KEYS) && !(k.as_str() == Some("packages")))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 if rest.is_empty() {

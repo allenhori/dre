@@ -16,7 +16,7 @@ fn project(report: &str) -> TestProject {
                 "name: acme_reports\ndefault_profile: warehouse\n",
             ),
             (
-                "plugins.yml",
+                "dependencies.yml",
                 "sources: [duckdb]\nformats: [csv, delimited, parquet, fixed_width, xlsx]\n",
             ),
             ("reports/fin/r/r.yml", report),

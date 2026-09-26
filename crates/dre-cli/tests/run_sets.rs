@@ -29,7 +29,7 @@ fn project(files: &[(&str, &str)]) -> TestProject {
             "dre_project.yml",
             "name: acme_reports\ndefault_profile: warehouse\n",
         ),
-        ("plugins.yml", PLUGINS_YML),
+        ("dependencies.yml", PLUGINS_YML),
         (
             "sets.yml",
             "client_a: {profile: warehouse, vars: {client: client_a}}\nclient_b: {profile: warehouse, vars: {client: client_b}}\n",
