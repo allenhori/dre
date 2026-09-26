@@ -124,11 +124,35 @@ fn colour_is_off_unless_asked_for_when_not_a_terminal() {
 }
 
 #[test]
-fn every_run_appends_a_debug_log_to_target() {
+fn every_run_appends_a_debug_log_with_the_sql_it_ran() {
     let p = project();
     p.dre("run", &["daily"]).ok();
-    let log = p.read("target/dre.log");
+    let log = p.read("logs/dre.log");
     assert!(log.contains("DEBUG [daily] Executed"), "{log}");
     assert!(log.contains("INFO  [daily] Succeeded"), "{log}");
     assert!(log.contains("Finished 'run'"), "{log}");
+    // The full statement, indented under a label naming its file and line.
+    assert!(
+        log.contains("DEBUG [daily] SQL reports/ops/daily/setup.sql:1:\n    create temp table t as select 1 as n union all select 2\n"),
+        "{log}"
+    );
+    assert!(
+        log.contains("SQL reports/ops/daily/summary.sql:1:\n    select * from t\n"),
+        "{log}"
+    );
+}
+
+#[test]
+fn the_log_rotates_keeping_five_old_files() {
+    let p = project();
+    for _ in 0..8 {
+        p.dre_env("run", &["daily"], &[("DRE_LOG_MAX_LINES", "5")]).ok();
+    }
+    for n in 1..=5 {
+        assert!(p.path(&format!("logs/dre.log.{n}")).exists(), "dre.log.{n}");
+    }
+    assert!(!p.path("logs/dre.log.6").exists());
+    // Every run writes more than 5 lines, so each file ends with at most one entry past the limit.
+    let current = p.read("logs/dre.log");
+    assert!(current.lines().count() < 5 + 3, "{current}");
 }

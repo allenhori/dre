@@ -29,6 +29,8 @@ pub const CAP_READ_ONLY: &str = "read_only";
 pub const CAP_CHECK: &str = "check";
 /// Capability (destinations): takes every file of one output in a single `deliver`.
 pub const CAP_MULTI_FILE: &str = "multi_file";
+/// Source: loads rows into a temporary table on the session (`load`), for large lookups.
+pub const CAP_LOAD: &str = "load";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -30,7 +30,10 @@ struct Fixture {
 impl Source for Fixture {
     fn connection_fields(&self) -> Vec<ConnectionField> {
         vec![
-            ConnectionField::new("path", "where the data lives").required(),
+            // `same_as_source` matters when this binary also stands in for a destination.
+            ConnectionField::new("path", "where the data lives")
+                .required()
+                .same_as_source("fixture"),
             ConnectionField::new("token", "secret").secret(),
         ]
     }

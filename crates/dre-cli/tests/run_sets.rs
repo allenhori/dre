@@ -5,20 +5,22 @@ mod common;
 use common::{PLUGINS_YML, TestProject};
 
 const PROFILES: &str = "\
-warehouse:
-  target: dev
-  outputs:
-    dev: {type: duckdb, path: dev.duckdb}
-    prod: {type: duckdb, path: prod.duckdb}
-inbox:
-  target: prod
-  outputs:
-    prod: {type: local}
-dev_inbox:
-  target: dev
-  outputs:
-    dev: {type: local}
-    prod: {type: local}
+sources:
+  warehouse:
+    target: dev
+    targets:
+      dev: {type: duckdb, path: dev.duckdb}
+      prod: {type: duckdb, path: prod.duckdb}
+destinations:
+  inbox:
+    target: prod
+    targets:
+      prod: {type: local}
+  dev_inbox:
+    target: dev
+    targets:
+      dev: {type: local}
+      prod: {type: local}
 ";
 
 fn project(files: &[(&str, &str)]) -> TestProject {
@@ -133,10 +135,10 @@ fn target_switches_source_and_destination_profiles() {
     p.dre("run", &["t", "--target", "prod"]).ok();
     assert_eq!(p.read("out/t.csv"), "name\r\nprod\r\n");
     std::fs::remove_file(p.path("out/t.csv")).unwrap();
-    // --target dev: the destination profile has no dev output → nothing delivered.
+    // --target dev: the destination profile has no dev target → nothing delivered.
     p.dre("run", &["t", "--target", "dev"])
         .ok()
-        .says("destination profile `inbox` has no `dev` output: not delivered, output stays in target/");
+        .says("destination profile `inbox` has no `dev` target: not delivered, output stays in target/");
     assert!(!p.path("out/t.csv").exists());
     assert_eq!(p.read("target/run/t/default/t.csv"), "name\r\ndev\r\n");
 }

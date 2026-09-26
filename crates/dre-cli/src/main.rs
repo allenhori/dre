@@ -160,7 +160,7 @@ struct ProjectArgs {
     /// Fail instead of installing declared plugins that are missing.
     #[arg(long)]
     no_auto_install: bool,
-    /// Use this output of every profile instead of each profile's default `target`.
+    /// Use this target (environment) of every profile instead of each profile's default `target`.
     #[arg(long)]
     target: Option<String>,
     /// Set a variable for `var()`, overriding every other level: `--var name=value`.

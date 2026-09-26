@@ -16,11 +16,12 @@ use arrow::ipc::writer::FileWriter;
 use chrono::NaiveDate;
 use dre_protocol::host::{Execution, LogSink, PluginProcess};
 use dre_protocol::msg::{DeliveryFile, ResultSetMeta};
-use dre_protocol::{CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
+use dre_protocol::{CAP_LOAD, CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as Json, json};
 
-use crate::profiles::{LOCAL_TYPE, ProfileOutput};
+use crate::lookups::Table;
+use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Role};
 use crate::project::{Binding, PluginKind, Project, QueryEntry, Report, TARGET_DIR, TabName};
 use crate::render::{QueryRows, QueryRunner, RenderError, Renderer, RendererConfig, RunContext};
 use crate::sqlsplit::{self, StatementKind};
@@ -70,6 +71,10 @@ pub trait Ui {
     fn choose_set(&mut self, report: &str, sets: &[String]) -> Result<Option<String>, String>;
     /// Where plugin stderr goes.
     fn plugin_log(&self) -> LogSink;
+    /// Where the full text of every statement sent to a source goes: `(label, sql)`.
+    fn sql_log(&self) -> LogSink {
+        Arc::new(|_, _| {})
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -346,15 +351,17 @@ impl<'a> BindingRun<'a> {
             .ok_or("no source profile resolves for this Binding")?;
         let profiles = &self.project.profiles;
         let profile = profiles
-            .get(&profile_name)
+            .get(Role::Source, &profile_name)
             .ok_or_else(|| format!("source profile `{profile_name}` isn't in profiles.yml"))?;
         let target = self.opts.target.clone().unwrap_or_else(|| profile.target.clone());
-        let (_, output) = profiles.output(&profile_name, Some(&target)).ok_or_else(|| {
-            format!(
-                "source profile `{profile_name}` has no `{target}` output (it has: {})",
-                profile.outputs.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        })?;
+        let (_, output) = profiles
+            .target(Role::Source, &profile_name, Some(&target))
+            .ok_or_else(|| {
+                format!(
+                    "source profile `{profile_name}` has no `{target}` target (it has: {})",
+                    profile.targets.keys().cloned().collect::<Vec<_>>().join(", ")
+                )
+            })?;
         self.target = target.clone();
         let source_path = find_plugin(self.project, PluginKind::Source, &output.kind)?;
         let connection = render_connection(output)?;
@@ -388,8 +395,11 @@ impl<'a> BindingRun<'a> {
             },
             vars: self.b.vars.clone(),
             cli_vars: self.opts.vars.clone(),
-            runner: Some(Arc::new(SessionRunner(session.clone()))),
+            runner: Some(Arc::new(SessionRunner(session.clone(), self.ui.sql_log()))),
             run_query_max_rows: self.project.run_query_max_rows,
+            sql: self.project.sql.clone(),
+            lookups: self.project.lookups.clone(),
+            lookup_inline_max_rows: self.project.lookup_inline_max_rows,
         })
         .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.compiled_dir).map_err(|e| e.to_string())?;
@@ -418,6 +428,9 @@ impl<'a> BindingRun<'a> {
             }
         }
         self.dests = self.render_destinations(&renderer)?;
+        for w in renderer.take_warnings() {
+            self.ui.warn(&w);
+        }
 
         // 3. Unmanaged: every rendered statement must only read (or create temp objects).
         if !self.report.managed {
@@ -430,7 +443,8 @@ impl<'a> BindingRun<'a> {
                     dre_protocol::util::summarize(&bad.text, 60)
                 ));
             }
-            let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate);
+            let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
+                || session.lock().unwrap().loaded;
             session.lock().unwrap().want_read_only(!creates_temp);
         }
 
@@ -465,7 +479,9 @@ impl<'a> BindingRun<'a> {
         // 4. Execute in order on one session.
         std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
         let mut per_query: BTreeMap<String, usize> = BTreeMap::new();
+        let sql_log = self.ui.sql_log();
         for (i, st) in statements.iter().enumerate() {
+            sql_log(&format!("{}:{}", st.file.display(), st.line), &st.text);
             let spool_path = self.run_dir.join(".spool").join(format!("{i}.arrow"));
             let mut writer: Option<FileWriter<File>> = None;
             let t = Instant::now();
@@ -791,6 +807,9 @@ impl<'a> BindingRun<'a> {
             cli_vars: self.opts.vars.clone(),
             runner: None,
             run_query_max_rows: self.project.run_query_max_rows,
+            sql: self.project.sql.clone(),
+            lookups: self.project.lookups.clone(),
+            lookup_inline_max_rows: self.project.lookup_inline_max_rows,
         })
         .map_err(|e| e.to_string())?;
         let mut values = JsonMap::new();
@@ -831,10 +850,10 @@ impl<'a> BindingRun<'a> {
                 .dest_output(&d.profile)
                 .map(|(_, o)| o.kind.clone())
                 .or_else(|| {
-                    let p = self.project.profiles.get(&d.profile)?;
-                    p.outputs
+                    let p = self.project.profiles.get(Role::Destination, &d.profile)?;
+                    p.targets
                         .get(&p.target)
-                        .or(p.outputs.values().next())
+                        .or(p.targets.values().next())
                         .map(|o| o.kind.clone())
                 });
             let (status, location, error) = match self.deliver_one(d) {
@@ -872,32 +891,37 @@ impl<'a> BindingRun<'a> {
         }
     }
 
-    /// The destination profile's output for the active target.
-    fn dest_output(&self, profile: &str) -> Option<(String, &ProfileOutput)> {
+    /// The destination profile's settings for the active target.
+    fn dest_output(&self, profile: &str) -> Option<(String, &ProfileTarget)> {
+        if self.project.profiles.is_builtin_local(profile) {
+            return Some((self.target.clone(), &BUILTIN_LOCAL));
+        }
         let dtarget = self.dest_target(profile)?;
         self.project
             .profiles
-            .output(profile, Some(&dtarget))
+            .target(Role::Destination, profile, Some(&dtarget))
             .map(|(_, o)| (dtarget, o))
     }
 
     /// The target a destination profile delivers for: `--target`, else the profile's own.
     fn dest_target(&self, profile: &str) -> Option<String> {
-        let p = self.project.profiles.get(profile)?;
+        let p = self.project.profiles.get(Role::Destination, profile)?;
         Some(self.opts.target.clone().unwrap_or_else(|| p.target.clone()))
     }
 
     fn skip_note(&self, profile: &str) -> String {
         let dtarget = self.dest_target(profile).unwrap_or_default();
         format!(
-            "destination profile `{profile}` has no `{dtarget}` output: not delivered, output stays in target/"
+            "destination profile `{profile}` has no `{dtarget}` target: not delivered, output stays in target/"
         )
     }
 
     /// Deliver every file to one destination. `Ok(None)`: its profile has no output for the
     /// active target, so nothing was sent.
     fn deliver_one(&mut self, d: &RenderedDest) -> Result<Option<String>, Fail> {
-        if self.project.profiles.get(&d.profile).is_none() {
+        if self.project.profiles.get(Role::Destination, &d.profile).is_none()
+            && !self.project.profiles.is_builtin_local(&d.profile)
+        {
             return Err(format!(
                 "destination profile `{}` isn't in profiles.yml",
                 d.profile
@@ -1129,7 +1153,14 @@ impl<'a> BindingRun<'a> {
         }
         let mut failures = Vec::new();
         let mut unexecuted_setup: Option<(PathBuf, usize)> = None;
+        let sql_log = self.ui.sql_log();
         for st in statements {
+            let verb = if st.kind == StatementKind::TempCreate {
+                ""
+            } else {
+                " (check)"
+            };
+            sql_log(&format!("{}:{}{verb}", st.file.display(), st.line), &st.text);
             if st.kind == StatementKind::TempCreate {
                 if let Err(e) = p.execute(&st.text, None, |_, _| Ok(())) {
                     failures.push(format!("{}:{}: {e}", st.file.display(), st.line));
@@ -1170,6 +1201,8 @@ struct Session {
     /// Unmanaged reports run read-only unless they create temp objects.
     unmanaged: bool,
     read_only: bool,
+    /// A lookup was loaded into a temp table, so the session must stay open as it is.
+    loaded: bool,
     proc_: Option<PluginProcess>,
 }
 
@@ -1188,6 +1221,7 @@ impl Session {
             log,
             unmanaged,
             read_only: unmanaged,
+            loaded: false,
             proc_: None,
         }
     }
@@ -1219,7 +1253,7 @@ impl Session {
     }
 }
 
-struct SessionRunner(Arc<Mutex<Session>>);
+struct SessionRunner(Arc<Mutex<Session>>, LogSink);
 
 impl QueryRunner for SessionRunner {
     fn run_query(&self, sql: &str, max_rows: u64) -> Result<QueryRows, String> {
@@ -1236,6 +1270,7 @@ impl QueryRunner for SessionRunner {
                 dre_protocol::util::summarize(&bad.text, 60)
             ));
         }
+        (self.1)("run_query()", sql);
         let p = s.get()?;
         let mut out = QueryRows::default();
         let mut too_many = false;
@@ -1264,6 +1299,27 @@ impl QueryRunner for SessionRunner {
         }
         Ok(out)
     }
+
+    fn load(&self, name: &str, table: &Table) -> Result<Option<(String, Option<String>)>, String> {
+        let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
+        // A temp table is allowed even in an unmanaged report; it needs a writable session.
+        s.want_read_only(false);
+        if !s.get()?.has(CAP_LOAD) {
+            return Ok(None);
+        }
+        let batch = table.to_batch()?;
+        let schema = batch.schema();
+        (self.1)(
+            &format!("lookup `{name}`"),
+            &format!(
+                "-- {} rows loaded through the plugin's `load` request",
+                batch.num_rows()
+            ),
+        );
+        let r = s.get()?.load(name, &schema, [batch]).map_err(|e| e.to_string())?;
+        s.loaded = true;
+        Ok(Some(r))
+    }
 }
 
 /// Render every string inside a destination option value.
@@ -1285,7 +1341,7 @@ fn render_json(renderer: &Renderer, file: &Path, v: &Json) -> Result<Json, Rende
 }
 
 /// Render `env_var()` (and only that) inside a profile output's string fields.
-fn render_connection(output: &ProfileOutput) -> Result<JsonMap<String, Json>, String> {
+fn render_connection(output: &ProfileTarget) -> Result<JsonMap<String, Json>, String> {
     let mut env = minijinja::Environment::new();
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
     env.add_function("env_var", |name: String, default: Option<String>| -> Result<String, minijinja::Error> {

@@ -1,6 +1,6 @@
 //! DRE destination plugin `sftp`.
 //!
-//! Profile output fields: `host`, `port` (22), `username`, and `password` or `private_key_path`
+//! Profile target fields: `host`, `port` (22), `username`, and `password` or `private_key_path`
 //! (+ `private_key_passphrase`). The server's host key must be trusted: it's checked against
 //! `known_hosts_path` (default `~/.ssh/known_hosts`) or a pinned `host_key_fingerprint`
 //! (`SHA256:...`, as `ssh-keygen -lf` prints it). Unknown hosts are refused unless

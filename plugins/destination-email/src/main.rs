@@ -1,6 +1,6 @@
 //! `dre-destination-email`: sends an output's files as attachments on one email, over SMTP.
 //!
-//! Profile output (`profiles.yml`): `host`, `port`, `tls` (`starttls`, `implicit` or `none`),
+//! Profile target fields (`profiles.yml`): `host`, `port`, `tls` (`starttls`, `implicit` or `none`),
 //! `username`/`password`, `from`, optional default `to`/`cc`/`bcc`, `max_attachment_mb` and
 //! `tls_accept_invalid_certs`. Destination options (the report's `output.destination` entry):
 //! `to`, `cc`, `bcc`, `subject`, `body`, `attachment_name`. An option replaces the profile's
