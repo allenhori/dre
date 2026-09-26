@@ -21,8 +21,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   integration:
-    # Plugin integration tests against local emulators of each service (Linux only: service
-    # containers). Tests skip themselves when their service's env var is unset.
+    # Plugin integration tests against local emulators (Linux only). Each test skips itself when
+    # its service's env var is unset.
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -33,13 +33,36 @@ jobs:
           POSTGRES_DB: dre
         ports: ["5432:5432"]
         options: --health-cmd "pg_isready -U dre" --health-interval 5s --health-retries 20
+      s3:
+        image: adobe/s3mock
+        ports: ["9090:9090"]
     env:
       DRE_TEST_POSTGRES: localhost:5432
+      DRE_TEST_S3_ENDPOINT: http://localhost:9090
+      DRE_TEST_AZURITE_ENDPOINT: http://localhost:10000
+      DRE_TEST_GCS_ENDPOINT: http://localhost:4443
+      DRE_TEST_SFTP: localhost:2222
+      DRE_TEST_FTP: localhost:2121
     steps:
       - uses: actions/checkout@v4
+      - name: Start emulators that need arguments
+        run: |
+          ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/id_test"
+          echo "DRE_TEST_SFTP_KEY=$RUNNER_TEMP/id_test" >> "$GITHUB_ENV"
+          docker run -d -p 4443:4443 fsouza/fake-gcs-server -scheme http -port 4443 \
+            -public-host localhost:4443 -external-url http://localhost:4443
+          docker run -d -p 2222:22 -v "$RUNNER_TEMP/id_test.pub:/home/dre/.ssh/keys/id_test.pub:ro" \
+            atmoz/sftp dre:dre-pass:1001::upload
+          docker run -d -p 10000:10000 mcr.microsoft.com/azure-storage/azurite \
+            azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
+          docker run -d -p 2121:21 -p 30000-30009:30000-30009 -e USERS="dre|dre-pass" \
+            -e ADDRESS=localhost -e MIN_PORT=30000 -e MAX_PORT=30009 delfer/alpine-ftp-server
+          sleep 5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p dre-source-postgres
+      - run: >
+          cargo test -p dre-source-postgres -p dre-destination-object_store
+          -p dre-destination-sftp -p dre-destination-ftp
 
   test:
     strategy:

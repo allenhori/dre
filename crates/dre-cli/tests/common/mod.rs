@@ -110,6 +110,7 @@ pub const ALL_PLUGINS: &[&str] = &[
     "dre-format-xlsx",
     "dre-format-parquet",
     "dre-format-fixed_width",
+    "dre-destination-sftp",
 ];
 
 impl TestProject {

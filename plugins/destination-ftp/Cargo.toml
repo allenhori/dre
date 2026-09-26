@@ -1,0 +1,16 @@
+[package]
+name = "dre-destination-ftp"
+description = "DRE destination plugin: FTP and explicit FTPS"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dre-protocol = { path = "../../crates/dre-protocol" }
+serde_json.workspace = true
+suppaftp = { version = "12", features = ["native-tls"] }
+native-tls = "0.2"
+
+[dev-dependencies]
+tempfile.workspace = true
