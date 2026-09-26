@@ -1399,7 +1399,12 @@ impl BindingRun<'_> {
         if !names.is_empty() {
             parts.push(format!("→ {}", names.join(", ")));
         }
-        let delivered: Vec<&str> = self.files.iter().filter_map(|(_, d)| d.as_deref()).collect();
+        // Every destination's location, not just the first one each file reached.
+        let delivered: Vec<&str> = self
+            .deliveries
+            .iter()
+            .filter_map(|d| d.get("location").and_then(Json::as_str))
+            .collect();
         if !delivered.is_empty() {
             parts.push(format!("→ {}", delivered.join(", ")));
         } else if let Some(n) = &self.delivery_note

@@ -60,7 +60,9 @@ fn a_list_delivers_to_every_destination_and_records_each() {
          \x20   - {profile: rec, path: \"archive/{{ run.report }}.csv\", to: \"{{ var('team') }}@example.com\", subject: Daily}\n",
         &[Q],
     );
-    p.dre("run", &["daily"]).ok();
+    p.dre("run", &["daily"])
+        .ok()
+        .says("out/daily.csv, fixture:archive/daily.csv");
     assert_eq!(p.read("out/daily.csv"), "n\r\n1\r\n");
     let d = deliveries(&rec);
     assert_eq!(d.len(), 1);
