@@ -213,7 +213,7 @@ pub struct SetDef {
     pub vars: JsonMap<String, Json>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginKind {
     Source,

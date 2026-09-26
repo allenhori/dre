@@ -1,0 +1,5 @@
+sources:
+  - duckdb: ">=0.0"
+formats:
+  - csv
+  - aba: ">=1.0"

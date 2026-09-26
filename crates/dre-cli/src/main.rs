@@ -1,4 +1,5 @@
 mod output;
+mod plugins;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -50,6 +51,8 @@ enum Command {
     Run(RunArgs),
     /// Remove target/ (compiled SQL, run outputs, schema snapshots).
     Clean(CleanArgs),
+    /// Install the project's declared plugins (pinned by dre.lock) without running anything.
+    Deps(DepsArgs),
     /// Manage plugins (sources, formats, destinations).
     #[command(subcommand)]
     Plugin(PluginCommand),
@@ -97,6 +100,29 @@ struct CleanArgs {
 enum PluginCommand {
     /// List installed plugins, with each one's version and protocol version.
     List,
+    /// Install a plugin from the registry: `name`, `kind/name`, optionally `@<version req>`.
+    Install(PluginArgs),
+    /// Install the newest version allowed by the constraint (ignoring dre.lock's pin) and re-pin it.
+    Update(PluginArgs),
+    /// Remove installed versions of a plugin (`name@version` removes just one).
+    Remove(PluginArgs),
+}
+
+#[derive(Args)]
+struct PluginArgs {
+    /// `duckdb`, `source/duckdb`, `xlsx@^1`, ...
+    plugin: String,
+    /// Project whose dre.lock to update (default: the current directory, if it's a project).
+    #[arg(long, default_value = ".")]
+    project_dir: PathBuf,
+}
+
+#[derive(Args)]
+struct DepsArgs {
+    #[arg(long, default_value = ".")]
+    project_dir: PathBuf,
+    #[arg(long)]
+    profiles_dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -151,12 +177,23 @@ fn main() -> ExitCode {
         Command::Validate(a) => validate(a, &printer),
         Command::Run(a) => run(a, printer),
         Command::Clean(a) => clean(a),
+        Command::Deps(a) => deps(a, &printer),
         Command::Plugin(PluginCommand::List) => plugin_list(),
+        Command::Plugin(PluginCommand::Install(a)) => {
+            plugins::install(a.plugin, a.project_dir, false, &printer)
+        }
+        Command::Plugin(PluginCommand::Update(a)) => {
+            plugins::install(a.plugin, a.project_dir, true, &printer)
+        }
+        Command::Plugin(PluginCommand::Remove(a)) => plugins::remove(a.plugin, a.project_dir, &printer),
     }
 }
 
 fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
-    let (project, diags) = project::load(&a.project.project_dir, &a.project.load_options());
+    let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
+    if let Some(p) = &project {
+        plugins::check_for_validate(p, !a.project.no_auto_install, &mut diags, printer);
+    }
     let ok = !diags.has_errors();
     if a.json {
         let out = serde_json::json!({
@@ -267,6 +304,9 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         return ExitCode::FAILURE;
     };
     printer.log_to(&project.root);
+    if !plugins::ensure(&project, !a.project.no_auto_install, &printer) {
+        return ExitCode::FAILURE;
+    }
     let opts = dre_core::run::RunOptions {
         selector: a.selector,
         set: a.set,
@@ -309,5 +349,32 @@ fn clean(a: CleanArgs) -> ExitCode {
             eprintln!("error: can't remove target/: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn deps(a: DepsArgs, printer: &output::Printer) -> ExitCode {
+    let opts = LoadOptions {
+        profiles_dir: a.profiles_dir,
+        ..Default::default()
+    };
+    let (project, diags) = project::load(&a.project_dir, &opts);
+    let Some(project) = project else {
+        for d in diags.sorted() {
+            println!("{}", printer.diagnostic(d));
+        }
+        return ExitCode::FAILURE;
+    };
+    if plugins::ensure(&project, true, printer) {
+        printer.line(
+            output::Tone::Good,
+            "Synced",
+            &format!(
+                "{} declared plugin(s); dre.lock is up to date",
+                project.plugins.len()
+            ),
+        );
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }

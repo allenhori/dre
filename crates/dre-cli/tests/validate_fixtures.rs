@@ -23,6 +23,39 @@ fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/validate")
 }
 
+/// Stand-in executables for the plugins fixtures commonly declare, so `--no-auto-install`
+/// doesn't warn in every golden. Validation never starts them.
+fn stand_in_plugins() -> PathBuf {
+    static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let d = tempfile::tempdir().unwrap();
+        let names = [
+            "source-duckdb",
+            "source-postgres",
+            "source-fixture",
+            "format-csv",
+            "format-delimited",
+            "format-xlsx",
+            "format-parquet",
+            "format-fixed_width",
+            "destination-sftp",
+            "destination-s3",
+        ];
+        for n in names {
+            let p = d.path().join(format!("dre-{n}{}", std::env::consts::EXE_SUFFIX));
+            std::fs::write(&p, "").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        d
+    })
+    .path()
+    .to_path_buf()
+}
+
 fn run_case(case: &Path, json: bool) -> String {
     let mut cmd = Command::cargo_bin("dre").unwrap();
     cmd.arg("validate").arg("--project-dir").arg(case.join("project"));
@@ -43,7 +76,7 @@ fn run_case(case: &Path, json: bool) -> String {
     }
     // Never touch the network or real plugin dirs from the validate harness.
     cmd.arg("--no-auto-install");
-    cmd.env("DRE_PLUGINS_DIR", case.join("no-plugins"));
+    cmd.env("DRE_PLUGINS_DIR", stand_in_plugins());
     cmd.env_remove("DRE_PROFILES_DIR");
     if let Ok(args) = std::fs::read_to_string(case.join("args")) {
         for a in args.lines().filter(|l| !l.trim().is_empty()) {
