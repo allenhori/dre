@@ -1,2 +1,2 @@
 name: dialy
-schedule: {cron: "0 6 * * *"}
+tags: [extra]

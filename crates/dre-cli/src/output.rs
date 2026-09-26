@@ -121,7 +121,7 @@ impl Printer {
     /// Colour a diagnostic's `error[...]`/`warning[...]` prefix.
     pub fn diagnostic(&self, d: &dre_core::Diagnostic) -> String {
         let i = self.inner.lock().unwrap();
-        let text = d.to_string();
+        let text = dre_core::secrets::mask(&d.to_string()).into_owned();
         let (tone, prefix) = match d.severity {
             dre_core::Severity::Error => (Tone::Bad, "error"),
             dre_core::Severity::Warning => (Tone::Warn, "warning"),
@@ -147,6 +147,15 @@ impl Printer {
             i.json(json!({"event": "error", "message": msg}));
         } else {
             i.print(Tone::Bad, "Error", msg);
+        }
+    }
+
+    /// Record the run's parameters in the log file (and as a JSON event).
+    pub fn log_params(&self, params: &serde_json::Value) {
+        let mut i = self.inner.lock().unwrap();
+        i.file_log("INFO", &format!("Parameters {params}"));
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "run_parameters", "parameters": params}));
         }
     }
 
@@ -239,7 +248,7 @@ impl Inner {
             } else {
                 format!(" [{}]", self.current)
             };
-            f.write(&format!("{ts} {level:<5}{ctx} {msg}\n"));
+            f.write(&dre_core::secrets::mask(&format!("{ts} {level:<5}{ctx} {msg}\n")));
         }
     }
 }
@@ -306,9 +315,10 @@ impl LogFile {
     }
 }
 
+/// Everything printed goes through here, so `DRE_SECRET_*` values are masked on the console.
 fn println_stdout(s: &str) {
     let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{s}");
+    let _ = writeln!(out, "{}", dre_core::secrets::mask(s));
 }
 
 fn fmt_secs(s: f64) -> String {
@@ -400,6 +410,27 @@ impl Ui for Printer {
         }
     }
 
+    fn binding_vars(
+        &mut self,
+        schedule: Option<&str>,
+        schedule_vars: Option<&serde_json::Map<String, serde_json::Value>>,
+        vars: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        let mut i = self.inner.lock().unwrap();
+        if let Some(name) = schedule {
+            let sv = serde_json::Value::Object(schedule_vars.cloned().unwrap_or_default());
+            i.file_log("INFO", &format!("Schedule {name} vars {sv}"));
+        }
+        let v = serde_json::Value::Object(vars.clone());
+        i.file_log("INFO", &format!("Vars {v}"));
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "binding_vars", "schedule": schedule, "schedule_vars": schedule_vars, "vars": vars}));
+        } else if i.shows(Level::Debug) {
+            let text = i.paint(DIM, &v.to_string());
+            i.print(Tone::Note, "Vars", &text);
+        }
+    }
+
     fn binding_end(&mut self, o: &BindingOutcome) {
         let mut i = self.inner.lock().unwrap();
         let name = label(&o.report, o.set.as_deref());
@@ -430,7 +461,7 @@ impl Ui for Printer {
             i.json(json!({
                 "event": "binding_end", "report": o.report, "set": o.set, "status": o.status,
                 "elapsed_ms": o.elapsed.as_millis() as u64, "error": o.error, "summary": o.summary,
-                "files": o.files,
+                "files": o.files, "schedule": o.schedule, "schedule_vars": o.schedule_vars, "vars": o.vars,
             }));
             return;
         }

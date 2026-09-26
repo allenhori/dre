@@ -1,2 +1,5 @@
 name: acme_reports
 default_profile: local_dev
+reports:
+  ops:
+    +schedule: {cron: "0 6 * * *"}

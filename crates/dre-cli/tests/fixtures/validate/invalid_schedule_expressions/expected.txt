@@ -1,11 +1,19 @@
 exit: 1
-error[invalid-schedule]: reports/ops/a/a.yml:2: report `a`: invalid cron `0 25 * * *`: hour field `25` has `25` outside 0-23
-error[invalid-schedule]: reports/ops/b/b.yml:2: report `b`: invalid cron `0 6 * *`: expected 5 fields (minute hour day-of-month month day-of-week), found 4
-error[invalid-schedule]: reports/ops/c/c.yml:2: report `c`: invalid rrule `FREQ=FORTNIGHTLY`: unknown FREQ `FORTNIGHTLY`
-error[invalid-schedule]: reports/ops/d/d.yml:2: report `d`: unknown `every` unit `fortnights`: use `days`, `weeks` or `months`
-error[invalid-schedule]: reports/ops/e/e.yml:2: report `e`: a schedule needs exactly one of `cron`, `every` or `rrule`, found `cron` and `rrule`
-error[invalid-schedule]: reports/ops/f/f.yml:2: report `f`: `starting` must be a date in YYYY-MM-DD form
-error[invalid-schedule]: reports/ops/f/f.yml:2: report `f`: `at` must be a 24-hour time in HH:MM form
-error[invalid-schedule]: reports/ops/g/g.yml:2: report `g`: unknown schedule key `tz`
-error[invalid-schedule]: reports/ops/g/g.yml:2: report `g`: a schedule needs exactly one of `cron`, `every` or `rrule`
-Validation failed: 9 errors, 0 warnings
+error[schedule-moved]: dre_project.yml:5: folder `ops`: `+schedule` is no longer supported; declare schedules in schedules.yml as named entries (`name`, `report:`/`select:`, `cron`/`every`/`rrule`, optional `vars`)
+error[schedule-moved]: reports/ops/h/h.yml:2: report `h`: `schedule` is no longer supported; declare schedules in schedules.yml as named entries (`name`, `report:`/`select:`, `cron`/`every`/`rrule`, optional `vars`)
+error[schedule-moved]: reports/ops/h/h.yml:4: report `h`, Set `client_a`: `schedule` is no longer supported; declare schedules in schedules.yml as named entries (`name`, `report:`/`select:`, `cron`/`every`/`rrule`, optional `vars`)
+error[invalid-schedule]: schedules.yml:1: invalid cron `0 25 * * *`: hour field `25` has `25` outside 0-23
+error[invalid-schedule]: schedules.yml:2: invalid cron `0 6 * *`: expected 5 fields (minute hour day-of-month month day-of-week), found 4
+error[invalid-schedule]: schedules.yml:3: invalid rrule `FREQ=FORTNIGHTLY`: unknown FREQ `FORTNIGHTLY`
+error[invalid-schedule]: schedules.yml:4: unknown `every` unit `fortnights`: use `days`, `weeks` or `months`
+error[invalid-schedule]: schedules.yml:5: a schedule needs exactly one of `cron`, `every` or `rrule`, found `cron` and `rrule`
+error[invalid-schedule]: schedules.yml:6: `starting` must be a date in YYYY-MM-DD form
+error[invalid-schedule]: schedules.yml:6: `at` must be a 24-hour time in HH:MM form
+error[invalid-schedule]: schedules.yml:7: unknown schedule key `tz`
+error[invalid-schedule]: schedules.yml:7: a schedule needs exactly one of `cron`, `every` or `rrule`
+error[invalid-schedule]: schedules.yml:8: every schedule needs a `name`
+error[duplicate-schedule-name]: schedules.yml:9: schedule `a_hourly` is already declared at schedules.yml:1; schedule names must be unique
+error[invalid-schedule]: schedules.yml:10: schedule name `7days` must be letters, digits and `_`, not starting with a digit
+error[invalid-schedule]: schedules.yml:11: schedule `vars_list`: `vars` must be a map
+error[invalid-schedule]: schedules.yml:12: schedule `no_target` needs `report:` (optionally with `set:`) or `select:`
+Validation failed: 17 errors, 0 warnings

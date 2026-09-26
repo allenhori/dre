@@ -48,6 +48,28 @@ pub struct RunOptions {
     pub date: Option<NaiveDate>,
     /// `validate --live`: check statements instead of executing them.
     pub live_check: bool,
+    /// `--schedule <name>`: run exactly the Bindings that schedule targets, with its vars.
+    pub schedule: Option<String>,
+}
+
+impl RunOptions {
+    /// What the run was asked to do, for `run_results.json` and the log.
+    pub fn params(&self, date: NaiveDate) -> Json {
+        json!({
+            "selector": self.selector,
+            "set": self.set,
+            "schedule": self.schedule,
+            "target": self.target,
+            "profile": self.profile,
+            "vars": self.vars,
+            "run_date": date.to_string(),
+            "output_name": self.output_name,
+            "output_path": self.output_path,
+            "dry_run": self.dry_run,
+            "preview": self.preview,
+            "accept_schema_change": self.accept_schema_change,
+        })
+    }
 }
 
 /// How much a message matters: `Info` is shown by default, `Debug` with `-v`.
@@ -63,6 +85,14 @@ pub trait Ui {
     /// The number of Bindings about to run, once Sets are resolved.
     fn plan(&mut self, _bindings: usize) {}
     fn binding_start(&mut self, _report: &str, _set: Option<&str>) {}
+    /// Right after `binding_start`: the schedule it runs under (if any) and every var it uses.
+    fn binding_vars(
+        &mut self,
+        _schedule: Option<&str>,
+        _schedule_vars: Option<&JsonMap<String, Json>>,
+        _vars: &JsonMap<String, Json>,
+    ) {
+    }
     /// One step inside the current Binding: a short verb, a detail, and how long it took.
     fn step(&mut self, level: Level, verb: &str, detail: &str, elapsed: Option<Duration>);
     fn warn(&mut self, msg: &str);
@@ -98,6 +128,11 @@ pub struct BindingOutcome {
     pub files: Vec<PathBuf>,
     /// One line describing what the Binding produced (result sets, rows, outputs, delivery).
     pub summary: String,
+    /// The schedule this ran under (`--schedule`), and the vars it layered in.
+    pub schedule: Option<String>,
+    pub schedule_vars: Option<JsonMap<String, Json>>,
+    /// Every var the Binding rendered with: its own, the schedule's, then `--var`.
+    pub vars: JsonMap<String, Json>,
     #[serde(skip)]
     pub elapsed: Duration,
 }
@@ -117,6 +152,38 @@ impl RunSummary {
 
 pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary {
     let mut summary = RunSummary::default();
+    if let Some(name) = &opts.schedule {
+        if !project.schedules.iter().any(|e| &e.name == name) {
+            summary.error = Some(unknown_schedule(project, name));
+            return summary;
+        }
+        let date = opts.date.unwrap_or_else(|| chrono::Local::now().date_naive());
+        let planned: Vec<(&Report, Binding)> = project
+            .reports
+            .iter()
+            .flat_map(|r| {
+                r.bindings
+                    .iter()
+                    .filter(|b| b.schedules.contains(name))
+                    .map(move |b| {
+                        let mut b = b.clone();
+                        if let Some(p) = &opts.profile {
+                            b.profile = Some(p.clone());
+                        }
+                        (r, b)
+                    })
+            })
+            .collect();
+        ui.plan(planned.len());
+        for (report, b) in &planned {
+            ui.binding_start(&report.name, b.set.as_deref());
+            let mut r = BindingRun::new(project, report, b, opts, date, ui);
+            let outcome = r.run();
+            ui.binding_end(&outcome);
+            summary.outcomes.push(outcome);
+        }
+        return summary;
+    }
     let reports: Vec<&Report> = match &opts.selector {
         None => project.reports.iter().collect(),
         Some(s) => match selector::resolve(project, s) {
@@ -146,6 +213,9 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
                     error: Some(e),
                     files: Vec::new(),
                     summary: String::new(),
+                    schedule: opts.schedule.clone(),
+                    schedule_vars: None,
+                    vars: JsonMap::new(),
                     elapsed: Duration::ZERO,
                 };
                 ui.binding_end(&outcome);
@@ -162,6 +232,16 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
         summary.outcomes.push(outcome);
     }
     summary
+}
+
+/// The usage error for `--schedule` with a name that isn't declared.
+pub fn unknown_schedule(project: &Project, name: &str) -> String {
+    let names: Vec<&str> = project.schedules.iter().map(|e| e.name.as_str()).collect();
+    if names.is_empty() {
+        format!("no schedule `{name}`: this project's schedules.yml declares none")
+    } else {
+        format!("no schedule `{name}`; valid names: {}", names.join(", "))
+    }
 }
 
 /// Which Bindings of a report run, following ADR 0009's Set rules.
@@ -248,6 +328,11 @@ struct BindingRun<'a> {
     project: &'a Project,
     report: &'a Report,
     b: &'a Binding,
+    /// The Binding's vars with the schedule's layered on (`--var` stays separate, on top).
+    vars: JsonMap<String, Json>,
+    /// Everything `var()` sees, `--var` included: what's recorded.
+    rendered_vars: JsonMap<String, Json>,
+    schedule_vars: Option<JsonMap<String, Json>>,
     opts: &'a RunOptions,
     date: NaiveDate,
     ui: &'a mut dyn Ui,
@@ -289,10 +374,31 @@ impl<'a> BindingRun<'a> {
     ) -> Self {
         let t = project.root.join(TARGET_DIR);
         let rel = Path::new(&report.name).join(b.dir_name());
+        let schedule_vars = opts
+            .schedule
+            .as_ref()
+            .and_then(|n| project.schedules.iter().find(|e| &e.name == n))
+            .map(|e| e.vars.clone());
+        // Binding vars, then the schedule's, then `--var` on top.
+        let mut vars = b.vars.clone();
+        vars.extend(schedule_vars.clone().unwrap_or_default());
+        let rendered_vars = {
+            let mut v = vars.clone();
+            v.extend(
+                opts.vars
+                    .iter()
+                    .map(|(k, x)| (k.clone(), Json::String(x.clone()))),
+            );
+            v
+        };
+        ui.binding_vars(opts.schedule.as_deref(), schedule_vars.as_ref(), &rendered_vars);
         BindingRun {
             project,
             report,
             b,
+            vars,
+            rendered_vars,
+            schedule_vars,
             opts,
             date,
             ui,
@@ -321,6 +427,9 @@ impl<'a> BindingRun<'a> {
             error,
             files: self.files.iter().map(|(p, _)| p.clone()).collect(),
             summary: self.summary_line(),
+            schedule: self.opts.schedule.clone(),
+            schedule_vars: self.schedule_vars.clone(),
+            vars: self.rendered_vars.clone(),
             elapsed: self.started.elapsed(),
         }
     }
@@ -396,9 +505,10 @@ impl<'a> BindingRun<'a> {
                 target: target.clone(),
                 profile: profile_name.clone(),
                 source_type: output.kind.clone(),
+                schedule: self.opts.schedule.clone(),
                 date: self.date,
             },
-            vars: self.b.vars.clone(),
+            vars: self.vars.clone(),
             cli_vars: self.opts.vars.clone(),
             runner: Some(Arc::new(SessionRunner(session.clone(), self.ui.sql_log()))),
             run_query_max_rows: self.project.run_query_max_rows,
@@ -418,8 +528,11 @@ impl<'a> BindingRun<'a> {
             let sql = renderer
                 .render(&q.path, &src)
                 .map_err(|e: RenderError| e.to_string())?;
-            std::fs::write(self.compiled_dir.join(format!("{}.sql", q.query)), &sql)
-                .map_err(|e| e.to_string())?;
+            std::fs::write(
+                self.compiled_dir.join(format!("{}.sql", q.query)),
+                crate::secrets::mask(&sql).as_bytes(),
+            )
+            .map_err(|e| e.to_string())?;
             self.ui
                 .step(Level::Debug, "Rendered", &q.path.display().to_string(), None);
             // 2. Split.
@@ -810,9 +923,10 @@ impl<'a> BindingRun<'a> {
                 target: self.target.clone(),
                 profile: self.b.profile.clone().unwrap_or_default(),
                 source_type: self.source_type.clone(),
+                schedule: self.opts.schedule.clone(),
                 date: self.date,
             },
-            vars: self.b.vars.clone(),
+            vars: self.vars.clone(),
             cli_vars: self.opts.vars.clone(),
             runner: None,
             run_query_max_rows: self.project.run_query_max_rows,
@@ -1125,6 +1239,11 @@ impl<'a> BindingRun<'a> {
             "managed": self.report.managed,
             "profile": self.b.profile,
             "target": if self.target.is_empty() { Json::Null } else { json!(self.target) },
+            "schedule": self.opts.schedule,
+            "schedule_vars": self.schedule_vars,
+            "vars": self.rendered_vars,
+            "run_date": self.date.to_string(),
+            "params": self.opts.params(self.date),
             "status": status,
             "error": error,
             "preview": self.opts.preview.is_some(),
@@ -1144,7 +1263,7 @@ impl<'a> BindingRun<'a> {
         });
         std::fs::write(
             self.run_dir.join("run_results.json"),
-            serde_json::to_string_pretty(&results)? + "\n",
+            crate::secrets::mask(&(serde_json::to_string_pretty(&results)? + "\n")).as_bytes(),
         )
     }
 
