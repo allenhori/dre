@@ -1,0 +1,16 @@
+exit: 1
+{
+  "ok": false,
+  "errors": 1,
+  "warnings": 0,
+  "diagnostics": [
+    {
+      "severity": "error",
+      "code": "missing-field",
+      "message": "missing required field `name`",
+      "file": "dre_project.yml",
+      "line": null
+    }
+  ],
+  "project": null
+}
