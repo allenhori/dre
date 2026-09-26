@@ -1339,6 +1339,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dre-destination-slack"
+version = "0.0.0"
+dependencies = [
+ "dre-protocol",
+ "form_urlencoded",
+ "serde_json",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
 name = "dre-format-csv"
 version = "0.0.0"
 dependencies = [

@@ -19,6 +19,9 @@ Status: under active development. There is no released version yet.
   subset and output.
 - **Plugins**: every source, format and destination is a separate executable that speaks DRE's
   [plugin protocol](docs/protocol.md). Plugins are declared per project and installed on demand.
+- **Delivery**: one output can go to several destinations in a single run, e.g. object storage
+  (S3, GCS, Azure Blob), SFTP/FTP, Databricks Volumes, an email with the file attached, or a
+  Slack channel. See [plugins](docs/plugins.md).
 - **Verification**: `dre validate` checks a whole project offline, and `dre validate --live`
   checks every statement against the database. `dre run --dry-run`, `--preview` and
   schema-drift detection check a report before it reaches anyone.

@@ -168,5 +168,40 @@ no recipients, an address is invalid, an option is unknown, or the attachments e
 `max_attachment_mb`. Most mail servers cap a message at 20–25 MB. For bigger files, deliver to
 object storage and email a link in `body`. The password is never logged.
 
+### `slack`
+
+Uploads the output to a Slack channel, or to one person's DM, as a single post with a message.
+If a report produces several files, they all go in the same post.
+
+The profile holds `token`, a bot token (`xoxb-...`), which is never logged. It can also hold a
+default `channel`. Destination options:
+
+| Option | Meaning |
+|---|---|
+| `channel` | A channel ID (`C0123ABCD`) or `#name`. A name is looked up among the channels the bot can see. |
+| `user` | A user ID (`U0123ABCD`). The file goes to the bot's DM with that person. |
+| `message` | The post's text. |
+
+Give exactly one of `channel` or `user`. If you give neither, the profile's `channel` is used.
+
+```yaml
+destination:
+  - profile: team_slack
+    channel: "#finance-reports"
+    message: "Monthly report for {{ var('client') }} ({{ run.date.iso }})"
+```
+
+Slack app setup: create an app, add a bot user, install it to the workspace, and use its bot
+token. Bot scopes:
+- `files:write`: always needed.
+- `channels:read` and `groups:read`: needed to post to a `#name`.
+- `im:write`: needed for `user`.
+
+The bot must be a member of the channel. Invite it with `/invite @your-bot`.
+
+If Slack rate-limits a call, the plugin retries it once after Slack's `Retry-After`. Errors such
+as a rejected token, a missing scope, or the bot not being in the channel are reported with what
+to fix. The delivered location is the uploaded files' permalinks.
+
 Every destination streams the file from `target/run/`. If an upload fails, the output stays
 there and the run reports which Binding failed.
