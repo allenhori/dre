@@ -1,3 +1,5 @@
+mod output;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -9,15 +11,86 @@ use dre_core::project::{self, LoadOptions};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// Show every step (same as `--log-level debug`).
+    #[arg(short, long, global = true)]
+    verbose: bool,
+    /// Only show errors and the final summary.
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    quiet: bool,
+    /// How much to show.
+    #[arg(long, global = true, value_enum)]
+    log_level: Option<output::Verbosity>,
+    /// `text` for people, `json` (one object per line) for CI and tooling.
+    #[arg(long, global = true, value_enum, default_value = "text")]
+    log_format: output::LogFormat,
+    /// Colour output: auto (default; off when NO_COLOR is set or output isn't a terminal),
+    /// always or never.
+    #[arg(long, global = true, value_enum, default_value = "auto")]
+    color: output::ColorChoice,
+}
+
+impl Cli {
+    fn printer(&self) -> output::Printer {
+        let v = self.log_level.unwrap_or(if self.verbose {
+            output::Verbosity::Debug
+        } else if self.quiet {
+            output::Verbosity::Quiet
+        } else {
+            output::Verbosity::Info
+        });
+        output::Printer::new(v, self.log_format, self.color)
+    }
 }
 
 #[derive(Subcommand)]
 enum Command {
     /// Check the whole project offline: config, references, templates, schedules.
     Validate(ValidateArgs),
+    /// Run reports: render, execute, format into target/, and deliver.
+    Run(RunArgs),
+    /// Remove target/ (compiled SQL, run outputs, schema snapshots).
+    Clean(CleanArgs),
     /// Manage plugins (sources, formats, destinations).
     #[command(subcommand)]
     Plugin(PluginCommand),
+}
+
+#[derive(Args)]
+struct RunArgs {
+    /// What to run: a report name, `tag:<tag>`, a folder name or a dotted folder path.
+    /// Runs every report when omitted.
+    selector: Option<String>,
+    #[command(flatten)]
+    project: ProjectArgs,
+    /// Run one Set (declared or ad hoc), or `all` of a report's Sets.
+    #[arg(long)]
+    set: Option<String>,
+    /// Use this source profile instead of the resolved one (e.g. for an ad hoc Set).
+    #[arg(long)]
+    profile: Option<String>,
+    /// Override the output file name for this run.
+    #[arg(long)]
+    output_name: Option<String>,
+    /// Override the full output (delivery) path for this run.
+    #[arg(long)]
+    output_path: Option<String>,
+    /// Render SQL into target/compiled/ and stop; no report query is executed.
+    #[arg(long)]
+    dry_run: bool,
+    /// Execute with a row limit (default 100); output stays in target/ and is never delivered.
+    #[arg(long, value_name = "ROWS", num_args = 0..=1, default_missing_value = "100")]
+    preview: Option<u64>,
+    /// Deliver even if the output schema changed since the last successful run, and accept
+    /// the new schema. Snapshots live in target/, so a fresh CI runner has no history.
+    #[arg(long)]
+    accept_schema_change: bool,
+}
+
+#[derive(Args)]
+struct CleanArgs {
+    /// Project directory (default: the current directory).
+    #[arg(long, default_value = ".")]
+    project_dir: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -73,13 +146,16 @@ struct ValidateArgs {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let printer = cli.printer();
     match cli.command {
-        Command::Validate(a) => validate(a),
+        Command::Validate(a) => validate(a, &printer),
+        Command::Run(a) => run(a, printer),
+        Command::Clean(a) => clean(a),
         Command::Plugin(PluginCommand::List) => plugin_list(),
     }
 }
 
-fn validate(a: ValidateArgs) -> ExitCode {
+fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     let (project, diags) = project::load(&a.project.project_dir, &a.project.load_options());
     let ok = !diags.has_errors();
     if a.json {
@@ -93,7 +169,7 @@ fn validate(a: ValidateArgs) -> ExitCode {
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         for d in diags.sorted() {
-            println!("{d}");
+            println!("{}", printer.diagnostic(d));
         }
         let (e, w) = (diags.error_count(), diags.warning_count());
         let verdict = if ok { "passed" } else { "failed" };
@@ -157,4 +233,81 @@ fn plugin_list() -> ExitCode {
         println!("{}", line.join("  ").trim_end());
     }
     ExitCode::SUCCESS
+}
+
+/// Load and validate the project; print problems. `None` when it can't run.
+fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::project::Project> {
+    let (project, diags) = project::load(&p.project_dir, &p.load_options());
+    for d in diags.sorted() {
+        // Unmanaged reports warn again when they run.
+        if d.severity == dre_core::Severity::Warning && d.code == "unmanaged-report" {
+            continue;
+        }
+        println!("{}", printer.diagnostic(d));
+    }
+    if diags.has_errors() {
+        printer.error(&format!(
+            "the project has {} error(s); fix them before running (see `dre validate`)",
+            diags.error_count()
+        ));
+        return None;
+    }
+    project
+}
+
+fn run_date() -> Option<chrono::NaiveDate> {
+    std::env::var("DRE_RUN_DATE")
+        .ok()
+        .and_then(|d| chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok())
+}
+
+fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
+    use std::io::IsTerminal;
+    let Some(project) = load_for_run(&a.project, &printer) else {
+        return ExitCode::FAILURE;
+    };
+    printer.log_to(&project.root);
+    let opts = dre_core::run::RunOptions {
+        selector: a.selector,
+        set: a.set,
+        target: a.project.target.clone(),
+        profile: a.profile,
+        vars: a.project.vars.iter().cloned().collect(),
+        output_name: a.output_name,
+        output_path: a.output_path,
+        dry_run: a.dry_run,
+        preview: a.preview,
+        accept_schema_change: a.accept_schema_change,
+        interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
+        date: run_date(),
+        live_check: false,
+    };
+    let summary = dre_core::run::run(&project, &opts, &mut printer);
+    if let Some(e) = &summary.error {
+        printer.error(e);
+        return ExitCode::FAILURE;
+    }
+    printer.finish("run");
+    if summary.failed() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn clean(a: CleanArgs) -> ExitCode {
+    match dre_core::run::clean(&a.project_dir) {
+        Ok(true) => {
+            eprintln!("Removed target/");
+            ExitCode::SUCCESS
+        }
+        Ok(false) => {
+            eprintln!("Nothing to clean: no target/ directory");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("error: can't remove target/: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }

@@ -2,14 +2,18 @@
 
 pub mod constraints;
 pub mod diag;
+pub mod lock;
 pub mod options;
 pub mod plugins;
 pub mod preflight;
 pub mod profiles;
 pub mod project;
+pub mod render;
+pub mod run;
 pub mod schedule;
 pub mod selector;
 pub mod sqlsplit;
+pub mod values;
 pub mod yaml;
 
 pub use diag::{Diagnostic, Diagnostics, Severity};
