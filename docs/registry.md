@@ -152,3 +152,18 @@ packages:
 - **Trust**: package macros can query your database through `run_query()`, so install packages
   you trust; `dre.lock` makes sure you keep getting the commit you reviewed.
 - Registry packages (`package: dre_utils`) aren't available yet.
+
+## Trying the install flow locally
+
+`scripts/local-registry.sh` builds DRE and every first-party plugin from your checkout and
+publishes them to a local registry (`~/.cache/dre-local-registry` by default). It then prints the
+shell lines that put the build on your `PATH`, point `DRE_REGISTRY_URL` at the local registry and
+`DRE_PROFILES_DIR` at an empty sandbox (your real `~/.dre/profiles.yml` is left alone), and unset
+`DRE_PLUGINS_DIR` so plugins install into each project's `dre_deps/` as they will for real. With
+those set, `dre init`, `dre deps`, `dre plugin install`, `dre.lock` and `dre run` all behave as
+they will against the published registry.
+
+Every plugin is published as version `0.0.1` by default. A rebuild keeps that version but changes
+the checksums, which `dre.lock` refuses: delete the project's `dre.lock`, or set
+`DRE_LOCAL_VERSION` to publish a new version (which is also how to try `dre plugin update` and
+lockfile pinning). Delete the `sandbox/` folder to start again from nothing.
