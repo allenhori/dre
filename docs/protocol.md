@@ -84,6 +84,7 @@ Capabilities:
 | `sessions` | Source: one session (connection) is held across every request until `close`, so temp tables and session settings persist. Core refuses to run a Binding with more than one statement on a source without it. |
 | `read_only` | Source: honours `read_only: true` on `open`. |
 | `check` | Source: supports `check` (verify a statement without executing it). |
+| `load` | Source: supports `load` (rows into a temporary table on the session). |
 | `multi_file` | Destination: takes every file of one output in a single `deliver` (`files`), e.g. one email carrying every attachment. |
 
 ## Requests and replies
@@ -101,22 +102,24 @@ another plugin kind, are answered with `error`.
 
 | Request | Reply |
 |---|---|
-| `{"type":"describe"}` | `{"type":"describe","connection_fields":[{"name","description","required","secret","default"}]}` |
+| `{"type":"describe"}` | `{"type":"describe","connection_fields":[{"name","description","required","secret","default","same_as_source"}]}` |
 | `{"type":"close"}` | `{"type":"ok"}`, then the plugin exits 0 |
 
-`describe` lists the fields a `profiles.yml` output of this plugin's type accepts. `dre init`
+`describe` lists the fields a `profiles.yml` target of this plugin's type accepts. `dre init`
 uses it to prompt for connection details. By default it offers fields marked `secret` as
-`env_var()` references. Format plugins return an empty list.
+`env_var()` references. A destination field with `"same_as_source": "<source type>"` defaults
+to the value entered for a source profile of that type (for example one Databricks host for
+both). Format plugins return an empty list.
 
 When stdin closes, the plugin exits.
 
 ### Source
 
 ```json
-{"type": "open", "connection": {…profile output fields…}, "read_only": false}
+{"type": "open", "connection": {…profile target fields…}, "read_only": false}
 ```
 
-`open` starts the session. `connection` holds every field of the selected `profiles.yml` output
+`open` starts the session. `connection` holds every field of the selected `profiles.yml` target
 except `type`, with `env_var()` already rendered by core. The reply is `ok`.
 
 ```json
@@ -144,6 +147,24 @@ same request.
 `check` verifies a statement without executing it, in the dialect's own way (for example
 `EXPLAIN`). The reply is `ok`, or an `error` explaining what's wrong. Only sent to plugins that
 advertise `check`.
+
+```json
+{"type": "load", "name": "countries"}
+```
+
+`load` puts rows into a temporary table (or view) on the session, for a lookup too large to
+inline. Core then streams the rows as one or more data frames (the first carries the schema) and
+a `{"type":"result_set_end"}`. Column types are `Utf8`, `Int64`, `Float64`, `Boolean` and
+`Date32`. The plugin replies:
+
+```json
+{"type": "loaded", "relation": "dre_lookup_countries", "rows": 5000, "warning": "…"}
+```
+
+`relation` is what core puts in the SQL wherever the lookup is referenced. Set `warning` when the
+database has no bulk path and the load went through ordinary SQL; core shows it to the user.
+First-party plugins: DuckDB uses its appender, Postgres `COPY`, and Databricks a temporary view
+built from one `VALUES` statement, with a warning. Only sent to plugins advertising `load`.
 
 ### Format
 

@@ -1,6 +1,6 @@
 //! DRE destination plugin `ftp`: plain FTP or explicit FTPS (`AUTH TLS`).
 //!
-//! Profile output fields: `host`, `port` (21), `username`, `password`, `passive` (default true),
+//! Profile target fields: `host`, `port` (21), `username`, `password`, `passive` (default true),
 //! `tls`: `none` (default) or `explicit`, and `tls_accept_invalid_certs` (default false, for
 //! servers with self-signed certificates). Missing remote directories are created.
 

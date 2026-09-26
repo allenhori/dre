@@ -579,6 +579,26 @@ impl PluginProcess {
         self.send(&Request::ResultSetEnd {})
     }
 
+    /// Load rows into a temporary table on the source's session. Returns the relation to use in
+    /// SQL, and the plugin's warning, if any. Only for plugins advertising `load`.
+    pub fn load(
+        &mut self,
+        name: &str,
+        schema: &SchemaRef,
+        batches: impl IntoIterator<Item = RecordBatch>,
+    ) -> Result<(String, Option<String>)> {
+        self.send(&Request::Load {
+            name: name.to_string(),
+        })?;
+        self.write_result_set(schema, batches)?;
+        match self.recv_json("a loaded reply")? {
+            Response::Loaded {
+                relation, warning, ..
+            } => Ok((relation, warning)),
+            other => Err(self.unexpected("a loaded reply", &Incoming::Json(other))),
+        }
+    }
+
     pub fn write_finish(&mut self) -> Result<Vec<String>> {
         self.send(&Request::Finish {})?;
         match self.recv_json("a written reply")? {

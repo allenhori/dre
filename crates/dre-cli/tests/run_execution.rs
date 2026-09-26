@@ -7,18 +7,20 @@ use calamine::{Data, Reader, Xlsx, open_workbook};
 use common::TestProject;
 
 const PROFILES: &str = "\
-warehouse:
-  target: dev
-  outputs:
-    dev: {type: duckdb, path: data.duckdb}
-fixture:
-  target: dev
-  outputs:
-    dev: {type: fixture}
-inbox:
-  target: dev
-  outputs:
-    dev: {type: local}
+sources:
+  warehouse:
+    target: dev
+    targets:
+      dev: {type: duckdb, path: data.duckdb}
+  fixture:
+    target: dev
+    targets:
+      dev: {type: fixture}
+destinations:
+  inbox:
+    target: dev
+    targets:
+      dev: {type: local}
 ";
 const PLUGINS: &str = "sources:\n  - duckdb\n  - fixture\nformats:\n  - csv\n  - xlsx\n";
 

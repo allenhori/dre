@@ -13,8 +13,8 @@ fn a_failed_upload_leaves_the_output_in_target_and_says_so() {
         .unwrap()
         .port();
     let profiles = format!(
-        "warehouse:\n  target: dev\n  outputs:\n    dev: {{type: duckdb, path: data.duckdb}}\n\
-         client_sftp:\n  target: dev\n  outputs:\n    dev: {{type: sftp, host: 127.0.0.1, port: {port}, username: dre, password: x}}\n"
+        "sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {{type: duckdb, path: data.duckdb}}\n\
+         destinations:\n  client_sftp:\n    target: dev\n    targets:\n      dev: {{type: sftp, host: 127.0.0.1, port: {port}, username: dre, password: x}}\n"
     );
     let p = TestProject::new(
         &[

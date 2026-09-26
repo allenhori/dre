@@ -1,7 +1,8 @@
 # First-party plugins
 
 Every plugin is declared in the project (`sources:`, `formats:`, `destinations:`) and configured
-through a `profiles.yml` output of its `type`. Fields holding secrets can use `env_var()`.
+through a profile in `profiles.yml` (under `sources:` or `destinations:`) whose target has its
+`type`. Fields holding secrets can use `env_var()`.
 
 ## Sources
 

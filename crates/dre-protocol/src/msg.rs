@@ -59,6 +59,12 @@ pub enum Request {
         #[serde(default)]
         options: Map<String, Value>,
     },
+    /// Source: load rows into a temporary table on the session, named after `name`. Followed by
+    /// Arrow frames (at least one, carrying the schema) and a `result_set_end`. Replies `loaded`.
+    /// Only sent to plugins advertising `load`.
+    Load {
+        name: String,
+    },
     /// End the conversation; the plugin exits 0.
     Close {},
 }
@@ -100,6 +106,14 @@ pub enum Response {
     Delivered {
         location: String,
     },
+    /// `relation` is what SQL uses to read the loaded rows. `warning`, when set, is shown to the
+    /// user (e.g. the database has no bulk path, so a load this size is slow).
+    Loaded {
+        relation: String,
+        rows: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warning: Option<String>,
+    },
     Error {
         message: String,
     },
@@ -140,6 +154,10 @@ pub struct ConnectionField {
     pub secret: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
+    /// A source type whose profile has the same field: `dre init` offers the value entered for
+    /// that source as this field's default (e.g. one Databricks host for source and destination).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_as_source: Option<String>,
 }
 
 impl ConnectionField {
@@ -150,6 +168,7 @@ impl ConnectionField {
             required: false,
             secret: false,
             default: None,
+            same_as_source: None,
         }
     }
     pub fn required(mut self) -> Self {
@@ -162,6 +181,10 @@ impl ConnectionField {
     }
     pub fn default(mut self, v: impl Into<Value>) -> Self {
         self.default = Some(v.into());
+        self
+    }
+    pub fn same_as_source(mut self, source_type: &str) -> Self {
+        self.same_as_source = Some(source_type.into());
         self
     }
 }

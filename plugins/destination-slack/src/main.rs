@@ -1,7 +1,7 @@
 //! `dre-destination-slack`: uploads an output's files to a Slack channel, or to a person's DM,
 //! as one post with a message.
 //!
-//! Profile output (`profiles.yml`): `token` (a bot token, `xoxb-...`), an optional default
+//! Profile target fields (`profiles.yml`): `token` (a bot token, `xoxb-...`), an optional default
 //! `channel`, and `api_url` (default `https://slack.com/api`, for a proxy or a test fake). Destination options: exactly one of `channel` (an ID such as `C0123`, or `#name`)
 //! or `user` (a user ID such as `U0123`), and `message`.
 //!

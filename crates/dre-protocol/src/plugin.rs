@@ -61,8 +61,22 @@ pub trait Source {
     fn check(&mut self, _sql: &str) -> Result<()> {
         Err("this source can't check statements".into())
     }
+    /// Load `data` into a temporary table on the session, named after `name`. Only called when
+    /// the plugin advertises `load`.
+    fn load(&mut self, _name: &str, _data: &mut ResultSet<'_>) -> Result<Loaded> {
+        Err("this source can't load rows".into())
+    }
     /// End the session cleanly (called on `close` and at end of input, before exiting).
     fn close(&mut self) {}
+}
+
+/// The outcome of `Source::load`.
+pub struct Loaded {
+    /// How SQL refers to the loaded rows, e.g. the temp table's name.
+    pub relation: String,
+    pub rows: u64,
+    /// Shown to the user, e.g. when the database has no bulk path.
+    pub warning: Option<String>,
 }
 
 /// One incoming result set, streamed from core.
@@ -393,6 +407,34 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
         ) => {
             s.open(&connection, read_only)?;
             out.send(&Response::Ok {});
+        }
+        (Handler::Source(s), Request::Load { name }) => {
+            let ipc = match input.read()? {
+                Frame::Arrow(ipc) => ipc,
+                Frame::Json(v) => return Err(format!("expected the rows to load, got {v}").into()),
+            };
+            let (schema, batches) = frame::decode_batches(&ipc)?;
+            let mut data = ResultSet {
+                meta: ResultSetMeta {
+                    name: name.clone(),
+                    query: name.clone(),
+                    result_index: 1,
+                    anchor: None,
+                    header: None,
+                },
+                schema,
+                first: Some(batches),
+                input,
+                done: false,
+            };
+            let r = s.load(&name, &mut data);
+            data.drain()?;
+            let loaded = r?;
+            out.send(&Response::Loaded {
+                relation: loaded.relation,
+                rows: loaded.rows,
+                warning: loaded.warning,
+            });
         }
         (Handler::Source(s), Request::Check { sql }) => {
             s.check(&sql)?;

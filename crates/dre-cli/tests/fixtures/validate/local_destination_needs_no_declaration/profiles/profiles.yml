@@ -1,9 +1,11 @@
-local_dev:
-  target: dev
-  outputs:
-    dev: {type: duckdb, path: ./dev.duckdb}
-    prod: {type: duckdb, path: ./prod.duckdb}
-local_fs:
-  target: prod
-  outputs:
-    prod: {type: local}
+sources:
+  local_dev:
+    target: dev
+    targets:
+      dev: {type: duckdb, path: ./dev.duckdb}
+      prod: {type: duckdb, path: ./prod.duckdb}
+destinations:
+  local_fs:
+    target: prod
+    targets:
+      prod: {type: local}

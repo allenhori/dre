@@ -21,6 +21,23 @@ static MACRO: LazyLock<Regex> = LazyLock::new(|| {
 });
 static CALL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[^\w.])([A-Za-z_]\w*)\s*\(").unwrap());
 
+static REF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?:^|[^\w.])ref\s*\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap());
+
+/// Every `ref('name')` with a literal name inside Jinja blocks, with its 1-based line.
+pub fn refs(src: &str) -> Vec<(String, usize)> {
+    let mut out = Vec::new();
+    for seg in SEGMENT.find_iter(src) {
+        for c in REF.captures_iter(seg.as_str()) {
+            out.push((
+                c[1].to_string(),
+                line_at(src, seg.start() + c.get(1).unwrap().start()),
+            ));
+        }
+    }
+    out
+}
+
 /// A macro defined in a macro file.
 #[derive(Debug, Clone)]
 pub struct MacroDef {

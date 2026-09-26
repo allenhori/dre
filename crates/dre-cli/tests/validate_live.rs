@@ -5,14 +5,15 @@ mod common;
 use common::TestProject;
 
 const PROFILES: &str = "\
-warehouse:
-  target: dev
-  outputs:
-    dev: {type: duckdb, path: data.duckdb}
-fx:
-  target: dev
-  outputs:
-    dev: {type: fixture}
+sources:
+  warehouse:
+    target: dev
+    targets:
+      dev: {type: duckdb, path: data.duckdb}
+  fx:
+    target: dev
+    targets:
+      dev: {type: fixture}
 ";
 
 fn project(files: &[(&str, &str)]) -> TestProject {

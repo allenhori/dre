@@ -181,6 +181,7 @@ exit: 0
         ]
       }
     ],
-    "macros": []
+    "macros": [],
+    "lookup_inline_max_rows": 200
   }
 }

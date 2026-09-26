@@ -1,12 +1,14 @@
 //! Terminal output: right-aligned coloured status verbs, a live progress bar, log levels,
-//! JSON lines for machines, and a full debug log in `target/dre.log`.
+//! JSON lines for machines, and a full debug log in `logs/dre.log`: every event, and the full
+//! text of every SQL statement sent to a database. The log rotates every 10,000 lines
+//! (`DRE_LOG_MAX_LINES` overrides), keeping `dre.log.1` (newest) to `dre.log.5`.
 //!
 //! Lines go to stdout. The progress bar goes to stderr and only appears when stderr is a
 //! terminal. Colour follows `--color`, `NO_COLOR` and whether stdout is a terminal.
 
 use std::fs::File;
 use std::io::{IsTerminal, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -67,7 +69,7 @@ struct Inner {
     format: LogFormat,
     color: bool,
     bar: Option<ProgressBar>,
-    log: Option<File>,
+    log: Option<LogFile>,
     current: String,
     started: Instant,
     succeeded: usize,
@@ -104,16 +106,15 @@ impl Printer {
         }
     }
 
-    /// Also write every event, at debug level, to `<project>/target/dre.log`.
+    /// Also write every event, at debug level, to `<project>/logs/dre.log`.
     pub fn log_to(&self, project: &Path) {
-        let dir = project.join(dre_core::project::TARGET_DIR);
-        if std::fs::create_dir_all(&dir).is_ok()
-            && let Ok(f) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(dir.join("dre.log"))
-        {
-            self.inner.lock().unwrap().log = Some(f);
+        let max_lines = std::env::var("DRE_LOG_MAX_LINES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(LOG_MAX_LINES);
+        if let Some(l) = LogFile::open(&project.join(LOGS_DIR).join("dre.log"), max_lines) {
+            self.inner.lock().unwrap().log = Some(l);
         }
     }
 
@@ -238,7 +239,69 @@ impl Inner {
             } else {
                 format!(" [{}]", self.current)
             };
-            let _ = writeln!(f, "{ts} {level:<5}{ctx} {msg}");
+            f.write(&format!("{ts} {level:<5}{ctx} {msg}\n"));
+        }
+    }
+}
+
+pub const LOGS_DIR: &str = "logs";
+const LOG_MAX_LINES: usize = 10_000;
+/// Rotated files kept: `dre.log.1` (newest) to `dre.log.5`.
+const LOG_KEEP: usize = 5;
+
+/// An append-only log that rotates once it reaches `max_lines`.
+struct LogFile {
+    path: PathBuf,
+    file: File,
+    lines: usize,
+    max_lines: usize,
+}
+
+impl LogFile {
+    fn open(path: &Path, max_lines: usize) -> Option<LogFile> {
+        std::fs::create_dir_all(path.parent()?).ok()?;
+        let lines = std::fs::read(path).map_or(0, |b| b.iter().filter(|c| **c == b'\n').count());
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()?;
+        let mut l = LogFile {
+            path: path.to_path_buf(),
+            file,
+            lines,
+            max_lines,
+        };
+        if l.lines >= l.max_lines {
+            l.rotate();
+        }
+        Some(l)
+    }
+
+    /// Entries are never split across files; a file can end a few lines over the limit.
+    fn write(&mut self, entry: &str) {
+        let _ = self.file.write_all(entry.as_bytes());
+        self.lines += entry.matches('\n').count();
+        if self.lines >= self.max_lines {
+            self.rotate();
+        }
+    }
+
+    fn rotate(&mut self) {
+        let _ = self.file.flush();
+        let name = |n: usize| PathBuf::from(format!("{}.{n}", self.path.display()));
+        let _ = std::fs::remove_file(name(LOG_KEEP));
+        for n in (1..LOG_KEEP).rev() {
+            let _ = std::fs::rename(name(n), name(n + 1));
+        }
+        let _ = std::fs::rename(&self.path, name(1));
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+        {
+            self.file = f;
+            self.lines = 0;
         }
     }
 }
@@ -412,6 +475,17 @@ impl Ui for Printer {
             Some(b) => b.suspend(ask),
             None => ask(),
         }
+    }
+
+    fn sql_log(&self) -> LogSink {
+        let p = self.clone();
+        Arc::new(move |label, sql| {
+            let body: String = sql.trim_end().lines().map(|l| format!("\n    {l}")).collect();
+            p.inner
+                .lock()
+                .unwrap()
+                .file_log("DEBUG", &format!("SQL {label}:{body}"));
+        })
     }
 
     fn plugin_log(&self) -> LogSink {

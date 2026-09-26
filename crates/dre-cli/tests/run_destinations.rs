@@ -5,14 +5,15 @@ mod common;
 use common::TestProject;
 use serde_json::{Value, json};
 
-/// `rec` records deliveries in `<tmp>/rec`; `broken` always fails; `mail` has only a prod output.
+/// `rec` records deliveries in `<tmp>/rec`; `broken` always fails; `mail` has only a prod target.
 fn profiles(rec: &str) -> String {
     format!(
-        "warehouse:\n  target: dev\n  outputs:\n    dev: {{type: duckdb, path: data.duckdb}}\n\
-         inbox:\n  target: dev\n  outputs:\n    dev: {{type: local}}\n\
-         rec:\n  target: dev\n  outputs:\n    dev: {{type: fixture, dir: \"{rec}\"}}\n\
-         broken:\n  target: dev\n  outputs:\n    dev: {{type: fixture, dir: \"{rec}\", fail: true}}\n\
-         mail:\n  target: prod\n  outputs:\n    prod: {{type: fixture, dir: \"{rec}\"}}\n"
+        "sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {{type: duckdb, path: data.duckdb}}\n\
+         destinations:\n\
+         \x20 inbox:\n    target: dev\n    targets:\n      dev: {{type: local}}\n\
+         \x20 rec:\n    target: dev\n    targets:\n      dev: {{type: fixture, dir: \"{rec}\"}}\n\
+         \x20 broken:\n    target: dev\n    targets:\n      dev: {{type: fixture, dir: \"{rec}\", fail: true}}\n\
+         \x20 mail:\n    target: prod\n    targets:\n      prod: {{type: fixture, dir: \"{rec}\"}}\n"
     )
 }
 
@@ -129,7 +130,7 @@ fn a_failed_destination_does_not_stop_the_next_one() {
 }
 
 #[test]
-fn a_destination_without_an_output_for_the_target_is_skipped_per_entry() {
+fn a_destination_without_the_active_target_is_skipped_per_entry() {
     let (p, rec) = project(
         "queries: [q]\noutput:\n  destination:\n\
          \x20   - {profile: mail, to: client_a@example.com}\n\
@@ -138,7 +139,7 @@ fn a_destination_without_an_output_for_the_target_is_skipped_per_entry() {
     );
     p.dre("run", &["daily", "--target", "dev"])
         .ok()
-        .says("destination profile `mail` has no `dev` output");
+        .says("destination profile `mail` has no `dev` target");
     assert!(deliveries(&rec).is_empty());
     assert_eq!(p.read("out/daily.csv"), "n\r\n1\r\n");
     let r = results(&p);
@@ -250,7 +251,7 @@ fn a_plugin_without_options_refuses_them() {
         &[Q],
     );
     let mut profiles = std::fs::read_to_string(p.dir.path().join("profiles/profiles.yml")).unwrap();
-    profiles.push_str("box:\n  target: dev\n  outputs:\n    dev: {type: sftp, host: 127.0.0.1, port: 1, username: u, password: x}\n");
+    profiles.push_str("  box:\n    target: dev\n    targets:\n      dev: {type: sftp, host: 127.0.0.1, port: 1, username: u, password: x}\n");
     std::fs::write(p.dir.path().join("profiles/profiles.yml"), profiles).unwrap();
     p.write(
         "plugins.yml",
