@@ -11,7 +11,7 @@ fn project(max_rows: Option<u32>, files: &[(&str, &str)]) -> TestProject {
     };
     let mut all = vec![
         ("dre_project.yml", project_yml.as_str()),
-        ("plugins.yml", PLUGINS_YML),
+        ("dependencies.yml", PLUGINS_YML),
     ];
     all.extend_from_slice(files);
     let p = TestProject::new(&all, DUCK_PROFILES);
@@ -89,7 +89,7 @@ fn a_source_that_cant_load_gets_the_lookup_inlined_with_a_warning() {
                 "dre_project.yml",
                 "name: acme\ndefault_profile: fx\nlookup_inline_max_rows: 1\n",
             ),
-            ("plugins.yml", "sources: [fixture]\nformats: [csv]\n"),
+            ("dependencies.yml", "sources: [fixture]\nformats: [csv]\n"),
             ("lookups/countries.csv", COUNTRIES),
             ("reports/r/r.yml", "queries: [q]\n"),
             // The fixture only understands its own commands, so the ref is rendered but unused.

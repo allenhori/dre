@@ -12,6 +12,50 @@ exit: 0
       "line": null
     }
   ],
+  "compiled": [
+    {
+      "report": "bare",
+      "set": null,
+      "compiled": [
+        "target/compiled/bare/default/bare.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/bare/default/bare.csv",
+      "destinations": [],
+      "schedules": []
+    },
+    {
+      "report": "filing",
+      "set": "client_a",
+      "compiled": [
+        "target/compiled/filing/client_a/filing_q.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "xlsx",
+      "output": "target/run/filing/client_a/filing.xlsx",
+      "destinations": [],
+      "schedules": []
+    },
+    {
+      "report": "ledger",
+      "set": null,
+      "compiled": [
+        "target/compiled/ledger/default/ledger_q.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/ledger/default/ledger.csv",
+      "destinations": [],
+      "schedules": []
+    }
+  ],
   "project": {
     "name": "acme_reports",
     "default_profile": "local_dev",
@@ -161,7 +205,7 @@ exit: 0
         "name": "duckdb",
         "version": ">=0.0",
         "declared_in": [
-          "plugins.yml"
+          "dependencies.yml"
         ]
       },
       {
@@ -169,7 +213,7 @@ exit: 0
         "name": "csv",
         "version": "*",
         "declared_in": [
-          "plugins.yml"
+          "dependencies.yml"
         ]
       },
       {
@@ -177,11 +221,13 @@ exit: 0
         "name": "xlsx",
         "version": "*",
         "declared_in": [
-          "plugins.yml"
+          "dependencies.yml"
         ]
       }
     ],
     "macros": [],
+    "packages": [],
+    "mask_secrets": true,
     "lookup_inline_max_rows": 200
   }
 }

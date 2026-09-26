@@ -1,9 +1,13 @@
-- select: "tag:quarterly"
+- name: quarterly
+  select: "tag:quarterly"
   cron: "0 6 1 * *"
-- select: nothing_here
+- name: nothing
+  select: nothing_here
   cron: "0 6 1 * *"
-- report: fin_monthly
+- name: fin_b
+  report: fin_monthly
   set: client_b
   cron: "0 6 1 * *"
-- report: no_such_report
+- name: missing
+  report: no_such_report
   cron: "0 6 1 * *"

@@ -1,2 +1,2 @@
 queries: [summary]
-schedule: {cron: "0 6 * * *"}
+profile: local_dev

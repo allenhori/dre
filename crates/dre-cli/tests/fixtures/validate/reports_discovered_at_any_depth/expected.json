@@ -4,6 +4,36 @@ exit: 0
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],
+  "compiled": [
+    {
+      "report": "daily_summary",
+      "set": null,
+      "compiled": [
+        "target/compiled/daily_summary/default/summary.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/daily_summary/default/daily_summary.csv",
+      "destinations": [],
+      "schedules": []
+    },
+    {
+      "report": "quarterly_filing",
+      "set": null,
+      "compiled": [
+        "target/compiled/quarterly_filing/default/filing_q.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/quarterly_filing/default/quarterly_filing.csv",
+      "destinations": [],
+      "schedules": []
+    }
+  ],
   "project": {
     "name": "acme_reports",
     "default_profile": "local_dev",
@@ -88,7 +118,7 @@ exit: 0
         "name": "duckdb",
         "version": ">=0.0",
         "declared_in": [
-          "plugins.yml"
+          "dependencies.yml"
         ]
       },
       {
@@ -96,11 +126,13 @@ exit: 0
         "name": "csv",
         "version": "*",
         "declared_in": [
-          "plugins.yml"
+          "dependencies.yml"
         ]
       }
     ],
     "macros": [],
+    "packages": [],
+    "mask_secrets": true,
     "lookup_inline_max_rows": 200
   }
 }

@@ -18,7 +18,7 @@ fn project() -> TestProject {
                 "dre_project.yml",
                 "name: acme_reports\ndefault_profile: warehouse\n",
             ),
-            ("plugins.yml", PLUGINS_YML),
+            ("dependencies.yml", PLUGINS_YML),
             ("reports/ops/daily/daily.yml", "queries: [setup, summary]\n"),
             (
                 "reports/ops/daily/setup.sql",
@@ -98,7 +98,8 @@ fn json_log_format_is_one_object_per_line() {
         .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{l}: {e}")))
         .collect();
     let kinds: Vec<&str> = events.iter().map(|e| e["event"].as_str().unwrap()).collect();
-    assert_eq!(kinds.first(), Some(&"plan"));
+    assert_eq!(kinds[..2], ["run_parameters", "plan"]);
+    assert!(kinds.contains(&"binding_vars"));
     assert_eq!(kinds.last(), Some(&"finished"));
     assert!(kinds.contains(&"step") && kinds.contains(&"binding_end"));
     let end = events

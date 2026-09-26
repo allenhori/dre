@@ -30,7 +30,7 @@ fn project(files: &[(&str, &str)]) -> TestProject {
             "dre_project.yml",
             "name: acme_reports\ndefault_profile: warehouse\n",
         ),
-        ("plugins.yml", PLUGINS),
+        ("dependencies.yml", PLUGINS),
     ];
     all.extend_from_slice(files);
     let p = TestProject::new(&all, PROFILES);
@@ -203,7 +203,9 @@ fn dry_run_compiles_and_executes_nothing() {
             "delete from accounts where id = {{ 1 + 1 }};\nselect count(*) as n from accounts",
         ),
     ]);
-    p.dre("run", &["d", "--dry-run"]).ok().says("dry run");
+    p.dre("run", &["d", "--dry-run"])
+        .ok()
+        .says("Compiled  target/compiled/d/default/dq.sql");
     assert_eq!(
         p.read("target/compiled/d/default/dq.sql"),
         "delete from accounts where id = 2;\nselect count(*) as n from accounts"

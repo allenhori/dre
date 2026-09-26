@@ -121,7 +121,7 @@ impl Printer {
     /// Colour a diagnostic's `error[...]`/`warning[...]` prefix.
     pub fn diagnostic(&self, d: &dre_core::Diagnostic) -> String {
         let i = self.inner.lock().unwrap();
-        let text = d.to_string();
+        let text = dre_core::secrets::mask(&d.to_string()).into_owned();
         let (tone, prefix) = match d.severity {
             dre_core::Severity::Error => (Tone::Bad, "error"),
             dre_core::Severity::Warning => (Tone::Warn, "warning"),
@@ -147,6 +147,58 @@ impl Printer {
             i.json(json!({"event": "error", "message": msg}));
         } else {
             i.print(Tone::Bad, "Error", msg);
+        }
+    }
+
+    /// Record the run's parameters in the log file (and as a JSON event).
+    pub fn log_params(&self, params: &serde_json::Value) {
+        let mut i = self.inner.lock().unwrap();
+        i.file_log("INFO", &format!("Parameters {params}"));
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "run_parameters", "parameters": params}));
+        }
+    }
+
+    /// Where a compiled Binding's output would go: source, output file, each destination and
+    /// its target (non-dev targets stand out), and the schedules that run it.
+    pub fn plan(&self, p: &dre_core::run::BindingPlan) {
+        let i = self.inner.lock().unwrap();
+        let non_dev = |t: &str| t != "dev";
+        i.print(Tone::Step, "Binding", &label(&p.report, p.set.as_deref()));
+        for f in &p.compiled {
+            i.print(Tone::Good, "Compiled", &f.display().to_string());
+        }
+        let source = format!("{} ({}), target {}", p.profile, p.source_type, p.target);
+        i.print(
+            if non_dev(&p.target) {
+                Tone::Warn
+            } else {
+                Tone::Note
+            },
+            "Source",
+            &source,
+        );
+        i.print(
+            Tone::Note,
+            "Output",
+            &format!("{} ({})", p.output.display(), p.format),
+        );
+        for d in &p.destinations {
+            let target = d.target.clone().unwrap_or_default();
+            let what = match (&d.kind, &d.path) {
+                (Some(k), Some(path)) => format!("{} ({k}), target {target} → {path}", d.profile),
+                (Some(k), None) => format!("{} ({k}), target {target}", d.profile),
+                (None, _) => format!("{}: no `{target}` target, so nothing is delivered", d.profile),
+            };
+            let tone = if d.delivers && non_dev(&target) {
+                Tone::Warn
+            } else {
+                Tone::Note
+            };
+            i.print(tone, if d.delivers { "Delivers" } else { "Keeps" }, &what);
+        }
+        if !p.schedules.is_empty() {
+            i.print(Tone::Note, "Schedules", &p.schedules.join(", "));
         }
     }
 
@@ -239,12 +291,12 @@ impl Inner {
             } else {
                 format!(" [{}]", self.current)
             };
-            f.write(&format!("{ts} {level:<5}{ctx} {msg}\n"));
+            f.write(&dre_core::secrets::mask(&format!("{ts} {level:<5}{ctx} {msg}\n")));
         }
     }
 }
 
-pub const LOGS_DIR: &str = "logs";
+pub use dre_core::project::LOGS_DIR;
 const LOG_MAX_LINES: usize = 10_000;
 /// Rotated files kept: `dre.log.1` (newest) to `dre.log.5`.
 const LOG_KEEP: usize = 5;
@@ -306,9 +358,10 @@ impl LogFile {
     }
 }
 
+/// Everything printed goes through here, so `DRE_SECRET_*` values are masked on the console.
 fn println_stdout(s: &str) {
     let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{s}");
+    let _ = writeln!(out, "{}", dre_core::secrets::mask(s));
 }
 
 fn fmt_secs(s: f64) -> String {
@@ -400,6 +453,41 @@ impl Ui for Printer {
         }
     }
 
+    fn binding_vars(
+        &mut self,
+        schedule: Option<&str>,
+        schedule_vars: Option<&serde_json::Map<String, serde_json::Value>>,
+        vars: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        let mut i = self.inner.lock().unwrap();
+        if let Some(name) = schedule {
+            let sv = serde_json::Value::Object(schedule_vars.cloned().unwrap_or_default());
+            i.file_log("INFO", &format!("Schedule {name} vars {sv}"));
+        }
+        let v = serde_json::Value::Object(vars.clone());
+        i.file_log("INFO", &format!("Vars {v}"));
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "binding_vars", "schedule": schedule, "schedule_vars": schedule_vars, "vars": vars}));
+        } else if i.shows(Level::Debug) {
+            let text = i.paint(DIM, &v.to_string());
+            i.print(Tone::Note, "Vars", &text);
+        }
+    }
+
+    fn compiled(&mut self, p: &dre_core::run::BindingPlan) {
+        let mut i = self.inner.lock().unwrap();
+        for f in &p.compiled {
+            i.file_log("INFO", &format!("Compiled {}", f.display()));
+        }
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "compiled", "plan": p}));
+        } else {
+            for f in &p.compiled {
+                i.print(Tone::Good, "Compiled", &f.display().to_string());
+            }
+        }
+    }
+
     fn binding_end(&mut self, o: &BindingOutcome) {
         let mut i = self.inner.lock().unwrap();
         let name = label(&o.report, o.set.as_deref());
@@ -430,7 +518,7 @@ impl Ui for Printer {
             i.json(json!({
                 "event": "binding_end", "report": o.report, "set": o.set, "status": o.status,
                 "elapsed_ms": o.elapsed.as_millis() as u64, "error": o.error, "summary": o.summary,
-                "files": o.files,
+                "files": o.files, "schedule": o.schedule, "schedule_vars": o.schedule_vars, "vars": o.vars,
             }));
             return;
         }

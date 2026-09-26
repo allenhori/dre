@@ -37,19 +37,26 @@ Status: under active development. There is no released version yet.
 - **Logs**: every run appends to `logs/dre.log` in the project, including the full SQL of each
   statement sent to the database (report queries, `run_query()`, lookup loads). The file rotates
   every 10,000 lines, keeping `dre.log.1` to `dre.log.5`.
-- **Verification**: `dre validate` checks a whole project offline, and `dre validate --live`
-  checks every statement against the database. `dre run --dry-run`, `--preview` and
-  schema-drift detection check a report before it reaches anyone.
+- **Verification**: `dre validate` checks the project and compiles its SQL; with `-s` it also shows,
+  per selected Binding, the compiled files, the source and target, the output file and every
+  destination (non-dev targets stand out). `dre compile` just renders the SQL into
+  `target/compiled/` and lists the files. `dre validate --live` checks every statement against
+  the database. `--preview` and schema-drift detection check a report before it reaches anyone.
+- **Selecting**: `run`, `compile` and `validate` take `-s`/`--select` with report names,
+  `tag:<tag>`, folder names or dotted folder paths. Several match any of them: `-s daily monthly`,
+  `-s daily,monthly`, or repeated `-s` (a semicolon works too, quoted: `-s "daily;monthly"`).
 
 ## Quick start
 
 ```bash
 dre init                 # pick a source, enter its connection, optionally start a project
 cd my_reports
-dre validate             # check the whole project offline
+dre validate             # check the project and compile its SQL
+dre validate -s monthly  # ...and show where monthly's output would go
+dre compile -s daily,monthly       # render the SQL into target/compiled/ and list the files
 dre run                  # run every report; output lands in target/run/
 dre run monthly --preview 50       # sample 50 rows, never delivered
-dre run tag:regulatory --set all   # every regulatory report, for every Set
+dre run -s tag:regulatory --set all  # every regulatory report, for every Set
 dre validate --live      # check every statement against the database without running it
 ```
 
@@ -88,8 +95,54 @@ destinations:
       prod: {type: s3, bucket: reports}
 ```
 
-`dre init` writes this file for you. Plugins are declared in `plugins.yml` and installed on demand (`dre deps`). Their
-exact versions are pinned in `dre.lock`.
+`dre init` writes this file for you.
+
+Plugins and macro packages are declared in `dependencies.yml` (or `packages.yml`, or both) and
+installed into the project's `dre_deps/` folder by `dre deps`. Their exact versions and commits
+are pinned in `dre.lock`. Package macros are called through the package's name
+(`{{ dre_utils.star_except(...) }}`), and `dispatch()` lets a package offer per-database variants
+that a project can override. See [the registry docs](docs/registry.md).
+
+## Schedules
+
+DRE doesn't fire schedules itself; your orchestrator does. `schedules.yml` names them, and one
+report can have several, each with its own vars:
+
+```yaml
+- name: flash_daily
+  report: sales_summary
+  set: client_a
+  cron: "0 7 * * *"
+  vars: {period: day}
+- name: close_monthly
+  report: sales_summary
+  set: client_a
+  cron: "0 6 1 * *"
+  vars: {period: month}
+```
+
+```bash
+DRE_RUN_DATE=2026-09-01 dre run --schedule close_monthly
+```
+
+`--schedule` runs exactly the Bindings that schedule targets. Its `vars` sit above the report's and
+below `--var`, and `run.schedule` renders as its name, so SQL can say
+`{% if var('period') == 'day' %}...`. Pass the scheduled date through `DRE_RUN_DATE` so reruns
+render the same. `run_results.json`, the JSON events and `logs/dre.log` record the schedule, its
+vars, every var the run used and the command's parameters.
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `DRE_PROFILES_DIR` | Directory holding `profiles.yml` (default `~/.dre`). `--profiles-dir` overrides it. |
+| `DRE_PLUGINS_DIR` | One plugins directory for every project, instead of each project's `dre_deps/plugins`. |
+| `DRE_REGISTRY_URL` | The plugin registry index (a URL or a local path). |
+| `DRE_RUN_DATE` | The run date (`YYYY-MM-DD`) behind `run.date`, instead of today. |
+| `DRE_LOG_MAX_LINES` | Lines per `logs/dre.log` before it rotates (default 10,000). |
+| `DRE_PLUGIN_HANDSHAKE_TIMEOUT_MS` | How long to wait for a plugin to start (default 30,000). |
+| `NO_COLOR` | Turns off coloured output. |
+| `DRE_SECRET_*` | Values are masked as `*****` in the console, logs, JSON events, `run_results.json` and `target/compiled/` (`mask_secrets: false` in `dre_project.yml` turns this off). |
 
 ## Documentation
 
@@ -106,8 +159,8 @@ cargo build --release
 ./target/release/dre --help
 ```
 
-The first-party plugins are built from the same workspace (`target/release/dre-*`). Put them in
-`~/.dre/plugins/` (or `DRE_PLUGINS_DIR`) to use them without a registry.
+The first-party plugins are built from the same workspace (`target/release/dre-*`). Put them in a
+project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them without a registry.
 
 ## License
 

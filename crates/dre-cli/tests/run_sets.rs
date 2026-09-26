@@ -29,7 +29,7 @@ fn project(files: &[(&str, &str)]) -> TestProject {
             "dre_project.yml",
             "name: acme_reports\ndefault_profile: warehouse\n",
         ),
-        ("plugins.yml", PLUGINS_YML),
+        ("dependencies.yml", PLUGINS_YML),
         (
             "sets.yml",
             "client_a: {profile: warehouse, vars: {client: client_a}}\nclient_b: {profile: warehouse, vars: {client: client_b}}\n",
@@ -241,7 +241,10 @@ fn an_ambiguous_selector_gives_the_same_error_as_validate() {
     let run = p.dre("run", &["monthly"]);
     run.failed();
     assert!(flat(&run.stdout).contains(&flat(expected)), "{}", run.stdout);
-    p.write("schedules.yml", "- select: monthly\n  cron: \"0 6 1 * *\"\n");
+    p.write(
+        "schedules.yml",
+        "- name: monthly_run\n  select: monthly\n  cron: \"0 6 1 * *\"\n",
+    );
     let v = p.dre("validate", &[]);
     v.failed();
     assert!(flat(&v.stdout).contains(&flat(expected)), "{}", v.stdout);

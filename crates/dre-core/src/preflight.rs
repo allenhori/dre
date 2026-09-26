@@ -6,7 +6,16 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 /// `run.*` attributes the runtime context provides.
-pub const RUN_ATTRS: &[&str] = &["report", "set", "target", "profile", "date", "date_format"];
+pub const RUN_ATTRS: &[&str] = &[
+    "report",
+    "set",
+    "target",
+    "profile",
+    "source_type",
+    "schedule",
+    "date",
+    "date_format",
+];
 /// Pre-built formats of `run.date`.
 pub const DATE_ATTRS: &[&str] = &["yyyymmdd", "ddmmyyyy", "yyyy", "mm", "dd", "iso"];
 

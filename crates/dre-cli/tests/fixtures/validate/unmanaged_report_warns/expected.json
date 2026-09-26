@@ -1,9 +1,16 @@
-exit: 0
+exit: 1
 {
-  "ok": true,
-  "errors": 0,
+  "ok": false,
+  "errors": 1,
   "warnings": 3,
   "diagnostics": [
+    {
+      "severity": "error",
+      "code": "compile-failed",
+      "message": "report `templated` doesn't compile: reports/scratch/templated.sql:2: unmanaged report `templated` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `delete from t where id = 1`; nothing was run — rewrite the statement, or give the report a YAML to declare it",
+      "file": null,
+      "line": null
+    },
     {
       "severity": "warning",
       "code": "unmanaged-report",
@@ -24,6 +31,36 @@ exit: 0
       "message": "`templated` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report",
       "file": "reports/scratch/templated.sql",
       "line": null
+    }
+  ],
+  "compiled": [
+    {
+      "report": "quick_look",
+      "set": null,
+      "compiled": [
+        "target/compiled/quick_look/default/quick_look.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/quick_look/default/quick_look.csv",
+      "destinations": [],
+      "schedules": []
+    },
+    {
+      "report": "temp_then_select",
+      "set": null,
+      "compiled": [
+        "target/compiled/temp_then_select/default/temp_then_select.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/temp_then_select/default/temp_then_select.csv",
+      "destinations": [],
+      "schedules": []
     }
   ],
   "project": {
@@ -139,7 +176,7 @@ exit: 0
         "name": "duckdb",
         "version": ">=0.0",
         "declared_in": [
-          "plugins.yml"
+          "dependencies.yml"
         ]
       },
       {
@@ -147,11 +184,13 @@ exit: 0
         "name": "csv",
         "version": "*",
         "declared_in": [
-          "plugins.yml"
+          "dependencies.yml"
         ]
       }
     ],
     "macros": [],
+    "packages": [],
+    "mask_secrets": true,
     "lookup_inline_max_rows": 200
   }
 }
