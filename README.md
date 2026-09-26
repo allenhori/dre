@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="DRE logo" width="360">
+</p>
+
 # DRE
 
 **DRE** stands for **Declarative Reporting Engine**.
