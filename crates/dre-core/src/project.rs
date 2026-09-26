@@ -166,8 +166,9 @@ pub struct Output {
     pub format: String,
     /// Format options: every key except `format`, `destination` and `template`.
     pub options: JsonMap<String, Json>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub destination: Option<Destination>,
+    /// Where the output is delivered, in order. Empty: it stays in `target/`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub destinations: Vec<Destination>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template: Option<Template>,
 }
@@ -177,6 +178,10 @@ pub struct Destination {
     pub profile: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Plugin options: every key other than `profile` and `path`, passed to the plugin after
+    /// rendering.
+    #[serde(skip_serializing_if = "JsonMap::is_empty")]
+    pub options: JsonMap<String, Json>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -1185,17 +1190,32 @@ impl Loader {
         }
 
         let mut output = builtin_output();
+        let mut merge_problems = Vec::new();
         if let Some(o) = project_default_output(project) {
-            merge_output(&mut output, &o);
+            merge_problems.extend(merge_output(&mut output, &o));
         }
         for l in &layers {
             if let Some(o) = &l.output {
-                merge_output(&mut output, o);
+                merge_problems.extend(merge_output(&mut output, o));
             }
+        }
+        for p in merge_problems {
+            self.diags.error(
+                "invalid-field",
+                Some(r.file.display.clone()),
+                None,
+                format!("report `{name}`: folder config: {p}"),
+            );
         }
         if let Some(o) = key("output") {
             match o.value.as_mapping() {
-                Some(m) => merge_output(&mut output, m),
+                Some(m) => {
+                    if let Some(p) = merge_output(&mut output, m) {
+                        let (f, l) = located("output").unwrap();
+                        self.diags
+                            .error("invalid-field", Some(f), l, format!("report `{name}`: {p}"));
+                    }
+                }
                 None => {
                     let (f, l) = located("output").unwrap();
                     self.diags.error(
@@ -1399,7 +1419,11 @@ impl Loader {
                 }
                 if let Some(o) = m.get("output") {
                     match o.as_mapping() {
-                        Some(o) => merge_output(&mut b.output, o),
+                        Some(o) => {
+                            if let Some(p) = merge_output(&mut b.output, o) {
+                                self.diags.error("invalid-field", file.clone(), line, format!("{ctx}: {p}"));
+                            }
+                        }
                         None => self.diags.error(
                             "invalid-field",
                             file.clone(),
@@ -1613,48 +1637,43 @@ impl Loader {
             self.diags
                 .error("invalid-output-option", file.clone(), None, format!("{ctx}: {e}"));
         }
-        let destination = match m.get("destination") {
-            None | Some(Value::Null) => None,
-            Some(Value::Mapping(d)) => {
-                for k in d.keys().filter_map(Value::as_str) {
-                    if !["profile", "path"].contains(&k) {
-                        self.diags.error(
-                            "unknown-key",
-                            file.clone(),
-                            None,
-                            format!("{ctx}: unknown destination key `{k}`"),
-                        );
-                    }
-                }
-                match d.get("profile").and_then(Value::as_str) {
-                    Some(p) => {
-                        used.destination(p, file.clone(), None);
-                        Some(Destination {
-                            profile: p.to_string(),
-                            path: d.get("path").and_then(Value::as_str).map(str::to_string),
-                        })
-                    }
-                    None => {
-                        self.diags.error(
+        let destinations = match m.get("destination") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::Mapping(d)) => self.typed_destination(d, ctx, &file, used).into_iter().collect(),
+            Some(Value::Sequence(list)) if list.is_empty() => {
+                self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    None,
+                    format!(
+                        "{ctx}: `output.destination` is an empty list; name at least one destination, or remove it to keep the output in target/"
+                    ),
+                );
+                Vec::new()
+            }
+            Some(Value::Sequence(list)) => {
+                let mut out = Vec::new();
+                for (i, d) in list.iter().enumerate() {
+                    match d.as_mapping() {
+                        Some(d) => out.extend(self.typed_destination(d, ctx, &file, used)),
+                        None => self.diags.error(
                             "invalid-field",
                             file.clone(),
                             None,
-                            format!(
-                                "{ctx}: `output.destination` needs a `profile:` naming a profiles.yml entry"
-                            ),
-                        );
-                        None
+                            format!("{ctx}: `output.destination` entry {} must be a map", i + 1),
+                        ),
                     }
                 }
+                out
             }
             Some(_) => {
                 self.diags.error(
                     "invalid-field",
                     file.clone(),
                     None,
-                    format!("{ctx}: `output.destination` must be a map"),
+                    format!("{ctx}: `output.destination` must be a map or a list of maps"),
                 );
-                None
+                Vec::new()
             }
         };
         let template = match m.get("template") {
@@ -1674,9 +1693,52 @@ impl Loader {
         Output {
             format,
             options: opts,
-            destination,
+            destinations,
             template,
         }
+    }
+
+    /// One `output.destination` entry: `profile`, optional `path`, and plugin options.
+    fn typed_destination(
+        &mut self,
+        d: &Mapping,
+        ctx: &str,
+        file: &Option<PathBuf>,
+        used: &mut Usage,
+    ) -> Option<Destination> {
+        let Some(p) = d.get("profile").and_then(Value::as_str) else {
+            self.diags.error(
+                "invalid-field",
+                file.clone(),
+                None,
+                format!("{ctx}: `output.destination` needs a `profile:` naming a profiles.yml entry"),
+            );
+            return None;
+        };
+        let path = match d.get("path") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(_) => {
+                self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    None,
+                    format!("{ctx}: destination `{p}`: `path` must be a string"),
+                );
+                None
+            }
+        };
+        used.destination(p, file.clone(), None);
+        let options = d
+            .iter()
+            .filter(|(k, _)| !is_one_of(k, &["profile", "path"]))
+            .filter_map(|(k, v)| Some((k.as_str()?.to_string(), yaml_to_json(v))))
+            .collect();
+        Some(Destination {
+            profile: p.to_string(),
+            path,
+            options,
+        })
     }
 
     fn typed_template(
@@ -1849,13 +1911,18 @@ impl Loader {
             }
         }
         let mut output = builtin_output();
+        let mut merge_problems = Vec::new();
         if let Some(o) = project_default_output(project) {
-            merge_output(&mut output, &o);
+            merge_problems.extend(merge_output(&mut output, &o));
         }
         for l in &layers {
             if let Some(o) = &l.output {
-                merge_output(&mut output, o);
+                merge_problems.extend(merge_output(&mut output, o));
             }
+        }
+        for p in merge_problems {
+            self.diags
+                .error("invalid-field", Some(path.to_path_buf()), None, format!("folder config: {p}"));
         }
         let schedule = layers.iter().rev().find_map(|l| l.schedule.clone());
         self.diags.warning(
@@ -2423,10 +2490,9 @@ impl Loader {
                 }
                 // Templated output values render with the same context.
                 let mut values: Vec<String> = Vec::new();
-                if let Some(d) = &b.output.destination
-                    && let Some(p) = &d.path
-                {
-                    values.push(p.clone());
+                for d in &b.output.destinations {
+                    values.extend(d.path.clone());
+                    values.extend(d.options.values().flat_map(json_strings));
                 }
                 if let Some(t) = &b.output.template {
                     values.extend(t.bindings.iter().filter_map(|tb| tb.value.clone()));
@@ -2642,26 +2708,57 @@ fn project_default_output(p: &Project) -> Option<Mapping> {
 }
 
 /// Merge an output layer over `base`. Changing `format` drops the lower layers' format options,
-/// since they belong to a different format; `destination` merges key by key so a Binding can
-/// override just `path` and inherit `profile`.
-pub fn merge_output(base: &mut Mapping, over: &Mapping) {
+/// since they belong to a different format.
+///
+/// `destination` (a map or a list of maps):
+/// - a list replaces whatever was inherited;
+/// - a map naming a different `profile` replaces it too, so one plugin's options never leak into
+///   another's;
+/// - a map without `profile` (or with the same one) merges key by key into the inherited single
+///   destination, so a Binding can override just `path`. With several inherited destinations
+///   that's ambiguous: the layer's destination is ignored and the returned message says why.
+pub fn merge_output(base: &mut Mapping, over: &Mapping) -> Option<String> {
     let fmt_key = Value::String("format".into());
     if let Some(f) = over.get(&fmt_key)
         && base.get(&fmt_key) != Some(f)
     {
         base.retain(|k, _| is_one_of(k, &["destination", "template"]));
     }
+    let mut problem = None;
     for (k, v) in over {
         if k.as_str() == Some("destination")
-            && let (Some(Value::Mapping(b)), Value::Mapping(o)) = (base.get_mut(k), v)
+            && let Value::Mapping(o) = v
         {
-            for (dk, dv) in o {
-                b.insert(dk.clone(), dv.clone());
+            let profile = |m: &Mapping| m.get("profile").cloned();
+            match base.get_mut(k) {
+                Some(Value::Sequence(list)) if o.get("profile").is_none() && list.len() > 1 => {
+                    problem = Some(format!(
+                        "this overrides `destination` with no `profile:`, but it inherits {} destinations, so it's unclear which one to change; override the full list instead",
+                        list.len()
+                    ));
+                    continue;
+                }
+                Some(Value::Sequence(list))
+                    if list.len() == 1
+                        && list[0].as_mapping().is_some_and(|b| {
+                            o.get("profile").is_none() || profile(b) == profile(o)
+                        }) =>
+                {
+                    let mut b = list[0].as_mapping().cloned().unwrap_or_default();
+                    b.extend(o.clone());
+                    base.insert(k.clone(), Value::Mapping(b));
+                    continue;
+                }
+                Some(Value::Mapping(b)) if o.get("profile").is_none() || profile(b) == profile(o) => {
+                    b.extend(o.clone());
+                    continue;
+                }
+                _ => {}
             }
-            continue;
         }
         base.insert(k.clone(), v.clone());
     }
+    problem
 }
 
 fn folder_layers<'a>(folders: &'a BTreeMap<Vec<String>, FolderCfg>, folder: &[String]) -> Vec<&'a FolderCfg> {
@@ -2690,6 +2787,16 @@ fn pick(v: &Value, keys: &[&str]) -> Mapping {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Every string inside a JSON value (the templated values of a destination option).
+fn json_strings(v: &Json) -> Vec<String> {
+    match v {
+        Json::String(s) => vec![s.clone()],
+        Json::Array(a) => a.iter().flat_map(json_strings).collect(),
+        Json::Object(o) => o.values().flat_map(json_strings).collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn is_one_of(k: &Value, keys: &[&str]) -> bool {

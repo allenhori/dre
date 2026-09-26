@@ -61,6 +61,39 @@ See the YAML schema for defaults.
 The built-in `local` destination copies the file to a path, relative to the project. It needs no
 plugin and no declaration.
 
+### Several destinations
+
+`output.destination` takes one destination or a list. Each entry names a profile, an optional
+`path`, and any options its plugin takes (recipients, a channel, a message). Options are rendered
+with the same Jinja context as paths:
+
+```yaml
+output:
+  format: xlsx
+  destination:
+    - profile: reports_s3
+      path: "s3://reports/{{ var('client') }}/monthly-{{ run.date.yyyymmdd }}.xlsx"
+    - profile: finance_mail
+      to: "{{ var('client') }}-finance@example.com"
+      subject: "Monthly report {{ run.date.iso }}"
+    - profile: team_slack
+      channel: "#finance-reports"
+      message: "Monthly report for {{ var('client') }}"
+```
+
+- Entries are delivered in order. If one fails, the rest are still attempted; the Binding then
+  fails and the run exits non-zero.
+- Each entry follows `--target` on its own: an entry whose profile has no output for the active
+  target is skipped and logged, while the others are delivered.
+- `run_results.json` lists every entry under `deliveries`, with `profile`, `type`, `status`
+  (`delivered`, `skipped` or `failed`), `location` and `error`.
+- A Set can replace the whole list. Overriding only `path:` works when exactly one destination
+  is inherited; with several, override the full list.
+- The local file is named after the first entry's `path`. `--output-path` and `--output-name`
+  apply to every entry that has a path.
+- Credentials stay in `profiles.yml`. Options belong to the report, so a Set can address its own
+  recipients.
+
 ### `s3`
 
 `bucket`, `region`, and `access_key_id` + `secret_access_key` (+ `session_token`). Leave the keys
