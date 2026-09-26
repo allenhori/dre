@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "plugins/*"]
 
 [workspace.package]
 edition = "2024"
@@ -24,3 +24,4 @@ tempfile = "3"
 assert_cmd = "2"
 arrow = "58"
 parquet = "58"
+duckdb = { version = "1.10505", features = ["bundled"] }

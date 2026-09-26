@@ -5,6 +5,9 @@
 //! - `garbage`: writes bytes that aren't a frame
 //! - `silent`: never answers
 //! - `die`: logs to stderr and exits 5 at start
+//! - `no_sessions`: a normal source that doesn't advertise `sessions`
+//!
+//! Every `open` logs `fixture: opened read_only=<bool>` to stderr.
 //!
 //! SQL it understands: `rows N` (N rows of `n`, batches of 3), `none`, `fail`, `crash`,
 //! `log <text>`, `panic`. `check` accepts anything except `bad`.
@@ -40,6 +43,7 @@ impl Source for Fixture {
             return Err("can't connect: fixture told to fail".into());
         }
         self.opened = true;
+        eprintln!("fixture: opened read_only={_read_only}");
         Ok(())
     }
 
@@ -122,6 +126,11 @@ fn main() {
             std::process::exit(5);
         }
         _ => {}
+    }
+    if std::env::var("DRE_FIXTURE_MODE").as_deref() == Ok("no_sessions") {
+        let about =
+            About::new("fixture", env!("CARGO_PKG_VERSION")).capabilities(&[CAP_READ_ONLY, CAP_CHECK]);
+        serve_source(about, Fixture { opened: false })
     }
     let about = About::new("fixture", env!("CARGO_PKG_VERSION")).capabilities(&[
         CAP_SESSIONS,
