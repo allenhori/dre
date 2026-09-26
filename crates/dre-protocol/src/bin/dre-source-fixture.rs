@@ -6,6 +6,7 @@
 //! - `silent`: never answers
 //! - `die`: logs to stderr and exits 5 at start
 //! - `no_sessions`: a normal source that doesn't advertise `sessions`
+//! - `no_check`: a normal source that doesn't advertise `check`
 //!
 //! Every `open` logs `fixture: opened read_only=<bool>` to stderr.
 //!
@@ -126,6 +127,11 @@ fn main() {
             std::process::exit(5);
         }
         _ => {}
+    }
+    if std::env::var("DRE_FIXTURE_MODE").as_deref() == Ok("no_check") {
+        let about =
+            About::new("fixture", env!("CARGO_PKG_VERSION")).capabilities(&[CAP_SESSIONS, CAP_READ_ONLY]);
+        serve_source(about, Fixture { opened: false })
     }
     if std::env::var("DRE_FIXTURE_MODE").as_deref() == Ok("no_sessions") {
         let about =
