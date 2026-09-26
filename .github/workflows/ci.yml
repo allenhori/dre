@@ -65,11 +65,17 @@ jobs:
             azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
           docker run -d -p 2121:21 -p 30000-30009:30000-30009 -e USERS="dre|dre-pass" \
             -e ADDRESS=localhost -e MIN_PORT=30000 -e MAX_PORT=30009 delfer/alpine-ftp-server
-          sleep 5
+          # Wait until each emulator accepts connections, rather than a fixed sleep.
+          for port in 4443 2222 10000 2121; do
+            for _ in $(seq 60); do
+              (echo > "/dev/tcp/localhost/$port") 2>/dev/null && break
+              sleep 1
+            done
+          done
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: >
-          cargo test -p dre-source-postgres -p dre-destination-object_store
+          cargo test --no-fail-fast -p dre-source-postgres -p dre-destination-object_store
           -p dre-destination-sftp -p dre-destination-ftp -p dre-destination-email
 
   test:
@@ -83,6 +89,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --bins
-      - run: cargo test --workspace
+      # Run every test binary even after a failure, so one failure can't hide others.
+      - run: cargo test --workspace --no-fail-fast
         env:
           DRE_TEST_PREBUILT_BINS: "1"
