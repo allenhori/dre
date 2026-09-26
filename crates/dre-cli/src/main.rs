@@ -73,6 +73,10 @@ struct RunArgs {
     /// Run one Set (declared or ad hoc), or `all` of a report's Sets.
     #[arg(long)]
     set: Option<String>,
+    /// Run the Bindings a schedules.yml entry targets, with its vars. Pass the scheduled
+    /// (logical) date through DRE_RUN_DATE so reruns render the same.
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["selector", "set"])]
+    schedule: Option<String>,
     /// Use this source profile instead of the resolved one (e.g. for an ad hoc Set).
     #[arg(long)]
     profile: Option<String>,
@@ -231,6 +235,7 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     }
     let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
     if let Some(p) = &project {
+        dre_core::secrets::set_enabled(p.mask_secrets);
         plugins::check_for_validate(p, !a.project.no_auto_install, &mut diags, printer);
     }
     let ok = !diags.has_errors();
@@ -354,6 +359,9 @@ fn plugin_list() -> ExitCode {
 /// Load and validate the project; print problems. `None` when it can't run.
 fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::project::Project> {
     let (project, diags) = project::load(&p.project_dir, &p.load_options());
+    if let Some(p) = &project {
+        dre_core::secrets::set_enabled(p.mask_secrets);
+    }
     for d in diags.sorted() {
         // Unmanaged reports warn again when they run.
         if d.severity == dre_core::Severity::Warning && d.code == "unmanaged-report" {
@@ -403,7 +411,16 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
         date: run_date(),
         live_check: false,
+        schedule: a.schedule,
     };
+    if let Some(name) = &opts.schedule
+        && !project.schedules.iter().any(|e| &e.name == name)
+    {
+        printer.error(&dre_core::run::unknown_schedule(&project, name));
+        return ExitCode::from(2);
+    }
+    let date = opts.date.unwrap_or_else(|| chrono::Local::now().date_naive());
+    printer.log_params(&opts.params(date));
     let summary = dre_core::run::run(&project, &opts, &mut printer);
     if let Some(e) = &summary.error {
         printer.error(e);

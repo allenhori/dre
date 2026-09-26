@@ -1,2 +1,1 @@
 queries: [qf]
-schedule: {every: {days: 5}, starting: "01/02/2026", at: "6am"}

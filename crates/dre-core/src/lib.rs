@@ -14,6 +14,7 @@ pub mod project;
 pub mod render;
 pub mod run;
 pub mod schedule;
+pub mod secrets;
 pub mod selector;
 pub mod sqlsplit;
 pub mod values;

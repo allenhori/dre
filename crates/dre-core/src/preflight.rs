@@ -12,6 +12,7 @@ pub const RUN_ATTRS: &[&str] = &[
     "target",
     "profile",
     "source_type",
+    "schedule",
     "date",
     "date_format",
 ];

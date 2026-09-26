@@ -1,8 +1,15 @@
-- select: finance.monthly
+- name: finance_monthly
+  select: finance.monthly
   cron: "0 6 1 * *"
-- select: "tag:ops_tag"
+- name: ops_tag_monthly
+  select: "tag:ops_tag"
   rrule: "FREQ=MONTHLY;BYDAY=2TU"
-- report: ops_monthly
+- name: ops_every_5_days
+  report: ops_monthly
   every: {days: 5}
   starting: "2026-01-01"
   at: "06:00"
+- name: ops_weekly
+  report: ops_monthly
+  cron: "0 6 * * 1"
+  vars: {period: week}

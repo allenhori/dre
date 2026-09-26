@@ -183,6 +183,7 @@ exit: 0
     ],
     "macros": [],
     "packages": [],
+    "mask_secrets": true,
     "lookup_inline_max_rows": 200
   }
 }

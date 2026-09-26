@@ -44,9 +44,9 @@ exit: 0
               "format": "csv",
               "options": {}
             },
-            "schedule": {
-              "cron": "0 6 1 * *"
-            }
+            "schedules": [
+              "finance_monthly"
+            ]
           }
         ]
       },
@@ -84,13 +84,11 @@ exit: 0
               "format": "csv",
               "options": {}
             },
-            "schedule": {
-              "every": {
-                "days": 5
-              },
-              "starting": "2026-01-01",
-              "at": "06:00"
-            }
+            "schedules": [
+              "ops_tag_monthly",
+              "ops_every_5_days",
+              "ops_weekly"
+            ]
           }
         ]
       }
@@ -116,18 +114,21 @@ exit: 0
     ],
     "schedules": [
       {
+        "name": "finance_monthly",
         "select": "finance.monthly",
         "schedule": {
           "cron": "0 6 1 * *"
         }
       },
       {
+        "name": "ops_tag_monthly",
         "select": "tag:ops_tag",
         "schedule": {
           "rrule": "FREQ=MONTHLY;BYDAY=2TU"
         }
       },
       {
+        "name": "ops_every_5_days",
         "report": "ops_monthly",
         "schedule": {
           "every": {
@@ -136,10 +137,21 @@ exit: 0
           "starting": "2026-01-01",
           "at": "06:00"
         }
+      },
+      {
+        "name": "ops_weekly",
+        "report": "ops_monthly",
+        "schedule": {
+          "cron": "0 6 * * 1"
+        },
+        "vars": {
+          "period": "week"
+        }
       }
     ],
     "macros": [],
     "packages": [],
+    "mask_secrets": true,
     "lookup_inline_max_rows": 200
   }
 }
