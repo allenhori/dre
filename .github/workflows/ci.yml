@@ -36,6 +36,12 @@ jobs:
       s3:
         image: adobe/s3mock
         ports: ["9090:9090"]
+      mailpit:
+        image: axllent/mailpit
+        env:
+          MP_SMTP_AUTH_ACCEPT_ANY: "1"
+          MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+        ports: ["1025:1025", "8025:8025"]
     env:
       DRE_TEST_POSTGRES: localhost:5432
       DRE_TEST_S3_ENDPOINT: http://localhost:9090
@@ -43,6 +49,8 @@ jobs:
       DRE_TEST_GCS_ENDPOINT: http://localhost:4443
       DRE_TEST_SFTP: localhost:2222
       DRE_TEST_FTP: localhost:2121
+      DRE_TEST_SMTP: localhost:1025
+      DRE_TEST_MAILPIT_API: http://localhost:8025
     steps:
       - uses: actions/checkout@v4
       - name: Start emulators that need arguments
@@ -62,7 +70,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: >
           cargo test -p dre-source-postgres -p dre-destination-object_store
-          -p dre-destination-sftp -p dre-destination-ftp
+          -p dre-destination-sftp -p dre-destination-ftp -p dre-destination-email
 
   test:
     strategy:
