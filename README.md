@@ -37,19 +37,26 @@ Status: under active development. There is no released version yet.
 - **Logs**: every run appends to `logs/dre.log` in the project, including the full SQL of each
   statement sent to the database (report queries, `run_query()`, lookup loads). The file rotates
   every 10,000 lines, keeping `dre.log.1` to `dre.log.5`.
-- **Verification**: `dre validate` checks a whole project offline, and `dre validate --live`
-  checks every statement against the database. `dre run --dry-run`, `--preview` and
-  schema-drift detection check a report before it reaches anyone.
+- **Verification**: `dre validate` checks the project and compiles its SQL; with `-s` it also shows,
+  per selected Binding, the compiled files, the source and target, the output file and every
+  destination (non-dev targets stand out). `dre compile` just renders the SQL into
+  `target/compiled/` and lists the files. `dre validate --live` checks every statement against
+  the database. `--preview` and schema-drift detection check a report before it reaches anyone.
+- **Selecting**: `run`, `compile` and `validate` take `-s`/`--select` with report names,
+  `tag:<tag>`, folder names or dotted folder paths. Several match any of them: `-s daily monthly`,
+  `-s daily,monthly`, or repeated `-s` (a semicolon works too, quoted: `-s "daily;monthly"`).
 
 ## Quick start
 
 ```bash
 dre init                 # pick a source, enter its connection, optionally start a project
 cd my_reports
-dre validate             # check the whole project offline
+dre validate             # check the project and compile its SQL
+dre validate -s monthly  # ...and show where monthly's output would go
+dre compile -s daily,monthly       # render the SQL into target/compiled/ and list the files
 dre run                  # run every report; output lands in target/run/
 dre run monthly --preview 50       # sample 50 rows, never delivered
-dre run tag:regulatory --set all   # every regulatory report, for every Set
+dre run -s tag:regulatory --set all  # every regulatory report, for every Set
 dre validate --live      # check every statement against the database without running it
 ```
 

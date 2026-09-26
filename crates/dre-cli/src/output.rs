@@ -159,6 +159,49 @@ impl Printer {
         }
     }
 
+    /// Where a compiled Binding's output would go: source, output file, each destination and
+    /// its target (non-dev targets stand out), and the schedules that run it.
+    pub fn plan(&self, p: &dre_core::run::BindingPlan) {
+        let i = self.inner.lock().unwrap();
+        let non_dev = |t: &str| t != "dev";
+        i.print(Tone::Step, "Binding", &label(&p.report, p.set.as_deref()));
+        for f in &p.compiled {
+            i.print(Tone::Good, "Compiled", &f.display().to_string());
+        }
+        let source = format!("{} ({}), target {}", p.profile, p.source_type, p.target);
+        i.print(
+            if non_dev(&p.target) {
+                Tone::Warn
+            } else {
+                Tone::Note
+            },
+            "Source",
+            &source,
+        );
+        i.print(
+            Tone::Note,
+            "Output",
+            &format!("{} ({})", p.output.display(), p.format),
+        );
+        for d in &p.destinations {
+            let target = d.target.clone().unwrap_or_default();
+            let what = match (&d.kind, &d.path) {
+                (Some(k), Some(path)) => format!("{} ({k}), target {target} → {path}", d.profile),
+                (Some(k), None) => format!("{} ({k}), target {target}", d.profile),
+                (None, _) => format!("{}: no `{target}` target, so nothing is delivered", d.profile),
+            };
+            let tone = if d.delivers && non_dev(&target) {
+                Tone::Warn
+            } else {
+                Tone::Note
+            };
+            i.print(tone, if d.delivers { "Delivers" } else { "Keeps" }, &what);
+        }
+        if !p.schedules.is_empty() {
+            i.print(Tone::Note, "Schedules", &p.schedules.join(", "));
+        }
+    }
+
     /// Final line of a run.
     pub fn finish(&self, what: &str) {
         let mut i = self.inner.lock().unwrap();
@@ -428,6 +471,20 @@ impl Ui for Printer {
         } else if i.shows(Level::Debug) {
             let text = i.paint(DIM, &v.to_string());
             i.print(Tone::Note, "Vars", &text);
+        }
+    }
+
+    fn compiled(&mut self, p: &dre_core::run::BindingPlan) {
+        let mut i = self.inner.lock().unwrap();
+        for f in &p.compiled {
+            i.file_log("INFO", &format!("Compiled {}", f.display()));
+        }
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "compiled", "plan": p}));
+        } else {
+            for f in &p.compiled {
+                i.print(Tone::Good, "Compiled", &f.display().to_string());
+            }
         }
     }
 

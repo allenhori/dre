@@ -56,7 +56,24 @@ fn stand_in_plugins() -> PathBuf {
     .to_path_buf()
 }
 
-fn run_case(case: &Path, json: bool) -> String {
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap().flatten() {
+        let dst = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &dst);
+        } else {
+            std::fs::copy(e.path(), dst).unwrap();
+        }
+    }
+}
+
+fn run_case(orig: &Path, json: bool) -> String {
+    // validate compiles into target/, so it runs on a copy, never the checked-in fixture.
+    let tmp = tempfile::tempdir().unwrap();
+    let copy = tmp.path().canonicalize().unwrap().join(orig.file_name().unwrap());
+    copy_dir(orig, &copy);
+    let case = copy.as_path();
     let mut cmd = Command::cargo_bin("dre").unwrap();
     cmd.arg("validate").arg("--project-dir").arg(case.join("project"));
     let case_str = case.to_string_lossy().to_string();
