@@ -163,11 +163,20 @@ fn parse_var(s: &str) -> Result<(String, String), String> {
 
 #[derive(Args)]
 struct ValidateArgs {
+    /// With --live: which reports to check (same selectors as `dre run`; default: all).
+    selector: Option<String>,
     #[command(flatten)]
     project: ProjectArgs,
     /// Emit machine-readable JSON instead of text.
     #[arg(long)]
     json: bool,
+    /// After the offline checks, connect to each Binding's source and check every rendered
+    /// statement without executing it (EXPLAIN or the dialect's equivalent).
+    #[arg(long)]
+    live: bool,
+    /// With --live: check one Set, or `all` of them.
+    #[arg(long)]
+    set: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -216,7 +225,44 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
             plural(w)
         );
     }
-    if ok { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+    if !ok {
+        return ExitCode::FAILURE;
+    }
+    if a.live
+        && let Some(project) = project
+    {
+        return validate_live(&project, a.selector, a.set, &a.project, printer.clone());
+    }
+    ExitCode::SUCCESS
+}
+
+fn validate_live(
+    project: &dre_core::project::Project,
+    selector: Option<String>,
+    set: Option<String>,
+    p: &ProjectArgs,
+    mut printer: output::Printer,
+) -> ExitCode {
+    let opts = dre_core::run::RunOptions {
+        selector,
+        set,
+        target: p.target.clone(),
+        vars: p.vars.iter().cloned().collect(),
+        date: run_date(),
+        live_check: true,
+        ..Default::default()
+    };
+    let summary = dre_core::run::run(project, &opts, &mut printer);
+    if let Some(e) = &summary.error {
+        printer.error(e);
+        return ExitCode::FAILURE;
+    }
+    printer.finish("validate --live");
+    if summary.failed() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn plural(n: usize) -> &'static str {

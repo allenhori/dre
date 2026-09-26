@@ -218,4 +218,3 @@ fn install_update_and_remove_keep_dre_lock_in_step() {
         .failed()
         .says("contradicts the project's declared constraint");
 }
-
