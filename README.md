@@ -34,6 +34,9 @@ Status: under active development. There is no released version yet.
 - **Delivery**: one output can go to several destinations in a single run, e.g. object storage
   (S3, GCS, Azure Blob), SFTP/FTP, Databricks Volumes, an email with the file attached, or a
   Slack channel. See [plugins](docs/plugins.md).
+- **Logs**: every run appends to `logs/dre.log` in the project, including the full SQL of each
+  statement sent to the database (report queries, `run_query()`, lookup loads). The file rotates
+  every 10,000 lines, keeping `dre.log.1` to `dre.log.5`.
 - **Verification**: `dre validate` checks a whole project offline, and `dre validate --live`
   checks every statement against the database. `dre run --dry-run`, `--preview` and
   schema-drift detection check a report before it reaches anyone.

@@ -88,7 +88,7 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
         ),
         ("macros/.gitkeep", String::new()),
         ("templates/.gitkeep", String::new()),
-        (".gitignore", "target/\n".to_string()),
+        (".gitignore", "target/\nlogs/\n".to_string()),
     ];
     let mut written = Vec::new();
     for (rel, content) in files {

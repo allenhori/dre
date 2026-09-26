@@ -81,7 +81,7 @@ fn init_installs_the_source_writes_profiles_and_scaffolds_a_project() {
     }
     assert_eq!(
         std::fs::read_to_string(p.join(".gitignore")).unwrap(),
-        "target/\n"
+        "target/\nlogs/\n"
     );
     let plugins = std::fs::read_to_string(p.join("plugins.yml")).unwrap();
     assert!(

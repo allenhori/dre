@@ -71,6 +71,10 @@ pub trait Ui {
     fn choose_set(&mut self, report: &str, sets: &[String]) -> Result<Option<String>, String>;
     /// Where plugin stderr goes.
     fn plugin_log(&self) -> LogSink;
+    /// Where the full text of every statement sent to a source goes: `(label, sql)`.
+    fn sql_log(&self) -> LogSink {
+        Arc::new(|_, _| {})
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -391,7 +395,7 @@ impl<'a> BindingRun<'a> {
             },
             vars: self.b.vars.clone(),
             cli_vars: self.opts.vars.clone(),
-            runner: Some(Arc::new(SessionRunner(session.clone()))),
+            runner: Some(Arc::new(SessionRunner(session.clone(), self.ui.sql_log()))),
             run_query_max_rows: self.project.run_query_max_rows,
             sql: self.project.sql.clone(),
             lookups: self.project.lookups.clone(),
@@ -475,7 +479,9 @@ impl<'a> BindingRun<'a> {
         // 4. Execute in order on one session.
         std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
         let mut per_query: BTreeMap<String, usize> = BTreeMap::new();
+        let sql_log = self.ui.sql_log();
         for (i, st) in statements.iter().enumerate() {
+            sql_log(&format!("{}:{}", st.file.display(), st.line), &st.text);
             let spool_path = self.run_dir.join(".spool").join(format!("{i}.arrow"));
             let mut writer: Option<FileWriter<File>> = None;
             let t = Instant::now();
@@ -1147,7 +1153,14 @@ impl<'a> BindingRun<'a> {
         }
         let mut failures = Vec::new();
         let mut unexecuted_setup: Option<(PathBuf, usize)> = None;
+        let sql_log = self.ui.sql_log();
         for st in statements {
+            let verb = if st.kind == StatementKind::TempCreate {
+                ""
+            } else {
+                " (check)"
+            };
+            sql_log(&format!("{}:{}{verb}", st.file.display(), st.line), &st.text);
             if st.kind == StatementKind::TempCreate {
                 if let Err(e) = p.execute(&st.text, None, |_, _| Ok(())) {
                     failures.push(format!("{}:{}: {e}", st.file.display(), st.line));
@@ -1240,7 +1253,7 @@ impl Session {
     }
 }
 
-struct SessionRunner(Arc<Mutex<Session>>);
+struct SessionRunner(Arc<Mutex<Session>>, LogSink);
 
 impl QueryRunner for SessionRunner {
     fn run_query(&self, sql: &str, max_rows: u64) -> Result<QueryRows, String> {
@@ -1257,6 +1270,7 @@ impl QueryRunner for SessionRunner {
                 dre_protocol::util::summarize(&bad.text, 60)
             ));
         }
+        (self.1)("run_query()", sql);
         let p = s.get()?;
         let mut out = QueryRows::default();
         let mut too_many = false;
@@ -1295,6 +1309,13 @@ impl QueryRunner for SessionRunner {
         }
         let batch = table.to_batch()?;
         let schema = batch.schema();
+        (self.1)(
+            &format!("lookup `{name}`"),
+            &format!(
+                "-- {} rows loaded through the plugin's `load` request",
+                batch.num_rows()
+            ),
+        );
         let r = s.get()?.load(name, &schema, [batch]).map_err(|e| e.to_string())?;
         s.loaded = true;
         Ok(Some(r))
