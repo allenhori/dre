@@ -12,7 +12,11 @@ arrow.workspace = true
 serde_json.workspace = true
 rust_xlsxwriter = { version = "0.99", features = ["constant_memory"] }
 chrono.workspace = true
+umya-spreadsheet = "3"
+regex.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+serde_json.workspace = true
 calamine = "0.36"

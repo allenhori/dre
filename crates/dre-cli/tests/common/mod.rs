@@ -108,6 +108,8 @@ pub const ALL_PLUGINS: &[&str] = &[
     "dre-format-csv",
     "dre-format-delimited",
     "dre-format-xlsx",
+    "dre-format-parquet",
+    "dre-format-fixed_width",
 ];
 
 impl TestProject {
