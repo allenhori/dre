@@ -4,6 +4,24 @@ exit: 0
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],
+  "compiled": [
+    {
+      "report": "daily",
+      "set": null,
+      "compiled": [
+        "target/compiled/daily/default/setup.sql",
+        "target/compiled/daily/default/summary.sql",
+        "target/compiled/daily/default/multi.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/daily/default/daily.csv",
+      "destinations": [],
+      "schedules": []
+    }
+  ],
   "project": {
     "name": "acme_reports",
     "default_profile": "local_dev",

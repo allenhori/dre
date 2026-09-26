@@ -97,6 +97,8 @@ pub trait Ui {
     fn step(&mut self, level: Level, verb: &str, detail: &str, elapsed: Option<Duration>);
     fn warn(&mut self, msg: &str);
     fn binding_end(&mut self, _outcome: &BindingOutcome) {}
+    /// A Binding was compiled (`--dry-run`, `dre compile`, `dre validate`): what it would do.
+    fn compiled(&mut self, _plan: &BindingPlan) {}
     /// Ask which Set to run; `None` means "all".
     fn choose_set(&mut self, report: &str, sets: &[String]) -> Result<Option<String>, String>;
     /// Where plugin stderr goes.
@@ -135,6 +137,35 @@ pub struct BindingOutcome {
     pub vars: JsonMap<String, Json>,
     #[serde(skip)]
     pub elapsed: Duration,
+}
+
+/// What a compiled Binding would use and produce if it ran.
+#[derive(Debug, Clone, Serialize)]
+pub struct BindingPlan {
+    pub report: String,
+    pub set: Option<String>,
+    /// Rendered SQL files, relative to the project.
+    pub compiled: Vec<PathBuf>,
+    pub profile: String,
+    pub source_type: String,
+    pub target: String,
+    pub format: String,
+    /// The file written under `target/run/` (a single-table format writes one per result set
+    /// when there are several).
+    pub output: PathBuf,
+    pub destinations: Vec<PlannedDestination>,
+    pub schedules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlannedDestination {
+    pub profile: String,
+    /// The destination type for the active target, when it has one.
+    pub kind: Option<String>,
+    pub target: Option<String>,
+    pub path: Option<String>,
+    /// False when the profile has no target for this run: the output stays in `target/`.
+    pub delivers: bool,
 }
 
 #[derive(Debug, Default)]
@@ -476,8 +507,10 @@ impl<'a> BindingRun<'a> {
             })?;
         self.target = target.clone();
         self.source_type = output.kind.clone();
-        let source_path = find_plugin(self.project, PluginKind::Source, &output.kind)?;
-        let connection = render_connection(output)?;
+        // Found and opened only when something needs the database, so compiling a report whose
+        // templates don't query it works without the plugin or credentials.
+        let source_path = find_plugin(self.project, PluginKind::Source, &output.kind);
+        let connection = render_connection(output);
 
         let session = Arc::new(Mutex::new(Session::new(
             source_path,
@@ -570,13 +603,8 @@ impl<'a> BindingRun<'a> {
         }
 
         if self.opts.dry_run {
-            let dir = rel(&self.project.root, &self.compiled_dir);
-            self.ui.step(
-                Level::Info,
-                "Compiled",
-                &format!("{} (dry run: nothing executed)", dir.display()),
-                None,
-            );
+            let plan = self.plan(&profile_name, &output.kind);
+            self.ui.compiled(&plan);
             return Ok(());
         }
 
@@ -784,6 +812,48 @@ impl<'a> BindingRun<'a> {
             }
         }
         Ok(())
+    }
+
+    /// What a real run of this Binding would use and produce, for `dre compile` and `validate`.
+    fn plan(&mut self, profile: &str, source_type: &str) -> BindingPlan {
+        let file = self.file_names();
+        let compiled = self
+            .b
+            .queries
+            .iter()
+            .map(|q| {
+                rel(
+                    &self.project.root,
+                    &self.compiled_dir.join(format!("{}.sql", q.query)),
+                )
+            })
+            .collect();
+        let destinations = self
+            .dests
+            .iter()
+            .map(|d| {
+                let resolved = self.dest_output(&d.profile);
+                PlannedDestination {
+                    profile: d.profile.clone(),
+                    kind: resolved.as_ref().map(|(_, o)| o.kind.clone()),
+                    target: resolved.map(|(t, _)| t).or_else(|| self.dest_target(&d.profile)),
+                    path: d.path.clone(),
+                    delivers: self.dest_output(&d.profile).is_some(),
+                }
+            })
+            .collect();
+        BindingPlan {
+            report: self.report.name.clone(),
+            set: self.b.set.clone(),
+            compiled,
+            profile: profile.to_string(),
+            source_type: source_type.to_string(),
+            target: self.target.clone(),
+            format: self.b.output.format.clone(),
+            output: rel(&self.project.root, &self.run_dir.join(file)),
+            destinations,
+            schedules: self.b.schedules.clone(),
+        }
     }
 
     /// Apply `--output-path`/`--output-name` to every destination that has a path, and return
@@ -1325,8 +1395,8 @@ impl<'a> BindingRun<'a> {
 
 /// The source session, started on first use (rendering may need it for `run_query()`).
 struct Session {
-    path: PathBuf,
-    connection: JsonMap<String, Json>,
+    path: Result<PathBuf, String>,
+    connection: Result<JsonMap<String, Json>, String>,
     cwd: PathBuf,
     log: LogSink,
     /// Unmanaged reports run read-only unless they create temp objects.
@@ -1339,8 +1409,8 @@ struct Session {
 
 impl Session {
     fn new(
-        path: PathBuf,
-        connection: JsonMap<String, Json>,
+        path: Result<PathBuf, String>,
+        connection: Result<JsonMap<String, Json>, String>,
         cwd: PathBuf,
         log: LogSink,
         unmanaged: bool,
@@ -1367,10 +1437,12 @@ impl Session {
 
     fn get(&mut self) -> Result<&mut PluginProcess, String> {
         if self.proc_.is_none() {
-            let mut p = PluginProcess::start_in(&self.path, self.log.clone(), Some(&self.cwd))
+            let path = self.path.clone()?;
+            let connection = self.connection.clone()?;
+            let mut p = PluginProcess::start_in(&path, self.log.clone(), Some(&self.cwd))
                 .map_err(|e| e.to_string())?;
             let ro = self.unmanaged && self.read_only && p.has(CAP_READ_ONLY);
-            p.open(self.connection.clone(), ro)
+            p.open(connection, ro)
                 .map_err(|e| format!("can't open the source connection: {e}"))?;
             self.proc_ = Some(p);
         }

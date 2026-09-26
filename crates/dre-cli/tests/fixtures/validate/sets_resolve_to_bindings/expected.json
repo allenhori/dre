@@ -4,6 +4,54 @@ exit: 0
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],
+  "compiled": [
+    {
+      "report": "monthly",
+      "set": "client_a",
+      "compiled": [
+        "target/compiled/monthly/client_a/q1.sql",
+        "target/compiled/monthly/client_a/q2.sql",
+        "target/compiled/monthly/client_a/q3.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/monthly/client_a/monthly.csv",
+      "destinations": [],
+      "schedules": []
+    },
+    {
+      "report": "monthly",
+      "set": "client_b",
+      "compiled": [
+        "target/compiled/monthly/client_b/q1.sql",
+        "target/compiled/monthly/client_b/q2.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/monthly/client_b/monthly.csv",
+      "destinations": [],
+      "schedules": []
+    },
+    {
+      "report": "monthly",
+      "set": "client_c_pilot",
+      "compiled": [
+        "target/compiled/monthly/client_c_pilot/q1.sql",
+        "target/compiled/monthly/client_c_pilot/q2.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/monthly/client_c_pilot/monthly.csv",
+      "destinations": [],
+      "schedules": []
+    }
+  ],
   "project": {
     "name": "acme_reports",
     "default_profile": "local_dev",
