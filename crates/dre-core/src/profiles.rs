@@ -35,7 +35,14 @@ use crate::yaml::YamlFile;
 pub const PROFILES_FILE: &str = "profiles.yml";
 
 /// The built-in destination type: copying bytes to a local path needs no plugin (ADR 0003).
+/// `profile: local` works without a profiles.yml entry; defining a `local` profile overrides it.
 pub const LOCAL_TYPE: &str = "local";
+
+/// What `profile: local` resolves to when profiles.yml doesn't define it, for every target.
+pub static BUILTIN_LOCAL: std::sync::LazyLock<ProfileTarget> = std::sync::LazyLock::new(|| ProfileTarget {
+    kind: LOCAL_TYPE.into(),
+    fields: serde_json::Map::new(),
+});
 
 /// Which section of profiles.yml a profile lives in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -197,6 +204,11 @@ impl Profiles {
             .as_ref()
             .and_then(|f| f.value.get(role.section()))
             .is_some_and(|s| s.get(name).is_some())
+    }
+
+    /// Whether `name` means the built-in local destination (no `local` profile is defined).
+    pub fn is_builtin_local(&self, name: &str) -> bool {
+        name == LOCAL_TYPE && !self.destinations.contains_key(name)
     }
 
     /// Best-effort line of a profile's name in the file.

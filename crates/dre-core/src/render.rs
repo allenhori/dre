@@ -1,11 +1,11 @@
 //! Runtime Jinja rendering: one environment per Binding, shared by SQL, output paths and
-//! template values. Provides `run.*`, `var()`, `env_var()`, `run_query()` and every macro in
-//! `macros/`.
+//! template values. Provides `run.*`, `var()`, `env_var()`, `run_query()`, `ref()` and every
+//! macro in `macros/`.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
 use minijinja::value::{Enumerator, Kwargs, Object, ObjectRepr, Value};
@@ -70,6 +70,8 @@ pub struct RendererConfig<'a> {
     pub cli_vars: BTreeMap<String, String>,
     pub runner: Option<Arc<dyn QueryRunner>>,
     pub run_query_max_rows: u64,
+    /// Every `.sql` file `ref()` can name, by basename, relative to `root`.
+    pub sql: BTreeMap<String, PathBuf>,
 }
 
 impl Renderer {
@@ -154,6 +156,7 @@ impl Renderer {
         } else {
             format!("{{% from \"{MACROS}\" import {} %}}", names.join(", "))
         };
+        add_ref(&mut env, cfg.root, cfg.sql, &import);
         let mut r = Renderer {
             env,
             import,
@@ -207,6 +210,70 @@ impl Renderer {
             .unwrap_or_else(|| deepest.kind().to_string());
         RenderError { file, line, message }
     }
+}
+
+/// `ref('name')`: another `.sql` file, rendered in the same context (vars, `run.*`, macros, the
+/// Binding's connection) and returned in parentheses, ready to use as a subquery or CTE body.
+/// DRE builds no tables, so a ref inlines SQL rather than pointing at a materialised model.
+fn add_ref(env: &mut Environment<'static>, root: &Path, sql: BTreeMap<String, PathBuf>, import: &str) {
+    let root = root.to_path_buf();
+    let import = import.to_string();
+    // The chain of refs being rendered, to report cycles instead of recursing forever.
+    let stack: Arc<Mutex<Vec<String>>> = Arc::default();
+    env.add_function(
+        "ref",
+        move |state: &minijinja::State<'_, '_>, name: String| -> Result<Value, Error> {
+            let Some(rel) = sql.get(&name) else {
+                return Err(Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("`ref('{name}')`: no `{name}.sql` in the project"),
+                ));
+            };
+            {
+                let mut chain = stack.lock().unwrap();
+                if chain.contains(&name) {
+                    chain.push(name.clone());
+                    let cycle = chain.join(" → ");
+                    chain.clear();
+                    return Err(Error::new(
+                        ErrorKind::InvalidOperation,
+                        format!("`ref()` cycle: {cycle}"),
+                    ));
+                }
+                chain.push(name.clone());
+            }
+            let result = (|| {
+                let src = std::fs::read_to_string(root.join(rel)).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidOperation,
+                        format!("can't read {}: {e}", rel.display()),
+                    )
+                })?;
+                let file = rel.to_string_lossy().to_string();
+                let rendered = state
+                    .env()
+                    .template_from_named_str(&file, &format!("{import}{src}"))?
+                    .render(())?;
+                let statements = crate::sqlsplit::split(&rendered);
+                match statements.as_slice() {
+                    [one] => Ok(Value::from(format!("(\n{}\n)", one.text))),
+                    _ => Err(Error::new(
+                        ErrorKind::InvalidOperation,
+                        format!(
+                            "`ref('{name}')` needs {} to hold exactly one statement, but it has {}",
+                            rel.display(),
+                            statements.len()
+                        ),
+                    )),
+                }
+            })();
+            let mut chain = stack.lock().unwrap();
+            if chain.last() == Some(&name) {
+                chain.pop();
+            }
+            result
+        },
+    );
 }
 
 #[derive(Debug)]
@@ -318,6 +385,42 @@ impl Object for QueryResult {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Seq(self.rows.len())
     }
+
+    /// `result.column('name')` (or an index): that column's values, one per row.
+    fn call_method(
+        self: &Arc<Self>,
+        _: &minijinja::State<'_, '_>,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, Error> {
+        if method != "column" {
+            return Err(Error::from(ErrorKind::UnknownMethod));
+        }
+        let [key] = args else {
+            return Err(Error::new(
+                ErrorKind::InvalidOperation,
+                "`column()` takes one column name or index",
+            ));
+        };
+        let i = match key.as_str() {
+            Some(n) => self.columns.iter().position(|c| c == n).ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("no column `{n}` (columns: {})", self.columns.join(", ")),
+                )
+            })?,
+            None => key
+                .as_usize()
+                .filter(|i| *i < self.columns.len())
+                .ok_or_else(|| Error::new(ErrorKind::InvalidOperation, format!("no column {key}")))?,
+        };
+        Ok(Value::from(
+            self.rows
+                .iter()
+                .map(|r| r.get_item_by_index(i).unwrap_or_default())
+                .collect::<Vec<_>>(),
+        ))
+    }
 }
 
 /// One `run_query()` row: accessible by column name (`row.region`, `row['region']`) or index.
@@ -372,6 +475,7 @@ mod tests {
             cli_vars: cli.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             runner: None,
             run_query_max_rows: 10_000,
+            sql: BTreeMap::new(),
         })
         .unwrap();
         (dir, r)
@@ -497,6 +601,7 @@ mod tests {
             cli_vars: BTreeMap::new(),
             runner: Some(Arc::new(Fake)),
             run_query_max_rows: 10_000,
+            sql: BTreeMap::new(),
         })
         .unwrap();
         let src = "{% set res = run_query('select') %}{{ res.columns | join(',') }}|\

@@ -17,6 +17,10 @@ Status: under active development. There is no released version yet.
 - **Set** and **Binding**: one report can run as many named variants (clients, regions,
   departments). A Binding is a report paired with a Set, with its own profile, variables, query
   subset and output.
+- **Jinja everywhere**: SQL, paths and options render with `var()`, `env_var()`, `run.*` and your
+  macros in `macros/`. `run_query()` lets a macro query the report's own connection while
+  rendering (list a table's columns, build a pivot from the distinct values). `ref('file')` reuses
+  another `.sql` file as a subquery.
 - **Plugins**: every source, format and destination is a separate executable that speaks DRE's
   [plugin protocol](docs/protocol.md). Plugins are declared per project and installed on demand.
 - **Delivery**: one output can go to several destinations in a single run, e.g. object storage

@@ -202,3 +202,103 @@ fn run_query_row_cap_is_enforced_and_configurable() {
     p.dre("run", &["cap2"]).ok();
     assert_eq!(p.read("target/run/cap2/default/cap2.csv"), "n\r\n20\r\n");
 }
+
+#[test]
+fn ref_inlines_another_sql_file_rendered_in_the_same_context() {
+    let p = project(&[
+        ("reports/finance/monthly/monthly.yml", "queries: [totals]\n"),
+        // Shared SQL: used only through ref(), so neither file is an unmanaged report.
+        (
+            "reports/shared/base_regions.sql",
+            "-- all regions\nselect region, amount from regions where amount >= {{ var('min', 0) }};\n",
+        ),
+        (
+            "reports/shared/big_regions.sql",
+            "select * from {{ ref('base_regions') }} r where r.region <> '{{ var('level') }}'\n",
+        ),
+        (
+            "reports/finance/monthly/totals.sql",
+            "with big as {{ ref('big_regions') }}\nselect count(*) as n, sum(amount) as total from big\n",
+        ),
+    ]);
+    p.dre("validate", &[]).ok().says("0 warnings");
+    p.dre("run", &["monthly", "--var", "min=15"]).ok();
+    assert_eq!(
+        p.read("target/run/monthly/default/monthly.csv"),
+        "n,total\r\n2,50\r\n"
+    );
+    assert!(
+        p.read("target/compiled/monthly/default/totals.sql")
+            .contains("where amount >= 15")
+    );
+}
+
+#[test]
+fn macros_use_the_connection_to_generate_sql() {
+    let p = project(&[
+        (
+            "macros/introspect.sql",
+            "{% macro columns_of(table) %}\
+             {%- set r = run_query(\"select column_name from information_schema.columns where table_name = '\" ~ table ~ \"' order by ordinal_position\") -%}\
+             {{ r.column('column_name') | join(', ') }}\
+             {%- endmacro %}\n\
+             {% macro sum_per_value(table, col, measure) %}\
+             {%- for v in run_query('select distinct ' ~ col ~ ' from ' ~ table ~ ' order by 1').column(0) -%}\
+             sum(case when {{ col }} = '{{ v }}' then {{ measure }} end) as {{ v }}{{ ', ' if not loop.last }}\
+             {%- endfor -%}\
+             {%- endmacro %}\n",
+        ),
+        (
+            "reports/ops/m/m.yml",
+            "queries: [cols, pivot]\noutput: {format: csv}\n",
+        ),
+        (
+            "reports/ops/m/cols.sql",
+            "select '{{ columns_of('regions') }}' as cols\n",
+        ),
+        (
+            "reports/ops/m/pivot.sql",
+            "select {{ sum_per_value('regions', 'region', 'amount') }} from regions\n",
+        ),
+    ]);
+    p.dre("run", &["m"]).ok();
+    assert_eq!(
+        p.read("target/compiled/m/default/pivot.sql"),
+        "select sum(case when region = 'amer' then amount end) as amer, sum(case when region = 'apac' then amount end) as apac, sum(case when region = 'emea' then amount end) as emea from regions\n"
+    );
+    assert!(
+        p.read("target/compiled/m/default/cols.sql")
+            .contains("'region, amount'")
+    );
+}
+
+#[test]
+fn ref_problems_are_reported() {
+    let p = project(&[
+        ("reports/ops/m/m.yml", "queries: [a]\n"),
+        ("reports/ops/m/a.sql", "select * from {{ ref('b') }} x\n"),
+        ("reports/shared/b.sql", "select * from {{ ref('a') }} y\n"),
+        ("reports/ops/u/u.yml", "queries: [u1]\n"),
+        ("reports/ops/u/u1.sql", "select * from {{ ref('nope') }} t\n"),
+    ]);
+    p.dre("validate", &[])
+        .failed()
+        .says("reports/ops/u/u1.sql:1: `ref('nope')`: there's no `nope.sql` under reports/")
+        .says("reports/shared/b.sql:1: `ref()` cycle: a → b → a");
+}
+
+#[test]
+fn ref_needs_one_statement_and_catches_dynamic_cycles_at_run_time() {
+    let p = project(&[
+        ("reports/ops/n/n.yml", "queries: [n1]\n"),
+        ("reports/ops/n/n1.sql", "select * from {{ ref('two') }} t\n"),
+        ("reports/shared/two.sql", "select 1 as x; select 2 as x\n"),
+        // A name built at run time can't be checked statically.
+        ("reports/ops/d/d.yml", "queries: [d1]\n"),
+        ("reports/ops/d/d1.sql", "select * from {{ ref('d' ~ '1') }} t\n"),
+    ]);
+    p.dre("run", &["n"])
+        .failed()
+        .says("`ref('two')` needs reports/shared/two.sql to hold exactly one statement, but it has 2");
+    p.dre("run", &["d"]).failed().says("`ref()` cycle: d1 → d1");
+}

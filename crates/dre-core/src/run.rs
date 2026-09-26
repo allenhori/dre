@@ -20,7 +20,7 @@ use dre_protocol::{CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as Json, json};
 
-use crate::profiles::{LOCAL_TYPE, ProfileTarget, Role};
+use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Role};
 use crate::project::{Binding, PluginKind, Project, QueryEntry, Report, TARGET_DIR, TabName};
 use crate::render::{QueryRows, QueryRunner, RenderError, Renderer, RendererConfig, RunContext};
 use crate::sqlsplit::{self, StatementKind};
@@ -392,6 +392,7 @@ impl<'a> BindingRun<'a> {
             cli_vars: self.opts.vars.clone(),
             runner: Some(Arc::new(SessionRunner(session.clone()))),
             run_query_max_rows: self.project.run_query_max_rows,
+            sql: self.project.sql.clone(),
         })
         .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.compiled_dir).map_err(|e| e.to_string())?;
@@ -793,6 +794,7 @@ impl<'a> BindingRun<'a> {
             cli_vars: self.opts.vars.clone(),
             runner: None,
             run_query_max_rows: self.project.run_query_max_rows,
+            sql: self.project.sql.clone(),
         })
         .map_err(|e| e.to_string())?;
         let mut values = JsonMap::new();
@@ -876,6 +878,9 @@ impl<'a> BindingRun<'a> {
 
     /// The destination profile's settings for the active target.
     fn dest_output(&self, profile: &str) -> Option<(String, &ProfileTarget)> {
+        if self.project.profiles.is_builtin_local(profile) {
+            return Some((self.target.clone(), &BUILTIN_LOCAL));
+        }
         let dtarget = self.dest_target(profile)?;
         self.project
             .profiles
@@ -899,7 +904,9 @@ impl<'a> BindingRun<'a> {
     /// Deliver every file to one destination. `Ok(None)`: its profile has no output for the
     /// active target, so nothing was sent.
     fn deliver_one(&mut self, d: &RenderedDest) -> Result<Option<String>, Fail> {
-        if self.project.profiles.get(Role::Destination, &d.profile).is_none() {
+        if self.project.profiles.get(Role::Destination, &d.profile).is_none()
+            && !self.project.profiles.is_builtin_local(&d.profile)
+        {
             return Err(format!(
                 "destination profile `{}` isn't in profiles.yml",
                 d.profile

@@ -80,6 +80,9 @@ pub struct Project {
     pub schedules: Vec<ScheduleEntry>,
     /// Macro files under `macros/`, relative to the root.
     pub macros: Vec<PathBuf>,
+    /// Every uniquely named `.sql` file under `reports/`, by basename: what `ref()` resolves.
+    #[serde(skip)]
+    pub sql: BTreeMap<String, PathBuf>,
     /// Every folder under `reports/`, as path segments.
     #[serde(skip)]
     pub folders: Vec<Vec<String>>,
@@ -385,6 +388,11 @@ impl Loader {
 
         project.sets = self.parse_sets(&set_files);
         let sql_index = self.index_sql(&found.sql);
+        project.sql = sql_index
+            .iter()
+            .filter(|(_, paths)| paths.len() == 1)
+            .map(|(name, paths)| (name.clone(), paths[0].clone()))
+            .collect();
         // Queries resolve by bare basename; whatever no report YAML references is unmanaged.
         let mut referenced: BTreeSet<String> = fragments
             .iter()
@@ -392,6 +400,8 @@ impl Loader {
             .flatten()
             .filter_map(entry_name)
             .collect();
+        // A file used through `ref()` is shared SQL, not an unmanaged report.
+        referenced.extend(self.check_refs(&found.sql, &found.macros, &sql_index));
         let mut reports = self.merge_reports(fragments);
 
         let mut built = Vec::new();
@@ -515,6 +525,7 @@ impl Loader {
             plugins: Vec::new(),
             schedules: Vec::new(),
             macros: Vec::new(),
+            sql: BTreeMap::new(),
             folders: Vec::new(),
             profiles: Profiles::default(),
         })
@@ -831,6 +842,75 @@ impl Loader {
     }
 
     // -- .sql index ---------------------------------------------------------------------------
+
+    /// Literal `ref('name')` calls in SQL and macro files: each must name a project `.sql` file.
+    /// Returns the names referenced.
+    fn check_refs(
+        &mut self,
+        sql: &[PathBuf],
+        macros: &[PathBuf],
+        index: &BTreeMap<String, Vec<PathBuf>>,
+    ) -> BTreeSet<String> {
+        let mut names = BTreeSet::new();
+        // name → the names its file refs, for cycle detection.
+        let mut graph: BTreeMap<String, Vec<(String, usize)>> = BTreeMap::new();
+        for file in sql.iter().chain(macros) {
+            let Ok(src) = std::fs::read_to_string(self.root.join(file)) else {
+                continue;
+            };
+            let is_sql = !file.starts_with(MACROS_DIR);
+            for (name, line) in preflight::refs(&src) {
+                if index.contains_key(&name) {
+                    if is_sql {
+                        let stem = file.file_stem().unwrap().to_string_lossy().to_string();
+                        graph.entry(stem).or_default().push((name.clone(), line));
+                    }
+                    names.insert(name);
+                } else {
+                    self.diags.error(
+                        "unknown-ref",
+                        Some(file.clone()),
+                        Some(line),
+                        format!("`ref('{name}')`: there's no `{name}.sql` under reports/"),
+                    );
+                }
+            }
+        }
+        // Report each cycle once, at the ref that closes it.
+        let mut reported: BTreeSet<Vec<String>> = BTreeSet::new();
+        for start in graph.keys() {
+            let mut path = vec![start.clone()];
+            let mut stack = vec![graph[start].iter()];
+            while let Some(it) = stack.last_mut() {
+                let Some((next, line)) = it.next() else {
+                    stack.pop();
+                    path.pop();
+                    continue;
+                };
+                if let Some(i) = path.iter().position(|n| n == next) {
+                    let mut cycle = path[i..].to_vec();
+                    let mut key = cycle.clone();
+                    key.sort();
+                    if reported.insert(key) {
+                        cycle.push(next.clone());
+                        let file = index[path.last().unwrap()][0].clone();
+                        self.diags.error(
+                            "ref-cycle",
+                            Some(file),
+                            Some(*line),
+                            format!("`ref()` cycle: {}", cycle.join(" → ")),
+                        );
+                    }
+                    continue;
+                }
+                if let Some(edges) = graph.get(next) {
+                    path.push(next.clone());
+                    stack.push(edges.iter());
+                }
+            }
+        }
+        names
+    }
 
     fn index_sql(&mut self, sql: &[PathBuf]) -> BTreeMap<String, Vec<PathBuf>> {
         let mut index: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
@@ -2479,6 +2559,7 @@ impl Loader {
                     None => format!("report `{}`", r.name),
                 };
                 let mut called: Vec<String> = Vec::new();
+                let mut refs: Vec<String> = Vec::new();
                 for q in &b.queries {
                     let Some(src) = read(&root, &q.path) else { continue };
                     let first = checked.insert(q.path.clone());
@@ -2487,6 +2568,24 @@ impl Loader {
                         self.check_template_text(&q.path, &src, 0, None, &cli);
                     }
                     called.extend(preflight::called_names(&src));
+                    refs.extend(preflight::refs(&src).into_iter().map(|(n, _)| n));
+                }
+                // SQL this Binding pulls in through ref(), checked in the Binding's context.
+                let mut seen_refs = BTreeSet::new();
+                while let Some(name) = refs.pop() {
+                    let Some(path) = project.sql.get(&name) else {
+                        continue;
+                    };
+                    if !seen_refs.insert(name) {
+                        continue;
+                    }
+                    let Some(src) = read(&root, path) else { continue };
+                    self.check_vars(path, &src, 0, &b.vars, &cli, &ctx);
+                    if checked.insert(path.clone()) {
+                        self.check_template_text(path, &src, 0, None, &cli);
+                    }
+                    called.extend(preflight::called_names(&src));
+                    refs.extend(preflight::refs(&src).into_iter().map(|(n, _)| n));
                 }
                 // Macros this Binding calls, directly or through other macros.
                 let mut seen = BTreeSet::new();
