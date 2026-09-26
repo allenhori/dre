@@ -3,7 +3,7 @@
 //! error replies and panics; plugins log with `eprintln!`.
 
 use std::io::{BufReader, BufWriter, Read, Stdout};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
@@ -158,17 +158,43 @@ pub trait Format {
     fn write(&mut self, req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>>;
 }
 
+/// A destination `deliver` request.
+pub struct Delivery {
+    /// One file, or every file of an output when the plugin advertises `multi_file`.
+    pub files: Vec<DeliveryFile>,
+    pub connection: Map<String, Value>,
+    /// The destination entry's plugin options, rendered by core (empty when none).
+    pub options: Map<String, Value>,
+}
+
+/// One file to deliver: the local copy in `target/run/` and its rendered remote path, if any.
+pub struct DeliveryFile {
+    pub local: PathBuf,
+    pub remote: Option<String>,
+}
+
 pub trait Destination {
     fn connection_fields(&self) -> Vec<ConnectionField> {
         Vec::new()
     }
-    /// Deliver `local` to `remote` (rendered by core); return where it landed.
+    /// Deliver `local` to `remote` (rendered by core); return where it landed. Enough for a
+    /// destination that takes no options; others implement [`Destination::deliver_files`].
     fn deliver(
         &mut self,
-        local: &Path,
-        remote: Option<&str>,
-        connection: &Map<String, Value>,
-    ) -> Result<String>;
+        _local: &Path,
+        _remote: Option<&str>,
+        _connection: &Map<String, Value>,
+    ) -> Result<String> {
+        Err("this destination doesn't implement `deliver`".into())
+    }
+    /// The whole request, options included. The default ignores options and hands a single
+    /// file to [`Destination::deliver`]; several files arrive only with `multi_file` advertised.
+    fn deliver_files(&mut self, d: &Delivery) -> Result<String> {
+        match d.files.as_slice() {
+            [f] => self.deliver(&f.local, f.remote.as_deref(), &d.connection),
+            _ => Err("this destination takes one file per delivery".into()),
+        }
+    }
 }
 
 pub struct Input {
@@ -433,10 +459,30 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
             Request::Deliver {
                 local_path,
                 remote_path,
+                files,
                 connection,
+                options,
             },
         ) => {
-            let location = d.deliver(Path::new(&local_path), remote_path.as_deref(), &connection)?;
+            let files = match (local_path, files.is_empty()) {
+                (Some(local), true) => vec![DeliveryFile {
+                    local: PathBuf::from(local),
+                    remote: remote_path,
+                }],
+                (None, false) => files
+                    .into_iter()
+                    .map(|f| DeliveryFile {
+                        local: PathBuf::from(f.local_path),
+                        remote: f.remote_path,
+                    })
+                    .collect(),
+                _ => return Err("`deliver` needs exactly one of `local_path` or `files`".into()),
+            };
+            let location = d.deliver_files(&Delivery {
+                files,
+                connection,
+                options,
+            })?;
             out.send(&Response::Delivered { location });
         }
         (h, req) => {

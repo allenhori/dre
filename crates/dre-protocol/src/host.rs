@@ -17,7 +17,7 @@ use arrow::datatypes::SchemaRef;
 use serde_json::{Map, Value};
 
 use crate::frame::{self, Frame, FrameError};
-use crate::msg::{ConnectionField, Request, Response, ResultSetMeta};
+use crate::msg::{ConnectionField, DeliveryFile, Request, Response, ResultSetMeta};
 use crate::{Kind, MAX_VERSION, MIN_VERSION};
 
 /// Receives each stderr line a plugin writes.
@@ -587,17 +587,62 @@ impl PluginProcess {
         }
     }
 
+    /// Deliver one file with no plugin options.
     pub fn deliver(
         &mut self,
         local_path: &str,
         remote_path: Option<&str>,
         connection: Map<String, Value>,
     ) -> Result<String> {
-        self.send(&Request::Deliver {
+        let file = DeliveryFile {
             local_path: local_path.to_string(),
             remote_path: remote_path.map(str::to_string),
-            connection,
-        })?;
+        };
+        self.deliver_files(&[file], connection, Map::new())
+    }
+
+    /// Deliver `files` in one request with the destination entry's `options`. More than one file
+    /// needs a plugin advertising `multi_file`; call once per file otherwise.
+    pub fn deliver_files(
+        &mut self,
+        files: &[DeliveryFile],
+        connection: Map<String, Value>,
+        options: Map<String, Value>,
+    ) -> Result<String> {
+        let req = match files {
+            [] => {
+                return Err(HostError::Malformed {
+                    plugin: self.label.clone(),
+                    message: "nothing to deliver".into(),
+                });
+            }
+            [one] => Request::Deliver {
+                local_path: Some(one.local_path.clone()),
+                remote_path: one.remote_path.clone(),
+                files: Vec::new(),
+                connection,
+                options,
+            },
+            many => {
+                if !self.has(crate::CAP_MULTI_FILE) {
+                    return Err(HostError::Plugin {
+                        plugin: self.label.clone(),
+                        message: format!(
+                            "{} files in one delivery, but the plugin doesn't advertise `multi_file`",
+                            many.len()
+                        ),
+                    });
+                }
+                Request::Deliver {
+                    local_path: None,
+                    remote_path: None,
+                    files: many.to_vec(),
+                    connection,
+                    options,
+                }
+            }
+        };
+        self.send(&req)?;
         match self.recv_json("a delivered reply")? {
             Response::Delivered { location } => Ok(location),
             other => Err(self.unexpected("a delivered reply", &Incoming::Json(other))),

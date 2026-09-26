@@ -1382,6 +1382,7 @@ dependencies = [
  "arrow",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
