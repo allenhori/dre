@@ -243,3 +243,24 @@ fn bad_credentials_give_a_clear_error() {
         "{err}"
     );
 }
+
+#[test]
+fn numeric_scales_outside_arrow_decimals_come_back_as_exact_text() {
+    needs_server!();
+    let mut p = open(false, json!({}));
+    // Postgres 15+ allows a negative scale and a scale above the precision.
+    let (_, b) = collect(
+        &mut p,
+        "select 12300::numeric(5,-2) as hundreds, 0.00123::numeric(3,5) as tiny",
+        None,
+    );
+    let b = &b[0];
+    assert_eq!(
+        b.column_by_name("hundreds").unwrap().as_string::<i32>().value(0),
+        "12300"
+    );
+    assert_eq!(
+        b.column_by_name("tiny").unwrap().as_string::<i32>().value(0),
+        "0.00123"
+    );
+}

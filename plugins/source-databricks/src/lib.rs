@@ -310,7 +310,9 @@ fn arrow_type(c: &Col) -> DataType {
         6 => DataType::Float64,
         8 | 22 => DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
         9 => DataType::Binary,
-        15 if c.precision <= 38 => DataType::Decimal128(c.precision.max(1), c.scale),
+        15 if c.precision <= 38 && c.scale >= 0 && c.scale as u8 <= c.precision => {
+            DataType::Decimal128(c.precision.max(1), c.scale)
+        }
         17 => DataType::Date32,
         _ => DataType::Utf8,
     }
@@ -415,7 +417,10 @@ fn convert(col: &V, ty: &DataType, name: &str) -> Result<ArrayRef> {
             let mut b = Decimal128Builder::with_capacity(n).with_precision_and_scale(*p, *sc)?;
             for i in 0..n {
                 match text(i) {
-                    Some(t) => b.append_value(scaled(&t, *sc).ok_or_else(|| bad(i, "a decimal"))?),
+                    Some(t) => b.append_value(
+                        dre_protocol::util::scaled_decimal(&t, *sc)
+                            .map_err(|e| format!("column `{name}`: {e}"))?,
+                    ),
                     None => b.append_null(),
                 }
             }
@@ -429,17 +434,6 @@ fn convert(col: &V, ty: &DataType, name: &str) -> Result<ArrayRef> {
             Arc::new(b.finish())
         }
     })
-}
-
-fn scaled(s: &str, scale: i8) -> Option<i128> {
-    let (neg, s) = s.strip_prefix('-').map_or((false, s), |r| (true, r));
-    let (i, f) = s.split_once('.').unwrap_or((s, ""));
-    let mut f = f.to_string();
-    while f.len() < scale.max(0) as usize {
-        f.push('0');
-    }
-    let v: i128 = format!("{i}{}", &f[..scale.max(0) as usize]).parse().ok()?;
-    Some(if neg { -v } else { v })
 }
 
 #[derive(Default)]

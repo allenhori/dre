@@ -16,6 +16,47 @@ static VAR: LazyLock<Regex> =
 static RUN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?:^|[^\w.])run\.([A-Za-z_]\w*)(?:\.([A-Za-z_]\w*))?").unwrap());
 
+static MACRO: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?s)\{%-?\s*macro\s+([A-Za-z_]\w*)\s*\(.*?%\}(.*?)\{%-?\s*endmacro\s*-?%\}").unwrap()
+});
+static CALL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[^\w.])([A-Za-z_]\w*)\s*\(").unwrap());
+
+/// A macro defined in a macro file.
+#[derive(Debug, Clone)]
+pub struct MacroDef {
+    pub name: String,
+    /// The macro's body.
+    pub body: String,
+    /// 0-based line offset of the body within its file.
+    pub line_offset: usize,
+}
+
+/// Every `{% macro name(...) %} ... {% endmacro %}` in a source.
+pub fn macro_defs(src: &str) -> Vec<MacroDef> {
+    MACRO
+        .captures_iter(src)
+        .map(|c| {
+            let body = c.get(2).unwrap();
+            MacroDef {
+                name: c[1].to_string(),
+                body: body.as_str().to_string(),
+                line_offset: line_at(src, body.start()) - 1,
+            }
+        })
+        .collect()
+}
+
+/// Names called like functions inside Jinja blocks (`name(`).
+pub fn called_names(src: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for seg in SEGMENT.find_iter(src) {
+        for c in CALL.captures_iter(seg.as_str()) {
+            out.push(c[1].to_string());
+        }
+    }
+    out
+}
+
 /// Whether a string contains Jinja at all.
 pub fn is_templated(s: &str) -> bool {
     s.contains("{{") || s.contains("{%")

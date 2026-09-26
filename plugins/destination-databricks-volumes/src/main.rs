@@ -14,26 +14,10 @@ use std::time::{Duration, Instant};
 
 use dre_protocol::msg::ConnectionField;
 use dre_protocol::plugin::{About, Destination, Result, conn_required, serve_destination};
+use dre_protocol::util::percent_encode;
 use serde_json::{Map, Value};
 
 struct Volumes;
-
-/// Percent-encode each path segment, keeping the slashes.
-fn encode_path(p: &str) -> String {
-    p.split('/')
-        .map(|seg| {
-            seg.bytes()
-                .map(|b| match b {
-                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                        (b as char).to_string()
-                    }
-                    b => format!("%{b:02X}"),
-                })
-                .collect::<String>()
-        })
-        .collect::<Vec<_>>()
-        .join("/")
-}
 
 fn request(agent: &ureq::Agent, url: &str, token: &str, body: Option<&Path>) -> Result<()> {
     let started = Instant::now();
@@ -107,7 +91,7 @@ impl Destination for Volumes {
             let dir = format!("/{}", parts[..parts.len() - 1].join("/"));
             request(
                 &agent,
-                &format!("{base}/api/2.0/fs/directories{}", encode_path(&dir)),
+                &format!("{base}/api/2.0/fs/directories{}", percent_encode(&dir, true)),
                 token,
                 None,
             )
@@ -115,7 +99,10 @@ impl Destination for Volumes {
         }
         request(
             &agent,
-            &format!("{base}/api/2.0/fs/files{}?overwrite=true", encode_path(&path)),
+            &format!(
+                "{base}/api/2.0/fs/files{}?overwrite=true",
+                percent_encode(&path, true)
+            ),
             token,
             Some(local),
         )

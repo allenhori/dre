@@ -16,7 +16,7 @@ use arrow::ipc::writer::FileWriter;
 use chrono::NaiveDate;
 use dre_protocol::host::{Execution, LogSink, PluginProcess};
 use dre_protocol::msg::ResultSetMeta;
-use dre_protocol::{CAP_READ_ONLY, CAP_SESSIONS, Kind};
+use dre_protocol::{CAP_READ_ONLY, CAP_SESSIONS};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as Json, json};
 
@@ -414,7 +414,7 @@ impl<'a> BindingRun<'a> {
                     bad.file.display(),
                     bad.line,
                     self.report.name,
-                    summarize(&bad.text)
+                    dre_protocol::util::summarize(&bad.text, 60)
                 ));
             }
             let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate);
@@ -1099,6 +1099,18 @@ struct SessionRunner(Arc<Mutex<Session>>);
 impl QueryRunner for SessionRunner {
     fn run_query(&self, sql: &str, max_rows: u64) -> Result<QueryRows, String> {
         let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
+        // An unmanaged report may only read, and run_query() runs before the file's own
+        // statements are checked, so it gets the same rule up front.
+        if s.unmanaged
+            && let Some(bad) = sqlsplit::split(sql)
+                .into_iter()
+                .find(|st| sqlsplit::classify(&st.text) != StatementKind::Read)
+        {
+            return Err(format!(
+                "run_query() in an unmanaged report may only read, but got `{}`; give the report a YAML to declare it",
+                dre_protocol::util::summarize(&bad.text, 60)
+            ));
+        }
         let p = s.get()?;
         let mut out = QueryRows::default();
         let mut too_many = false;
@@ -1164,11 +1176,6 @@ fn render_connection(output: &ProfileOutput) -> Result<JsonMap<String, Json>, St
 
 /// Locate the plugin for a declared type, honouring `dre.lock` pins and declared constraints.
 pub fn find_plugin(project: &Project, kind: PluginKind, name: &str) -> Result<PathBuf, String> {
-    let pk = match kind {
-        PluginKind::Source => Kind::Source,
-        PluginKind::Format => Kind::Format,
-        PluginKind::Destination => Kind::Destination,
-    };
     let req = project
         .plugins
         .iter()
@@ -1178,7 +1185,7 @@ pub fn find_plugin(project: &Project, kind: PluginKind, name: &str) -> Result<Pa
         .ok()
         .and_then(|l| l.version(kind, name));
     let dir = crate::plugins::plugins_dir();
-    crate::plugins::find(&dir, pk, name, req.as_ref(), pin.as_ref()).map(|p| p.path).ok_or_else(|| {
+    crate::plugins::find(&dir, kind, name, req.as_ref(), pin.as_ref()).map(|p| p.path).ok_or_else(|| {
         format!(
             "the {} plugin `{name}` isn't installed (looked in {}); run `dre deps` to install the project's plugins",
             kind.as_str(),
@@ -1225,15 +1232,6 @@ fn split_ext(name: &str) -> (&str, &str) {
 
 fn rel(root: &Path, p: &Path) -> PathBuf {
     crate::slash(p.strip_prefix(root).unwrap_or(p))
-}
-
-fn summarize(stmt: &str) -> String {
-    let one: String = stmt.split_whitespace().collect::<Vec<_>>().join(" ");
-    if one.chars().count() > 60 {
-        format!("{}…", one.chars().take(60).collect::<String>())
-    } else {
-        one
-    }
 }
 
 impl BindingRun<'_> {

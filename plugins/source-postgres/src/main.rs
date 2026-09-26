@@ -86,8 +86,10 @@ fn classify(c: &Column) -> Result<Col> {
                 Col::NumericText
             } else {
                 let m = m - 4;
-                let (p, s) = ((m >> 16) & 0xffff, m & 0xffff);
-                if p <= 38 {
+                // The scale is a signed 16-bit field: Postgres 15+ allows negative scales and
+                // scales above the precision, which Arrow decimals can't hold.
+                let (p, s) = ((m >> 16) & 0xffff, i32::from((m & 0xffff) as u16 as i16));
+                if p <= 38 && (0..=p).contains(&s) {
                     Col::Decimal(p as u8, s as i8)
                 } else {
                     Col::NumericText
@@ -203,18 +205,6 @@ impl<'a> FromSql<'a> for Numeric {
     }
 }
 
-/// `"12.3400"` at scale 2 → 1234. Extra fractional digits must be zero (they're typmod-bound).
-fn scaled(s: &str, scale: i8) -> Option<i128> {
-    let (neg, s) = s.strip_prefix('-').map_or((false, s), |r| (true, r));
-    let (i, f) = s.split_once('.').unwrap_or((s, ""));
-    let mut f = f.to_string();
-    while f.len() < scale as usize {
-        f.push('0');
-    }
-    let v: i128 = format!("{i}{}", &f[..scale as usize]).parse().ok()?;
-    Some(if neg { -v } else { v })
-}
-
 struct Builders {
     cols: Vec<Col>,
     b: Vec<Box<dyn ArrayBuilder>>,
@@ -293,10 +283,7 @@ impl Builders {
                 ),
                 Col::Decimal(_, s) => {
                     let v = match row.try_get::<_, Option<Numeric>>(i)? {
-                        Some(n) => Some(
-                            scaled(&n.0, s)
-                                .ok_or_else(|| format!("can't represent `{}` as a decimal", n.0))?,
-                        ),
+                        Some(n) => Some(dre_protocol::util::scaled_decimal(&n.0, s)?),
                         None => None,
                     };
                     put!(i, Decimal128Builder, v)
@@ -546,16 +533,4 @@ fn main() {
         CAP_CHECK,
     ]);
     serve_source(about, Postgres::default())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scales_decimal_text() {
-        assert_eq!(scaled("12.34", 2), Some(1234));
-        assert_eq!(scaled("-0.5", 3), Some(-500));
-        assert_eq!(scaled("7", 2), Some(700));
-    }
 }

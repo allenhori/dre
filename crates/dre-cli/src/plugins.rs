@@ -188,7 +188,7 @@ pub fn remove(spec: String, project_dir: PathBuf, printer: &Printer) -> ExitCode
     };
     let targets: Vec<_> = dre_core::plugins::discover(&dir)
         .into_iter()
-        .filter(|p| p.name == name && kind_filter.is_none_or(|k| manager::to_kind(k) == p.kind))
+        .filter(|p| p.name == name && kind_filter.is_none_or(|k| k == p.kind))
         .filter(|p| version.is_none() || p.version == version)
         .collect();
     if targets.is_empty() {
@@ -226,11 +226,7 @@ pub fn remove(spec: String, project_dir: PathBuf, printer: &Printer) -> ExitCode
     {
         let mut changed = false;
         for t in &targets {
-            let kind = match t.kind {
-                dre_protocol::Kind::Source => PluginKind::Source,
-                dre_protocol::Kind::Format => PluginKind::Format,
-                dre_protocol::Kind::Destination => PluginKind::Destination,
-            };
+            let kind = t.kind;
             if let Some(l) = lock.get(kind, &t.name)
                 && (t.version.is_none() || t.version.as_ref() == Some(&l.version))
             {

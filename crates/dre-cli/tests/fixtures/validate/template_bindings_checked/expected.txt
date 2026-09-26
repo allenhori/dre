@@ -1,5 +1,5 @@
 exit: 1
-error[invalid-template]: reports/finance/monthly/monthly.yml: report `monthly`: template binding 4 uses query `q9`, which isn't one of the report's queries
+error[invalid-template]: reports/finance/monthly/monthly.yml: report `monthly`: template binding 4 uses query `q9`, which isn't one of this Binding's queries
 error[invalid-template]: reports/finance/monthly/monthly.yml: report `monthly`: template binding 5: `cell` `ZZZZ1` isn't a valid cell reference
 error[invalid-template]: reports/finance/monthly/monthly.yml: report `monthly`: template binding 5: a single-cell binding needs exactly one of `value` or `query` + `column`
 error[invalid-template]: reports/finance/monthly/monthly.yml: report `monthly`: template binding 6: a single-cell binding needs exactly one of `value` or `query` + `column`

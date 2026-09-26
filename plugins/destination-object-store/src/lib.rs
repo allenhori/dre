@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use dre_protocol::msg::ConnectionField;
 use dre_protocol::plugin::{About, Destination, Result, conn_bool, conn_str, serve_destination};
+use dre_protocol::util::percent_encode;
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::{AzureConfigKey, MicrosoftAzureBuilder};
@@ -288,8 +289,8 @@ fn gcs_upload(bucket: &str, key: &str, local: &Path, c: &Map<String, Value>) -> 
 
     let start = format!(
         "{base}/upload/storage/v1/b/{}/o?uploadType=resumable&name={}",
-        encode(bucket),
-        encode(key)
+        percent_encode(bucket, false),
+        percent_encode(key, false)
     );
     let mut req = agent
         .post(&start)
@@ -355,16 +356,6 @@ fn gcs_upload(bucket: &str, key: &str, local: &Path, c: &Map<String, Value>) -> 
         offset += n as u64;
     }
     Ok(location)
-}
-
-/// Percent-encode a URL query value.
-fn encode(s: &str) -> String {
-    s.bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
-            b => format!("%{b:02X}"),
-        })
-        .collect()
 }
 
 pub fn serve(kind: Kind) -> ! {

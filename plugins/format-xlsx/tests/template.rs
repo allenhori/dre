@@ -58,6 +58,14 @@ fn fill(
     sets: Vec<(ResultSetMeta, RecordBatch)>,
     bindings: Value,
 ) -> Result<(tempfile::TempDir, Workbook), String> {
+    fill_with(sets, bindings, json!({}))
+}
+
+fn fill_with(
+    sets: Vec<(ResultSetMeta, RecordBatch)>,
+    bindings: Value,
+    options: Value,
+) -> Result<(tempfile::TempDir, Workbook), String> {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("out.xlsx");
     let log: LogSink = Arc::new(|_, _| {});
@@ -70,7 +78,7 @@ fn fill(
     p.write_begin(
         out.to_str().unwrap(),
         "xlsx",
-        Default::default(),
+        options.as_object().unwrap().clone(),
         sets.iter().map(|s| s.0.clone()).collect(),
         Some(payload),
     )
@@ -247,4 +255,29 @@ fn a_block_that_would_overflow_the_sheet_is_an_error() {
     )
     .unwrap_err();
     assert!(err.contains("don't fit on the sheet"), "{err}");
+}
+
+#[test]
+fn a_large_unbound_result_set_continues_on_numbered_sheets() {
+    let many = RecordBatch::try_from_iter([("x", Arc::new(Int64Array::from_iter_values(0..5)) as ArrayRef)])
+        .unwrap();
+    let (_d, book) = fill_with(
+        vec![
+            (meta("accounts", "Accounts"), accounts(1)),
+            (meta("count_q", "Count"), count(1)),
+            (meta("extra_q", "Extra"), many),
+        ],
+        standard_bindings(),
+        json!({"max_rows_per_sheet": 2}),
+    )
+    .unwrap();
+    let names: Vec<&str> = book.sheet_collection().iter().map(|s| s.name()).collect();
+    assert_eq!(
+        names,
+        ["Summary", "Detail", "Notes", "Extra", "Extra (2)", "Extra (3)"]
+    );
+    assert_eq!(
+        (value(&book, "Extra (3)", "A1"), value(&book, "Extra (3)", "A2")),
+        ("x".into(), "4".into())
+    );
 }

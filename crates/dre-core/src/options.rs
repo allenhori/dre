@@ -1,8 +1,5 @@
 //! Output format options, validated offline against the documented set.
 
-use std::sync::LazyLock;
-
-use regex::Regex;
 use serde_json::{Map, Value};
 
 /// Excel's row limit minus a header row.
@@ -12,21 +9,8 @@ pub const XLSX_DEFAULT_ROWS_PER_SHEET: u64 = 1_000_000;
 /// Formats whose options core knows. Anything else (a format pack) defines its own options.
 pub const KNOWN_FORMATS: &[&str] = &["csv", "delimited", "fixed_width", "parquet", "xlsx"];
 
-static CELL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\$?([A-Za-z]{1,3})\$?([0-9]+)$").unwrap());
-
 /// Parse `B12` into zero-based `(row, col)`.
-pub fn parse_cell(s: &str) -> Option<(u32, u16)> {
-    let c = CELL.captures(s.trim())?;
-    let col = c[1]
-        .to_ascii_uppercase()
-        .bytes()
-        .fold(0u32, |acc, b| acc * 26 + (b - b'A' + 1) as u32);
-    let row: u32 = c[2].parse().ok()?;
-    if col == 0 || col > 16_384 || row == 0 || row > 1_048_576 {
-        return None;
-    }
-    Some((row - 1, (col - 1) as u16))
-}
+pub use dre_protocol::util::parse_cell;
 
 pub fn is_cell(s: &str) -> bool {
     parse_cell(s).is_some()
@@ -187,19 +171,4 @@ fn fixed_width_column(n: usize, c: &Value) -> Vec<String> {
         errs.push(format!("{label} `truncate` must be true or false"));
     }
     errs
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_cell_references() {
-        assert_eq!(parse_cell("A1"), Some((0, 0)));
-        assert_eq!(parse_cell("$B$12"), Some((11, 1)));
-        assert_eq!(parse_cell("XFD1048576"), Some((1_048_575, 16_383)));
-        assert_eq!(parse_cell("XFE1"), None);
-        assert_eq!(parse_cell("A0"), None);
-        assert_eq!(parse_cell("1A"), None);
-    }
 }
