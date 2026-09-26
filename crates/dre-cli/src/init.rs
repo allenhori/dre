@@ -39,12 +39,23 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
             plugins.push_str(&format!("  - {k}\n"));
         }
     }
-    let output = match s.destinations.first() {
-        Some((_, profile)) => format!(
-            "\n# Delivered in addition to the copy in target/run/. Adjust the path for your destination.\n\
-             output:\n  destination:\n    profile: {profile}\n    path: \"reports/{{{{ run.report }}}}-{{{{ run.date.yyyymmdd }}}}.csv\"\n"
-        ),
-        None => String::new(),
+    let output = if s.destinations.is_empty() {
+        String::new()
+    } else {
+        let mut o = String::from(
+            "\n# Delivered in addition to the copy in target/run/, to each destination in turn.\n\
+             # Adjust the path and options for your destinations.\n\
+             output:\n  destination:\n",
+        );
+        for (kind, profile) in &s.destinations {
+            o.push_str(&format!("    - profile: {profile}\n"));
+            o.push_str(match kind.as_str() {
+                "email" => "      to: someone@example.com\n      subject: \"{{ run.report }} {{ run.date.iso }}\"\n",
+                "slack" => "      channel: \"#reports\"\n      message: \"{{ run.report }} for {{ run.date.iso }}\"\n",
+                _ => "      path: \"reports/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n",
+            });
+        }
+        o
     };
     let files: Vec<(&str, String)> = vec![
         (

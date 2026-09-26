@@ -15,8 +15,8 @@ use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use chrono::NaiveDate;
 use dre_protocol::host::{Execution, LogSink, PluginProcess};
-use dre_protocol::msg::ResultSetMeta;
-use dre_protocol::{CAP_READ_ONLY, CAP_SESSIONS};
+use dre_protocol::msg::{DeliveryFile, ResultSetMeta};
+use dre_protocol::{CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as Json, json};
 
@@ -254,8 +254,19 @@ struct BindingRun<'a> {
     started_at: chrono::DateTime<chrono::Utc>,
     produced: Vec<Produced>,
     files: Vec<(PathBuf, Option<String>)>,
+    /// The Binding's destinations with paths and options rendered.
+    dests: Vec<RenderedDest>,
+    /// One record per destination: `run_results.json`'s `deliveries`.
+    deliveries: Vec<Json>,
     delivery_note: Option<String>,
     drift: Vec<String>,
+}
+
+/// A destination entry after rendering.
+struct RenderedDest {
+    profile: String,
+    path: Option<String>,
+    options: JsonMap<String, Json>,
 }
 
 type Fail = String;
@@ -286,6 +297,8 @@ impl<'a> BindingRun<'a> {
             started_at: chrono::Utc::now(),
             produced: Vec::new(),
             files: Vec::new(),
+            dests: Vec::new(),
+            deliveries: Vec::new(),
             delivery_note: None,
             drift: Vec::new(),
         }
@@ -404,7 +417,7 @@ impl<'a> BindingRun<'a> {
                 });
             }
         }
-        let remote = self.render_remote(&renderer)?;
+        self.dests = self.render_destinations(&renderer)?;
 
         // 3. Unmanaged: every rendered statement must only read (or create temp objects).
         if !self.report.managed {
@@ -514,7 +527,7 @@ impl<'a> BindingRun<'a> {
         self.name_result_sets()?;
 
         // 5. Format into target/run/.
-        let (filename, remote) = self.file_names(remote);
+        let filename = self.file_names();
         self.format(&filename)?;
 
         // Schema drift, before delivery.
@@ -547,7 +560,7 @@ impl<'a> BindingRun<'a> {
                 None,
             );
         } else {
-            self.deliver(remote.as_deref())?;
+            self.deliver()?;
         }
 
         // 7. Snapshot the schema for the next drift check.
@@ -558,14 +571,33 @@ impl<'a> BindingRun<'a> {
         Ok(())
     }
 
-    fn render_remote(&self, renderer: &Renderer) -> Result<Option<String>, Fail> {
-        match self.b.output.destination.as_ref().and_then(|d| d.path.as_ref()) {
-            Some(p) => renderer
-                .render(&self.report.file, p)
-                .map(Some)
-                .map_err(|e| format!("output path: {e}")),
-            None => Ok(None),
-        }
+    fn render_destinations(&self, renderer: &Renderer) -> Result<Vec<RenderedDest>, Fail> {
+        self.b
+            .output
+            .destinations
+            .iter()
+            .map(|d| {
+                let path = match &d.path {
+                    Some(p) => Some(
+                        renderer
+                            .render(&self.report.file, p)
+                            .map_err(|e| format!("output path: {e}"))?,
+                    ),
+                    None => None,
+                };
+                let mut options = JsonMap::new();
+                for (k, v) in &d.options {
+                    let v = render_json(renderer, &self.report.file, v)
+                        .map_err(|e| format!("destination `{}` option `{k}`: {e}", d.profile))?;
+                    options.insert(k.clone(), v);
+                }
+                Ok(RenderedDest {
+                    profile: d.profile.clone(),
+                    path,
+                    options,
+                })
+            })
+            .collect()
     }
 
     /// Sheet names: `tab_name`, a `tab_name` list, the basename, or `<basename>_N`.
@@ -617,28 +649,34 @@ impl<'a> BindingRun<'a> {
         Ok(())
     }
 
-    /// The local file name and the (possibly overridden) remote path.
-    fn file_names(&self, remote: Option<String>) -> (String, Option<String>) {
-        let mut remote = self.opts.output_path.clone().or(remote);
+    /// Apply `--output-path`/`--output-name` to every destination that has a path, and return
+    /// the local file name: `--output-name`, else the first destination path's file name, else
+    /// `<report>.<ext>`.
+    fn file_names(&mut self) -> String {
+        for d in self.dests.iter_mut().filter(|d| d.path.is_some()) {
+            if let Some(p) = &self.opts.output_path {
+                d.path = Some(p.clone());
+            }
+            if let (Some(n), Some(r)) = (&self.opts.output_name, d.path.as_mut()) {
+                *r = match r.rfind(['/', '\\']) {
+                    Some(i) => format!("{}{n}", &r[..=i]),
+                    None => n.clone(),
+                };
+            }
+        }
         let ext = extension(&self.b.output.format);
-        let from_remote = remote
-            .as_deref()
+        let from_remote = self
+            .dests
+            .iter()
+            .find_map(|d| d.path.as_deref())
             .and_then(|r| r.rsplit(['/', '\\']).next())
             .filter(|s| !s.is_empty())
             .map(str::to_string);
-        let name = self
-            .opts
+        self.opts
             .output_name
             .clone()
             .or(from_remote)
-            .unwrap_or_else(|| format!("{}.{ext}", self.report.name));
-        if let (Some(n), Some(r)) = (&self.opts.output_name, remote.as_mut()) {
-            *r = match r.rfind(['/', '\\']) {
-                Some(i) => format!("{}{n}", &r[..=i]),
-                None => n.clone(),
-            };
-        }
-        (name, remote)
+            .unwrap_or_else(|| format!("{}.{ext}", self.report.name))
     }
 
     fn format(&mut self, filename: &str) -> Result<(), Fail> {
@@ -767,8 +805,10 @@ impl<'a> BindingRun<'a> {
         Ok(json!({"file": file.to_string_lossy(), "bindings": t.bindings, "values": values}))
     }
 
-    fn deliver(&mut self, remote: Option<&str>) -> Result<(), Fail> {
-        let Some(dest) = &self.b.output.destination else {
+    /// Deliver to every destination in order. A failure is recorded and the rest are still
+    /// attempted; the Binding fails if any did.
+    fn deliver(&mut self) -> Result<(), Fail> {
+        if self.dests.is_empty() {
             self.delivery_note = Some("no destination declared; output stays in target/".into());
             let dir = rel(&self.project.root, &self.run_dir);
             self.ui.step(
@@ -778,35 +818,104 @@ impl<'a> BindingRun<'a> {
                 None,
             );
             return Ok(());
-        };
+        }
         if self.files.is_empty() {
             return Ok(());
         }
-        let profiles = &self.project.profiles;
-        let dest_profile = profiles
-            .get(&dest.profile)
-            .ok_or_else(|| format!("destination profile `{}` isn't in profiles.yml", dest.profile))?;
-        let dtarget = self
-            .opts
-            .target
-            .clone()
-            .unwrap_or_else(|| dest_profile.target.clone());
-        let Some((_, out)) = profiles.output(&dest.profile, Some(&dtarget)) else {
-            let note = format!(
-                "destination profile `{}` has no `{dtarget}` output: not delivered, output stays in target/",
-                dest.profile
-            );
+        let dests = std::mem::take(&mut self.dests);
+        let mut failures = Vec::new();
+        let mut skipped = Vec::new();
+        for d in &dests {
+            // The type of the output used, or for a skipped entry the profile's default one.
+            let kind = self
+                .dest_output(&d.profile)
+                .map(|(_, o)| o.kind.clone())
+                .or_else(|| {
+                    let p = self.project.profiles.get(&d.profile)?;
+                    p.outputs
+                        .get(&p.target)
+                        .or(p.outputs.values().next())
+                        .map(|o| o.kind.clone())
+                });
+            let (status, location, error) = match self.deliver_one(d) {
+                Ok(Some(loc)) => ("delivered", Some(loc), None),
+                Ok(None) => {
+                    skipped.push(self.skip_note(&d.profile));
+                    ("skipped", None, None)
+                }
+                Err(e) => {
+                    failures.push(e.clone());
+                    ("failed", None, Some(e))
+                }
+            };
+            let mut record = json!({"profile": d.profile, "type": kind, "status": status});
+            if let Some(l) = location {
+                record["location"] = json!(l);
+            }
+            if let Some(e) = error {
+                record["error"] = json!(e);
+            }
+            self.deliveries.push(record);
+        }
+        self.dests = dests;
+        if self.files.iter().all(|(_, d)| d.is_none()) && !skipped.is_empty() {
+            self.delivery_note = Some(skipped.join("; "));
+        }
+        match failures.len() {
+            0 => Ok(()),
+            1 if self.dests.len() == 1 => Err(failures.remove(0)),
+            n => Err(format!(
+                "{n} of {} destinations failed: {}",
+                self.dests.len(),
+                failures.join("; ")
+            )),
+        }
+    }
+
+    /// The destination profile's output for the active target.
+    fn dest_output(&self, profile: &str) -> Option<(String, &ProfileOutput)> {
+        let dtarget = self.dest_target(profile)?;
+        self.project
+            .profiles
+            .output(profile, Some(&dtarget))
+            .map(|(_, o)| (dtarget, o))
+    }
+
+    /// The target a destination profile delivers for: `--target`, else the profile's own.
+    fn dest_target(&self, profile: &str) -> Option<String> {
+        let p = self.project.profiles.get(profile)?;
+        Some(self.opts.target.clone().unwrap_or_else(|| p.target.clone()))
+    }
+
+    fn skip_note(&self, profile: &str) -> String {
+        let dtarget = self.dest_target(profile).unwrap_or_default();
+        format!(
+            "destination profile `{profile}` has no `{dtarget}` output: not delivered, output stays in target/"
+        )
+    }
+
+    /// Deliver every file to one destination. `Ok(None)`: its profile has no output for the
+    /// active target, so nothing was sent.
+    fn deliver_one(&mut self, d: &RenderedDest) -> Result<Option<String>, Fail> {
+        if self.project.profiles.get(&d.profile).is_none() {
+            return Err(format!(
+                "destination profile `{}` isn't in profiles.yml",
+                d.profile
+            ));
+        }
+        let Some((_, out)) = self.dest_output(&d.profile) else {
+            let note = self.skip_note(&d.profile);
             self.ui.step(Level::Info, "Kept", &note, None);
-            self.delivery_note = Some(note);
-            return Ok(());
+            return Ok(None);
         };
+        let kind = out.kind.clone();
         let connection = render_connection(out)?;
-        let targets: Vec<(PathBuf, Option<String>)> = self
+        let targets: Vec<DeliveryFile> = self
             .files
             .iter()
             .map(|(f, _)| {
                 let name = f.file_name().unwrap().to_string_lossy().to_string();
-                let r = remote.map(|r| {
+                let r = d.path.as_deref().map(|r| {
                     if self.files.len() == 1 {
                         r.to_string()
                     } else {
@@ -816,13 +925,24 @@ impl<'a> BindingRun<'a> {
                         }
                     }
                 });
-                (f.clone(), r)
+                DeliveryFile {
+                    local_path: f.to_string_lossy().to_string(),
+                    remote_path: r,
+                }
             })
             .collect();
-        if out.kind == LOCAL_TYPE {
-            for (i, (f, r)) in targets.iter().enumerate() {
+        let mut locations = Vec::new();
+        if kind == LOCAL_TYPE {
+            if let Some(k) = d.options.keys().next() {
+                return Err(format!(
+                    "the local destination takes no options, but `{}` has `{k}`; check the key's spelling",
+                    d.profile
+                ));
+            }
+            for (i, f) in targets.iter().enumerate() {
                 let t = Instant::now();
-                let r = r
+                let r = f
+                    .remote_path
                     .as_ref()
                     .ok_or("the local destination needs `output.destination.path`")?;
                 let dst = self.project.root.join(r);
@@ -830,40 +950,44 @@ impl<'a> BindingRun<'a> {
                     std::fs::create_dir_all(parent)
                         .map_err(|e| format!("can't create {}: {e}", parent.display()))?;
                 }
-                std::fs::copy(f, &dst).map_err(|e| {
+                std::fs::copy(&f.local_path, &dst).map_err(|e| {
                     format!(
                         "delivery to {} failed: {e}; the output is still in target/",
                         dst.display()
                     )
                 })?;
-                self.ui.step(
-                    Level::Debug,
-                    "Delivered",
-                    &dst.display().to_string(),
-                    Some(t.elapsed()),
-                );
-                self.files[i].1 = Some(dst.to_string_lossy().to_string());
+                let loc = dst.to_string_lossy().to_string();
+                self.ui.step(Level::Debug, "Delivered", &loc, Some(t.elapsed()));
+                self.files[i].1.get_or_insert_with(|| loc.clone());
+                locations.push(loc);
             }
-            return Ok(());
+            return Ok(Some(locations.join(", ")));
         }
-        let plugin = find_plugin(self.project, PluginKind::Destination, &out.kind)?;
+        let failed = |e: dre_protocol::host::HostError| {
+            format!("delivery through `{kind}` failed: {e}; the output is still in target/")
+        };
+        let plugin = find_plugin(self.project, PluginKind::Destination, &kind)?;
         let mut p = PluginProcess::start_in(&plugin, self.ui.plugin_log(), Some(&self.project.root))
             .map_err(|e| e.to_string())?;
-        for (i, (f, r)) in targets.iter().enumerate() {
+        let batches: Vec<Vec<usize>> = if targets.len() > 1 && p.has(CAP_MULTI_FILE) {
+            vec![(0..targets.len()).collect()]
+        } else {
+            (0..targets.len()).map(|i| vec![i]).collect()
+        };
+        for batch in batches {
             let t = Instant::now();
+            let files: Vec<DeliveryFile> = batch.iter().map(|&i| targets[i].clone()).collect();
             let loc = p
-                .deliver(&f.to_string_lossy(), r.as_deref(), connection.clone())
-                .map_err(|e| {
-                    format!(
-                        "delivery through `{}` failed: {e}; the output is still in target/",
-                        out.kind
-                    )
-                })?;
+                .deliver_files(&files, connection.clone(), d.options.clone())
+                .map_err(failed)?;
             self.ui.step(Level::Debug, "Delivered", &loc, Some(t.elapsed()));
-            self.files[i].1 = Some(loc);
+            for i in batch {
+                self.files[i].1.get_or_insert_with(|| loc.clone());
+            }
+            locations.push(loc);
         }
         let _ = p.close();
-        Ok(())
+        Ok(Some(locations.join(", ")))
     }
 
     fn snapshot(&self) -> Json {
@@ -979,6 +1103,7 @@ impl<'a> BindingRun<'a> {
             })).collect::<Vec<_>>(),
             "outputs": outputs,
             "delivery": self.delivery_note,
+            "deliveries": self.deliveries,
             "schema_drift": self.drift,
         });
         std::fs::write(
@@ -1141,6 +1266,24 @@ impl QueryRunner for SessionRunner {
     }
 }
 
+/// Render every string inside a destination option value.
+fn render_json(renderer: &Renderer, file: &Path, v: &Json) -> Result<Json, RenderError> {
+    Ok(match v {
+        Json::String(s) => Json::String(renderer.render(file, s)?),
+        Json::Array(a) => Json::Array(
+            a.iter()
+                .map(|v| render_json(renderer, file, v))
+                .collect::<Result<_, _>>()?,
+        ),
+        Json::Object(o) => Json::Object(
+            o.iter()
+                .map(|(k, v)| Ok((k.clone(), render_json(renderer, file, v)?)))
+                .collect::<Result<_, RenderError>>()?,
+        ),
+        other => other.clone(),
+    })
+}
+
 /// Render `env_var()` (and only that) inside a profile output's string fields.
 fn render_connection(output: &ProfileOutput) -> Result<JsonMap<String, Json>, String> {
     let mut env = minijinja::Environment::new();
@@ -1256,12 +1399,17 @@ impl BindingRun<'_> {
         if !names.is_empty() {
             parts.push(format!("→ {}", names.join(", ")));
         }
-        let delivered: Vec<&str> = self.files.iter().filter_map(|(_, d)| d.as_deref()).collect();
+        // Every destination's location, not just the first one each file reached.
+        let delivered: Vec<&str> = self
+            .deliveries
+            .iter()
+            .filter_map(|d| d.get("location").and_then(Json::as_str))
+            .collect();
         if !delivered.is_empty() {
             parts.push(format!("→ {}", delivered.join(", ")));
         } else if let Some(n) = &self.delivery_note
             && self.opts.preview.is_none()
-            && self.b.output.destination.is_some()
+            && !self.b.output.destinations.is_empty()
         {
             parts.push(format!("({n})"));
         }

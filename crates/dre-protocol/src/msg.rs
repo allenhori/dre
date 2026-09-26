@@ -45,12 +45,19 @@ pub enum Request {
     },
     ResultSetEnd {},
     Finish {},
-    /// Destination: deliver a local file. Replies `delivered`.
+    /// Destination: deliver a local file, or with `files` (only to a plugin advertising
+    /// `multi_file`) every file of one output at once. Exactly one of `local_path`/`files` is set.
+    /// `options` are the destination entry's plugin options, rendered by core. Replies `delivered`.
     Deliver {
-        local_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        local_path: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         remote_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        files: Vec<DeliveryFile>,
         connection: Map<String, Value>,
+        #[serde(default)]
+        options: Map<String, Value>,
     },
     /// End the conversation; the plugin exits 0.
     Close {},
@@ -96,6 +103,14 @@ pub enum Response {
     Error {
         message: String,
     },
+}
+
+/// One file of a multi-file `deliver`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryFile {
+    pub local_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_path: Option<String>,
 }
 
 /// Per result set, what a format plugin needs to lay it out.

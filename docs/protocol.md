@@ -84,6 +84,7 @@ Capabilities:
 | `sessions` | Source: one session (connection) is held across every request until `close`, so temp tables and session settings persist. Core refuses to run a Binding with more than one statement on a source without it. |
 | `read_only` | Source: honours `read_only: true` on `open`. |
 | `check` | Source: supports `check` (verify a statement without executing it). |
+| `multi_file` | Destination: takes every file of one output in a single `deliver` (`files`), e.g. one email carrying every attachment. |
 
 ## Requests and replies
 
@@ -171,13 +172,35 @@ by core.
 
 ```json
 {"type": "deliver", "local_path": "/…/target/run/…/monthly.xlsx",
- "remote_path": "s3://bucket/monthly-20260125.xlsx", "connection": {…}}
+ "remote_path": "s3://bucket/monthly-20260125.xlsx", "connection": {…},
+ "options": {…}}
 ```
 
 `deliver` copies the local file to `remote_path`. The path is already rendered, and may be absent
 when the destination profile alone says where. The reply is
 `{"type":"delivered","location":"<where it landed>"}`. The local file is never removed. It stays
 in `target/` whatever the outcome.
+
+`options` holds the destination entry's plugin options: every key of the entry in
+`output.destination` other than `profile` and `path` (for example `to` and `subject` for email,
+`channel` and `message` for Slack). Core renders their Jinja before sending, so string values
+arrive final. It is `{}` when the entry has none. A plugin should reject keys it doesn't know, so
+a misspelt key in a report is an error rather than silently dropped; the SDK's default does this
+for plugins that take no options.
+
+A destination that advertises the `multi_file` capability receives every file of one output in a
+single request, in place of `local_path`/`remote_path`:
+
+```json
+{"type": "deliver",
+ "files": [{"local_path": "/…/daily_orders.csv", "remote_path": "…/daily_orders.csv"},
+           {"local_path": "/…/daily_refunds.csv", "remote_path": "…/daily_refunds.csv"}],
+ "connection": {…}, "options": {…}}
+```
+
+It replies with one `delivered` for the whole set. Exactly one of `local_path` or `files` is
+present. Core only sends `files` to a plugin that advertised `multi_file`; any other plugin gets
+one `deliver` per file. A single-file output is always sent in the `local_path` form.
 
 ## Errors and failure
 
@@ -197,5 +220,8 @@ optional field to a message does not change the version; anything else does.
 
 `dre_protocol::conformance::run(path)` checks a plugin binary. It covers the handshake and
 identity, refusal of an unsupported version, `describe`, error replies for unknown and wrong-kind
-requests, behaviour on a malformed frame, and a clean exit on `close` and on end of input. Every
+requests, behaviour on a malformed frame, and a clean exit on `close` and on end of input. For a
+destination it also sends a `deliver` carrying `options` and, when `multi_file` is advertised, a
+`files` delivery, and expects a reply to each (`delivered` or `error`) with the plugin still
+serving. `conformance::run_with_env` runs the suite with extra environment variables. Every
 first-party plugin runs the suite in its tests.

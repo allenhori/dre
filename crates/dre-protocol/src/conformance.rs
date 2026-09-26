@@ -10,7 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::host::{HostError, Incoming, LogSink, PluginProcess};
-use crate::msg::{Request, Response};
+use serde_json::{Map, json};
+
+use crate::msg::{DeliveryFile, Request, Response};
 use crate::{MAX_VERSION, MIN_VERSION, parse_executable_name};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
@@ -26,12 +28,25 @@ fn quiet() -> LogSink {
     Arc::new(|_, _| {})
 }
 
-fn start(path: &Path) -> Result<PluginProcess, HostError> {
-    PluginProcess::start_with(path, quiet(), (MIN_VERSION, MAX_VERSION), TIMEOUT)
+fn start_versions(
+    path: &Path,
+    env: &[(&str, &str)],
+    versions: (u32, u32),
+) -> Result<PluginProcess, HostError> {
+    let mut p = PluginProcess::spawn_env(path, quiet(), env)?;
+    p.handshake(versions, TIMEOUT)?;
+    Ok(p)
 }
 
 /// Run every check against the plugin executable at `path`.
 pub fn run(path: &Path) -> Vec<Check> {
+    run_with_env(path, &[])
+}
+
+/// Like [`run`], with extra environment variables for every plugin process (for plugins whose
+/// capabilities depend on their environment).
+pub fn run_with_env(path: &Path, env: &[(&str, &str)]) -> Vec<Check> {
+    let start = |path: &Path| start_versions(path, env, (MIN_VERSION, MAX_VERSION));
     let mut out = Vec::new();
     let mut check = |name: &'static str, r: Result<(), String>| {
         out.push(Check {
@@ -66,7 +81,7 @@ pub fn run(path: &Path) -> Vec<Check> {
         "an unsupported protocol range is refused, not hung on",
         (|| {
             let far = MAX_VERSION + 1000;
-            match PluginProcess::start_with(path, quiet(), (far, far), TIMEOUT) {
+            match start_versions(path, env, (far, far)) {
                 Err(HostError::Incompatible { plugin_range, .. }) if plugin_range.1 < far => Ok(()),
                 Err(e) => Err(format!("expected a version mismatch, got: {e}")),
                 Ok(_) => Err("the plugin accepted a protocol version it can't speak".into()),
@@ -136,6 +151,62 @@ pub fn run(path: &Path) -> Vec<Check> {
             }
         })(),
     );
+
+    // Destinations: `deliver` with options (and, with `multi_file`, several files) is parsed and
+    // answered. The file doesn't exist, so a delivered or an error reply are both fine.
+    let destination = start(path).ok().map(|p| {
+        let info = p.info().clone();
+        let _ = p.close();
+        info
+    });
+    if let Some(info) = destination.filter(|i| i.kind == crate::Kind::Destination) {
+        let missing = |n: &str| DeliveryFile {
+            local_path: format!("/nonexistent/dre-conformance/{n}"),
+            remote_path: Some(format!("dre-conformance/{n}")),
+        };
+        let one = missing("a.csv");
+        let mut forms = vec![(
+            "deliver with options gets a reply and the plugin keeps serving",
+            Request::Deliver {
+                local_path: Some(one.local_path),
+                remote_path: one.remote_path,
+                files: Vec::new(),
+                connection: Map::new(),
+                options: json!({"conformance": true}).as_object().unwrap().clone(),
+            },
+        )];
+        if info.capabilities.iter().any(|c| c == crate::CAP_MULTI_FILE) {
+            forms.push((
+                "a multi-file deliver gets a reply and the plugin keeps serving",
+                Request::Deliver {
+                    local_path: None,
+                    remote_path: None,
+                    files: vec![missing("a.csv"), missing("b.csv")],
+                    connection: Map::new(),
+                    options: Map::new(),
+                },
+            ));
+        }
+        for (name, req) in forms {
+            check(
+                name,
+                (|| {
+                    let mut p = start(path).map_err(|e| e.to_string())?;
+                    p.send(&req).map_err(|e| e.to_string())?;
+                    match p
+                        .recv(Some(TIMEOUT), "a deliver reply")
+                        .map_err(|e| e.to_string())?
+                    {
+                        Incoming::Json(Response::Delivered { .. } | Response::Error { .. }) => {}
+                        other => return Err(format!("expected delivered or error, got {other:?}")),
+                    }
+                    p.describe()
+                        .map_err(|e| format!("plugin stopped serving after a deliver: {e}"))?;
+                    p.close().map_err(|e| e.to_string())
+                })(),
+            );
+        }
+    }
 
     check(
         "close ends the process with exit code 0",

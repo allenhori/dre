@@ -1,0 +1,16 @@
+[package]
+name = "dre-destination-slack"
+description = "DRE destination plugin: upload an output's files to a Slack channel or DM"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dre-protocol = { path = "../../crates/dre-protocol" }
+serde_json.workspace = true
+ureq = "3"
+
+[dev-dependencies]
+tempfile.workspace = true
+form_urlencoded = "1"
