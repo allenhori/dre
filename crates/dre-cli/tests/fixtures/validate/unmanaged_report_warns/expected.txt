@@ -1,0 +1,5 @@
+exit: 0
+warning[unmanaged-report]: reports/scratch/quick_look.sql: `quick_look` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
+warning[unmanaged-report]: reports/scratch/temp_then_select.sql: `temp_then_select` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
+warning[unmanaged-report]: reports/scratch/templated.sql: `templated` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
+Validation passed: 0 errors, 3 warnings

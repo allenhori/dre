@@ -1,0 +1,2 @@
+queries: [qa]
+output: {format: xlsx, header: 'yes', max_rows_per_sheet: 2000000, delimiter: ','}

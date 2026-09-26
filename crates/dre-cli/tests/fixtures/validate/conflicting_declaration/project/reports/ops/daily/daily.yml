@@ -1,0 +1,2 @@
+queries: [summary]
+schedule: {cron: "0 6 * * *"}

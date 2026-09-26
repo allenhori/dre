@@ -1,0 +1,5 @@
+exit: 1
+error[invalid-profile]: $CASE/profiles/profiles.yml:5: profile `no_outputs` needs a `target` and a map of named `outputs`
+error[invalid-profile]: $CASE/profiles/profiles.yml:8: profile `bad_target` has target `staging`, which isn't one of its outputs (`prod`)
+error[invalid-profile]: $CASE/profiles/profiles.yml:14: output `prod` of profile `no_type` has no `type`
+Validation failed: 3 errors, 0 warnings

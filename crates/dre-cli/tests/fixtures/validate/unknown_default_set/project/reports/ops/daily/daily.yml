@@ -1,0 +1,3 @@
+queries: [summary]
+default_set: client_b
+sets: [client_a]

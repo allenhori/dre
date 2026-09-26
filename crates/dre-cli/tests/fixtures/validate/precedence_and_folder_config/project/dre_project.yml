@@ -1,0 +1,15 @@
+name: acme_reports
+default_profile: local_dev
+vars: {region: AU, level: project, schema: public}
+default_output:
+  format: csv
+  delimiter: ";"
+reports:
+  finance:
+    +tags: [finance]
+    +vars: {level: finance}
+    regulatory:
+      +tags: [regulatory]
+      +vars: {level: regulatory}
+      +output:
+        format: xlsx

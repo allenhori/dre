@@ -1,0 +1,156 @@
+exit: 0
+{
+  "ok": true,
+  "errors": 0,
+  "warnings": 3,
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "code": "unmanaged-report",
+      "message": "`quick_look` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report",
+      "file": "reports/scratch/quick_look.sql",
+      "line": null
+    },
+    {
+      "severity": "warning",
+      "code": "unmanaged-report",
+      "message": "`temp_then_select` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report",
+      "file": "reports/scratch/temp_then_select.sql",
+      "line": null
+    },
+    {
+      "severity": "warning",
+      "code": "unmanaged-report",
+      "message": "`templated` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report",
+      "file": "reports/scratch/templated.sql",
+      "line": null
+    }
+  ],
+  "project": {
+    "name": "acme_reports",
+    "default_profile": "local_dev",
+    "vars": {},
+    "run_query_max_rows": 10000,
+    "reports": [
+      {
+        "name": "quick_look",
+        "managed": false,
+        "file": "reports/scratch/quick_look.sql",
+        "folder": [
+          "scratch"
+        ],
+        "tags": [],
+        "queries": [
+          {
+            "query": "quick_look",
+            "path": "reports/scratch/quick_look.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "quick_look",
+                "path": "reports/scratch/quick_look.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          }
+        ]
+      },
+      {
+        "name": "temp_then_select",
+        "managed": false,
+        "file": "reports/scratch/temp_then_select.sql",
+        "folder": [
+          "scratch"
+        ],
+        "tags": [],
+        "queries": [
+          {
+            "query": "temp_then_select",
+            "path": "reports/scratch/temp_then_select.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "temp_then_select",
+                "path": "reports/scratch/temp_then_select.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          }
+        ]
+      },
+      {
+        "name": "templated",
+        "managed": false,
+        "file": "reports/scratch/templated.sql",
+        "folder": [
+          "scratch"
+        ],
+        "tags": [],
+        "queries": [
+          {
+            "query": "templated",
+            "path": "reports/scratch/templated.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "templated",
+                "path": "reports/scratch/templated.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          }
+        ]
+      }
+    ],
+    "sets": {},
+    "plugins": [
+      {
+        "kind": "source",
+        "name": "duckdb",
+        "version": ">=0.0",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      },
+      {
+        "kind": "format",
+        "name": "csv",
+        "version": "*",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      }
+    ],
+    "macros": []
+  }
+}

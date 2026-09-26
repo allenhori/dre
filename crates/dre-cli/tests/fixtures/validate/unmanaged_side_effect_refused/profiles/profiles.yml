@@ -1,0 +1,5 @@
+local_dev:
+  target: dev
+  outputs:
+    dev: {type: duckdb, path: ./dev.duckdb}
+    prod: {type: duckdb, path: ./prod.duckdb}

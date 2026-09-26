@@ -1,0 +1,147 @@
+exit: 0
+{
+  "ok": true,
+  "errors": 0,
+  "warnings": 0,
+  "diagnostics": [],
+  "project": {
+    "name": "acme_reports",
+    "default_profile": "local_dev",
+    "vars": {},
+    "run_query_max_rows": 10000,
+    "reports": [
+      {
+        "name": "monthly",
+        "managed": true,
+        "file": "reports/finance/monthly/monthly.yml",
+        "folder": [
+          "finance",
+          "monthly"
+        ],
+        "tags": [],
+        "queries": [
+          {
+            "query": "q1",
+            "path": "reports/finance/monthly/q1.sql"
+          },
+          {
+            "query": "q2",
+            "path": "reports/finance/monthly/q2.sql"
+          },
+          {
+            "query": "q3",
+            "path": "reports/finance/monthly/q3.sql"
+          }
+        ],
+        "default_set": "client_a",
+        "has_sets": true,
+        "bindings": [
+          {
+            "set": "client_a",
+            "profile": "local_dev",
+            "vars": {
+              "region": "AU",
+              "schema": "client_a"
+            },
+            "queries": [
+              {
+                "query": "q1",
+                "path": "reports/finance/monthly/q1.sql"
+              },
+              {
+                "query": "q2",
+                "path": "reports/finance/monthly/q2.sql"
+              },
+              {
+                "query": "q3",
+                "path": "reports/finance/monthly/q3.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          },
+          {
+            "set": "client_b",
+            "profile": "local_dev",
+            "vars": {
+              "region": "AU",
+              "schema": "client_b"
+            },
+            "queries": [
+              {
+                "query": "q1",
+                "path": "reports/finance/monthly/q1.sql",
+                "tab_name": "Client B Summary"
+              },
+              {
+                "query": "q2",
+                "path": "reports/finance/monthly/q2.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          },
+          {
+            "set": "client_c_pilot",
+            "profile": "local_dev",
+            "vars": {
+              "region": "AU",
+              "fund_id": "PILOT01"
+            },
+            "queries": [
+              {
+                "query": "q1",
+                "path": "reports/finance/monthly/q1.sql"
+              },
+              {
+                "query": "q2",
+                "path": "reports/finance/monthly/q2.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          }
+        ]
+      }
+    ],
+    "sets": {
+      "client_a": {
+        "profile": "local_dev",
+        "vars": {
+          "schema": "client_a"
+        }
+      },
+      "client_b": {
+        "profile": "local_dev",
+        "vars": {
+          "schema": "client_b"
+        }
+      }
+    },
+    "plugins": [
+      {
+        "kind": "source",
+        "name": "duckdb",
+        "version": ">=0.0",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      },
+      {
+        "kind": "format",
+        "name": "csv",
+        "version": "*",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      }
+    ],
+    "macros": []
+  }
+}

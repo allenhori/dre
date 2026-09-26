@@ -1,0 +1,3 @@
+exit: 0
+warning[unmanaged-report]: reports/ops/bare.sql: `bare` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
+Validation passed: 0 errors, 1 warning

@@ -1,7 +1,14 @@
 //! DRE core: turns a project directory into a resolved, validated project, and runs it.
 
+pub mod constraints;
 pub mod diag;
+pub mod options;
+pub mod preflight;
+pub mod profiles;
 pub mod project;
+pub mod schedule;
+pub mod selector;
+pub mod sqlsplit;
 pub mod yaml;
 
 pub use diag::{Diagnostic, Diagnostics, Severity};
@@ -12,4 +19,14 @@ pub fn version() -> &'static str {
         "0.0.0" => "unreleased",
         v => v,
     }
+}
+
+/// DRE's home directory: `~/.dre`.
+pub fn dre_home() -> std::path::PathBuf {
+    std::env::home_dir().unwrap_or_default().join(".dre")
+}
+
+/// A path with `/` separators on every platform, so messages and goldens read the same everywhere.
+pub fn slash(p: &std::path::Path) -> std::path::PathBuf {
+    std::path::PathBuf::from(p.to_string_lossy().replace('\\', "/"))
 }

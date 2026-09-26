@@ -1,0 +1,74 @@
+exit: 0
+{
+  "ok": true,
+  "errors": 0,
+  "warnings": 0,
+  "diagnostics": [],
+  "project": {
+    "name": "acme_reports",
+    "default_profile": "local_dev",
+    "vars": {},
+    "run_query_max_rows": 10000,
+    "reports": [
+      {
+        "name": "daily",
+        "managed": true,
+        "file": "reports/ops/daily/daily.yml",
+        "folder": [
+          "ops",
+          "daily"
+        ],
+        "tags": [
+          "ops_daily"
+        ],
+        "queries": [
+          {
+            "query": "summary",
+            "path": "reports/ops/daily/summary.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "summary",
+                "path": "reports/ops/daily/summary.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "schedule": {
+              "cron": "0 6 * * *"
+            }
+          }
+        ]
+      }
+    ],
+    "sets": {},
+    "plugins": [
+      {
+        "kind": "source",
+        "name": "duckdb",
+        "version": ">=0.0",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      },
+      {
+        "kind": "format",
+        "name": "csv",
+        "version": "*",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      }
+    ],
+    "macros": []
+  }
+}

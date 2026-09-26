@@ -1,0 +1,2 @@
+queries: [qb]
+schedule: {cron: "0 6 * *"}

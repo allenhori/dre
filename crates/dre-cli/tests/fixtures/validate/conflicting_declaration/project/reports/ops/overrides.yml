@@ -1,0 +1,2 @@
+name: daily
+schedule: {cron: "0 7 * * *"}
