@@ -107,3 +107,16 @@ How the commands use it:
 
 DRE only ever installs plugins the project declares under `sources:`, `destinations:` or
 `formats:`. It never infers them from a `profiles.yml` `type:`.
+
+## Trying the install flow locally
+
+`scripts/local-registry.sh` builds DRE and every first-party plugin from your checkout and
+publishes them to a local registry (`~/.cache/dre-local-registry` by default). It then prints
+four `export` lines. Those put the build on your `PATH` and point `DRE_REGISTRY_URL`,
+`DRE_PLUGINS_DIR` and `DRE_PROFILES_DIR` at the local registry and an empty sandbox, so your real
+`~/.dre` is left alone. With those set, `dre init`, `dre deps`, `dre plugin install`, `dre.lock`
+and `dre run` all behave as they will against the published registry.
+
+Every plugin is published as version `0.0.1` by default. Set `DRE_LOCAL_VERSION` to publish a
+different version, which is how to try `dre plugin update` and lockfile pinning. Delete the
+`sandbox/` folder to start again from nothing.
