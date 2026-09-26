@@ -732,6 +732,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dre-format-xlsx"
+version = "0.0.0"
+dependencies = [
+ "arrow",
+ "calamine",
+ "chrono",
+ "dre-protocol",
+ "rust_xlsxwriter",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "dre-protocol"
 version = "0.0.0"
 dependencies = [
@@ -1470,6 +1483,16 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "rust_xlsxwriter"
+version = "0.99.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34f2d2cda7223168a14fb86bc7411dbc3379bd7d49749ecc53b91ed98585b6b0"
+dependencies = [
+ "tempfile",
+ "zip 8.6.0",
 ]
 
 [[package]]

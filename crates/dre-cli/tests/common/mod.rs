@@ -21,10 +21,25 @@ fn package_of(bin: &str) -> &str {
     }
 }
 
+/// Where test-built plugin binaries live: a separate target dir, so these builds (with their
+/// own feature set) don't invalidate the outer `cargo test` build and rebuild every time.
+/// With `DRE_TEST_PREBUILT_BINS` set (CI, after `cargo build --workspace`), the binaries next to
+/// `dre` are used as they are.
+fn plugin_target_dir() -> PathBuf {
+    if std::env::var_os("DRE_TEST_PREBUILT_BINS").is_some() {
+        return bin_dir().parent().unwrap().to_path_buf();
+    }
+    bin_dir().parent().unwrap().join("plugin-builds")
+}
+
 /// Build the packages of `bins` in one cargo invocation.
 pub fn build_bins(bins: &[&str]) {
+    if std::env::var_os("DRE_TEST_PREBUILT_BINS").is_some() {
+        return;
+    }
     let mut cmd = Command::new(env!("CARGO"));
     cmd.args(["build", "--quiet", "--bins"])
+        .env("CARGO_TARGET_DIR", plugin_target_dir())
         .current_dir(env!("CARGO_MANIFEST_DIR"));
     let mut pkgs: Vec<&str> = bins.iter().map(|b| package_of(b)).collect();
     pkgs.dedup();
@@ -40,7 +55,9 @@ pub fn build_bins(bins: &[&str]) {
 /// Path to a workspace binary, building its package first.
 pub fn workspace_bin(bin: &str) -> PathBuf {
     build_bins(&[bin]);
-    let path = bin_dir().join(format!("{bin}{}", std::env::consts::EXE_SUFFIX));
+    let path = plugin_target_dir()
+        .join("debug")
+        .join(format!("{bin}{}", std::env::consts::EXE_SUFFIX));
     assert!(path.exists(), "{} missing after build", path.display());
     path
 }
@@ -62,7 +79,9 @@ pub fn test_plugins(bins: &[&str]) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     build_bins(bins);
     for bin in bins {
-        let src = bin_dir().join(format!("{bin}{}", std::env::consts::EXE_SUFFIX));
+        let src = plugin_target_dir()
+            .join("debug")
+            .join(format!("{bin}{}", std::env::consts::EXE_SUFFIX));
         let dst = dir.join(src.file_name().unwrap());
         let stale = match (std::fs::metadata(&src), std::fs::metadata(&dst)) {
             (Ok(s), Ok(d)) => s.modified().unwrap() > d.modified().unwrap(),
@@ -83,7 +102,13 @@ pub struct TestProject {
     pub plugins: PathBuf,
 }
 
-pub const ALL_PLUGINS: &[&str] = &["dre-source-duckdb", "dre-format-csv", "dre-format-delimited"];
+pub const ALL_PLUGINS: &[&str] = &[
+    "dre-source-duckdb",
+    "dre-source-fixture",
+    "dre-format-csv",
+    "dre-format-delimited",
+    "dre-format-xlsx",
+];
 
 impl TestProject {
     /// `files` are written under the project root; `profiles.yml` goes to a separate dir.
@@ -133,6 +158,11 @@ impl TestProject {
 
     /// Run `dre <cmd> <args…>` against this project.
     pub fn dre(&self, cmd: &str, args: &[&str]) -> Run {
+        self.dre_env(cmd, args, &[])
+    }
+
+    /// Like `dre`, with extra environment variables.
+    pub fn dre_env(&self, cmd: &str, args: &[&str], env: &[(&str, &str)]) -> Run {
         let mut c = assert_cmd::Command::cargo_bin("dre").unwrap();
         c.arg(cmd).args(args);
         c.arg("--project-dir").arg(self.root());
@@ -142,7 +172,8 @@ impl TestProject {
         c.env("DRE_PLUGINS_DIR", &self.plugins)
             .env("DRE_RUN_DATE", "2026-01-25")
             .env("HOME", self.dir.path().join("home"))
-            .env_remove("DRE_PROFILES_DIR");
+            .env_remove("DRE_PROFILES_DIR")
+            .envs(env.iter().copied());
         let out = c.output().unwrap();
         Run {
             code: out.status.code().unwrap_or(-1),
