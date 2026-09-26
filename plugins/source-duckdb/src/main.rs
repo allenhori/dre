@@ -1,6 +1,6 @@
 //! DRE source plugin for DuckDB.
 //!
-//! Profile output fields: `path` (database file; default `:memory:`, relative to the project
+//! Profile target fields: `path` (database file; default `:memory:`, relative to the project
 //! directory), `threads`, `memory_limit`. One connection is held for the whole Binding, so temp
 //! tables and settings persist across statements.
 

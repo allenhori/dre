@@ -55,8 +55,25 @@ sets: [client_a, client_b]
 default_set: client_a
 ```
 
-Connections live in `~/.dre/profiles.yml`, outside the project, in dbt's shape (`target` and
-`outputs`). Plugins are declared in `plugins.yml` and installed on demand (`dre deps`). Their
+Connections live in `~/.dre/profiles.yml`, outside the project. Database connections go under
+`sources:` and delivery targets under `destinations:`. Each profile picks a default `target`
+(environment) from its named `targets`:
+
+```yaml
+sources:
+  warehouse:
+    target: dev
+    targets:
+      dev: {type: duckdb, path: dev.duckdb}
+      prod: {type: postgres, host: db.internal, user: reports, password: "{{ env_var('PG_PASSWORD') }}"}
+destinations:
+  reports_s3:
+    target: prod
+    targets:
+      prod: {type: s3, bucket: reports}
+```
+
+`dre init` writes this file for you. Plugins are declared in `plugins.yml` and installed on demand (`dre deps`). Their
 exact versions are pinned in `dre.lock`.
 
 ## Documentation

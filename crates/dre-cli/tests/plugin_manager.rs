@@ -81,7 +81,7 @@ impl Env {
         std::fs::create_dir_all(dir.path().join("profiles")).unwrap();
         std::fs::write(
             dir.path().join("profiles/profiles.yml"),
-            "fx:\n  target: dev\n  outputs:\n    dev: {type: fixture}\n",
+            "sources:\n  fx:\n    target: dev\n    targets:\n      dev: {type: fixture}\n",
         )
         .unwrap();
         Env { dir }

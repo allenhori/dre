@@ -5,7 +5,7 @@
 //! HiveServer2 protocol over HTTPS (the protocol Databricks' ODBC/JDBC drivers speak): one
 //! session per Binding, so temp views and `SET`s persist and the plugin advertises `sessions`.
 //!
-//! Profile output fields: `host`, `http_path`, `token` (personal access token or OAuth token),
+//! Profile target fields: `host`, `http_path`, `token` (personal access token or OAuth token),
 //! optional `catalog`, `schema`, and `retry_timeout` (seconds to keep retrying while a stopped
 //! warehouse starts; default 900).
 //!

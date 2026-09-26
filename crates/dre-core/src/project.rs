@@ -13,7 +13,7 @@ use serde_json::{Map as JsonMap, Value as Json};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::diag::Diagnostics;
-use crate::profiles::{LOCAL_TYPE, Profiles};
+use crate::profiles::{LOCAL_TYPE, Profiles, Role};
 use crate::yaml::YamlFile;
 use crate::{constraints, options, preflight, schedule, selector, sqlsplit};
 
@@ -2228,18 +2228,23 @@ impl Loader {
             );
             return;
         }
-        for (role, refs) in [("source", &used.sources), ("destination", &used.destinations)] {
+        for (role, refs) in [
+            (Role::Source, &used.sources),
+            (Role::Destination, &used.destinations),
+        ] {
             for (name, (file, line)) in refs {
-                if role == "destination" && name == LOCAL_TYPE {
+                if role == Role::Destination && name == LOCAL_TYPE {
                     continue;
                 }
-                if !profiles.declares(name) {
+                if !profiles.declares(role, name) {
                     self.diags.error(
                         "unknown-profile",
                         file.clone(),
                         *line,
                         format!(
-                            "{role} profile `{name}` isn't defined in {}",
+                            "{} profile `{name}` isn't defined under `{}:` in {}",
+                            role.as_str(),
+                            role.section(),
                             profiles.path.display()
                         ),
                     );
@@ -2250,11 +2255,11 @@ impl Loader {
             let sources: Vec<&String> = used
                 .sources
                 .keys()
-                .filter(|p| profiles.get(p).is_some())
+                .filter(|p| profiles.get(Role::Source, p).is_some())
                 .collect();
             let defining = sources
                 .iter()
-                .filter(|p| profiles.get(p).unwrap().outputs.contains_key(t))
+                .filter(|p| profiles.get(Role::Source, p).unwrap().targets.contains_key(t))
                 .count();
             if !sources.is_empty() && defining == 0 {
                 self.diags.error(
@@ -2273,13 +2278,13 @@ impl Loader {
             } else {
                 for p in sources
                     .iter()
-                    .filter(|p| !profiles.get(p).unwrap().outputs.contains_key(t))
+                    .filter(|p| !profiles.get(Role::Source, p).unwrap().targets.contains_key(t))
                 {
                     self.diags.warning(
                         "missing-target",
                         None,
                         None,
-                        format!("source profile `{p}` has no `{t}` output; its reports can't run with --target {t}"),
+                        format!("source profile `{p}` has no `{t}` target; its reports can't run with --target {t}"),
                     );
                 }
             }
@@ -2395,23 +2400,25 @@ impl Loader {
         let declared = |k: PluginKind, n: &str| by_plugin.contains_key(&(k, n.to_string()));
         let profiles = &project.profiles;
         for (role, kind, refs) in [
-            ("source", PluginKind::Source, &used.sources),
-            ("destination", PluginKind::Destination, &used.destinations),
+            (Role::Source, PluginKind::Source, &used.sources),
+            (Role::Destination, PluginKind::Destination, &used.destinations),
         ] {
             for name in refs.keys() {
-                let Some(p) = profiles.get(name) else { continue };
-                for out_ in p.outputs.values() {
+                let Some(p) = profiles.get(role, name) else {
+                    continue;
+                };
+                let role_name = role.as_str();
+                for out_ in p.targets.values() {
                     if kind == PluginKind::Destination && out_.kind == LOCAL_TYPE {
                         continue;
                     }
                     if !declared(kind, &out_.kind) {
-                        let pf = profiles.file.as_ref();
                         self.diags.error(
                             "undeclared-plugin",
-                            pf.map(|f| f.display.clone()),
-                            pf.and_then(|f| f.line_of(name, None)),
+                            profiles.file.as_ref().map(|f| f.display.clone()),
+                            profiles.line_of(role, name),
                             format!(
-                                "`type: {t}` used by {role} profile `{name}`, but `{t}` isn't declared as a required {role} plugin anywhere in the project — add it under `{}:`",
+                                "`type: {t}` used by {role_name} profile `{name}`, but `{t}` isn't declared as a required {role_name} plugin anywhere in the project — add it under `{}:`",
                                 kind.block(),
                                 t = out_.kind
                             ),

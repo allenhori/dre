@@ -101,22 +101,24 @@ another plugin kind, are answered with `error`.
 
 | Request | Reply |
 |---|---|
-| `{"type":"describe"}` | `{"type":"describe","connection_fields":[{"name","description","required","secret","default"}]}` |
+| `{"type":"describe"}` | `{"type":"describe","connection_fields":[{"name","description","required","secret","default","same_as_source"}]}` |
 | `{"type":"close"}` | `{"type":"ok"}`, then the plugin exits 0 |
 
-`describe` lists the fields a `profiles.yml` output of this plugin's type accepts. `dre init`
+`describe` lists the fields a `profiles.yml` target of this plugin's type accepts. `dre init`
 uses it to prompt for connection details. By default it offers fields marked `secret` as
-`env_var()` references. Format plugins return an empty list.
+`env_var()` references. A destination field with `"same_as_source": "<source type>"` defaults
+to the value entered for a source profile of that type (for example one Databricks host for
+both). Format plugins return an empty list.
 
 When stdin closes, the plugin exits.
 
 ### Source
 
 ```json
-{"type": "open", "connection": {…profile output fields…}, "read_only": false}
+{"type": "open", "connection": {…profile target fields…}, "read_only": false}
 ```
 
-`open` starts the session. `connection` holds every field of the selected `profiles.yml` output
+`open` starts the session. `connection` holds every field of the selected `profiles.yml` target
 except `type`, with `env_var()` already rendered by core. The reply is `ok`.
 
 ```json

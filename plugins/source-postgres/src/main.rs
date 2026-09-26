@@ -1,6 +1,6 @@
 //! DRE source plugin for PostgreSQL.
 //!
-//! Profile output fields: `host`, `port` (5432), `user`, `password`, `database` (or `dbname`),
+//! Profile target fields: `host`, `port` (5432), `user`, `password`, `database` (or `dbname`),
 //! `sslmode` (`disable`, `prefer` (default), `require`, `verify-ca`, `verify-full`),
 //! `sslrootcert`, `connect_timeout` (seconds), `schema` (sets the search path) and `role`.
 //!

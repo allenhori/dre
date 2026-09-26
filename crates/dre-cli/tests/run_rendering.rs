@@ -4,7 +4,8 @@ mod common;
 
 use common::{DUCK_PROFILES, PLUGINS_YML, TestProject};
 
-const LOCAL_FS: &str = "local_fs:\n  target: dev\n  outputs:\n    dev: {type: local}\n";
+const LOCAL_FS: &str =
+    "destinations:\n  local_fs:\n    target: dev\n    targets:\n      dev: {type: local}\n";
 
 fn project(files: &[(&str, &str)]) -> TestProject {
     let mut all = vec![
