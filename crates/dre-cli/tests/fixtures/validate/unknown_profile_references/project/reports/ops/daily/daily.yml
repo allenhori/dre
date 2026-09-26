@@ -1,0 +1,4 @@
+queries: [summary]
+profile: missing_source
+output:
+  destination: {profile: missing_dest, path: out.csv}

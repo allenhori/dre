@@ -1,0 +1,2 @@
+queries: [qe]
+schedule: {cron: "0 6 * * *", rrule: "FREQ=DAILY"}

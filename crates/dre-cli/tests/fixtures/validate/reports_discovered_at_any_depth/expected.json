@@ -1,0 +1,105 @@
+exit: 0
+{
+  "ok": true,
+  "errors": 0,
+  "warnings": 0,
+  "diagnostics": [],
+  "project": {
+    "name": "acme_reports",
+    "default_profile": "local_dev",
+    "vars": {},
+    "run_query_max_rows": 10000,
+    "reports": [
+      {
+        "name": "daily_summary",
+        "managed": true,
+        "file": "reports/ops/daily_summary/daily_summary.yml",
+        "folder": [
+          "ops",
+          "daily_summary"
+        ],
+        "tags": [],
+        "queries": [
+          {
+            "query": "summary",
+            "path": "reports/ops/daily_summary/summary.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "summary",
+                "path": "reports/ops/daily_summary/summary.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          }
+        ]
+      },
+      {
+        "name": "quarterly_filing",
+        "managed": true,
+        "file": "reports/finance/regulatory/quarterly/filing/filing.yml",
+        "folder": [
+          "finance",
+          "regulatory",
+          "quarterly",
+          "filing"
+        ],
+        "tags": [],
+        "queries": [
+          {
+            "query": "filing_q",
+            "path": "reports/finance/regulatory/quarterly/filing/filing_q.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "filing_q",
+                "path": "reports/finance/regulatory/quarterly/filing/filing_q.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          }
+        ]
+      }
+    ],
+    "sets": {},
+    "plugins": [
+      {
+        "kind": "source",
+        "name": "duckdb",
+        "version": ">=0.0",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      },
+      {
+        "kind": "format",
+        "name": "csv",
+        "version": "*",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      }
+    ],
+    "macros": []
+  }
+}

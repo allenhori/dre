@@ -1,0 +1,3 @@
+queries: [summary]
+output:
+  destination: {profile: reports_gcs, path: gs://bucket/daily.csv}

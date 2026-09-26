@@ -1,0 +1,2 @@
+- select: monthly
+  cron: "0 6 1 * *"

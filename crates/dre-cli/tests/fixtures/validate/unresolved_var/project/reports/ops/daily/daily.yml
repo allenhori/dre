@@ -1,0 +1,5 @@
+queries: [summary]
+sets: [client_a, client_b]
+default_set: client_a
+output:
+  destination: {profile: local_fs, path: "out/{{ var('bucket') }}/daily.csv"}

@@ -1,0 +1,3 @@
+exit: 1
+error[profile-and-sets]: reports/ops/daily/daily.yml:3: report `daily` declares both `profile:` and `sets:`; use one or the other
+Validation failed: 1 error, 0 warnings

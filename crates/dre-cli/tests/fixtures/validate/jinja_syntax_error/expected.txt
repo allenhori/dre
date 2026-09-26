@@ -1,0 +1,4 @@
+exit: 1
+error[jinja-syntax]: macros/helpers.sql:2: Jinja syntax error: unexpected end of block
+error[jinja-syntax]: reports/ops/daily/summary.sql:2: Jinja syntax error: unexpected `}`, expected end of variable block
+Validation failed: 2 errors, 0 warnings

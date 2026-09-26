@@ -1,0 +1,4 @@
+queries: [summary]
+formats:
+  - csv: ">=0.1"
+  - xlsx

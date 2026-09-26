@@ -1,0 +1,143 @@
+exit: 0
+{
+  "ok": true,
+  "errors": 0,
+  "warnings": 0,
+  "diagnostics": [],
+  "project": {
+    "name": "acme_reports",
+    "default_profile": "local_dev",
+    "vars": {},
+    "run_query_max_rows": 10000,
+    "reports": [
+      {
+        "name": "fin_monthly",
+        "managed": true,
+        "file": "reports/finance/monthly/fin_monthly/fin_monthly.yml",
+        "folder": [
+          "finance",
+          "monthly",
+          "fin_monthly"
+        ],
+        "tags": [
+          "monthly_tag"
+        ],
+        "queries": [
+          {
+            "query": "fin_q",
+            "path": "reports/finance/monthly/fin_monthly/fin_q.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "fin_q",
+                "path": "reports/finance/monthly/fin_monthly/fin_q.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "schedule": {
+              "cron": "0 6 1 * *"
+            }
+          }
+        ]
+      },
+      {
+        "name": "ops_monthly",
+        "managed": true,
+        "file": "reports/ops/monthly/ops_monthly/ops_monthly.yml",
+        "folder": [
+          "ops",
+          "monthly",
+          "ops_monthly"
+        ],
+        "tags": [
+          "ops_tag"
+        ],
+        "queries": [
+          {
+            "query": "ops_q",
+            "path": "reports/ops/monthly/ops_monthly/ops_q.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "ops_q",
+                "path": "reports/ops/monthly/ops_monthly/ops_q.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "schedule": {
+              "every": {
+                "days": 5
+              },
+              "starting": "2026-01-01",
+              "at": "06:00"
+            }
+          }
+        ]
+      }
+    ],
+    "sets": {},
+    "plugins": [
+      {
+        "kind": "source",
+        "name": "duckdb",
+        "version": ">=0.0",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      },
+      {
+        "kind": "format",
+        "name": "csv",
+        "version": "*",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      }
+    ],
+    "schedules": [
+      {
+        "select": "finance.monthly",
+        "schedule": {
+          "cron": "0 6 1 * *"
+        }
+      },
+      {
+        "select": "tag:ops_tag",
+        "schedule": {
+          "rrule": "FREQ=MONTHLY;BYDAY=2TU"
+        }
+      },
+      {
+        "report": "ops_monthly",
+        "schedule": {
+          "every": {
+            "days": 5
+          },
+          "starting": "2026-01-01",
+          "at": "06:00"
+        }
+      }
+    ],
+    "macros": []
+  }
+}

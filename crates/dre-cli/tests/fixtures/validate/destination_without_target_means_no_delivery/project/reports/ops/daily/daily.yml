@@ -1,0 +1,3 @@
+queries: [summary]
+output:
+  destination: {profile: client_sftp, path: /inbound/daily.csv}

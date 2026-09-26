@@ -1,0 +1,5 @@
+queries: [q1, q2]
+sets:
+  - name: client_a
+    exclude: [q2]
+    tab_names: {q2: Detail}

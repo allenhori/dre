@@ -1,0 +1,6 @@
+queries: [q1, q2]
+sets:
+  - name: client_a
+    exclude: [q9]
+  - name: client_b
+    queries: [q1, q8]
