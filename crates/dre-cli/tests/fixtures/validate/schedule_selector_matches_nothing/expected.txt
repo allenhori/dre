@@ -1,0 +1,6 @@
+exit: 1
+error[selector-matches-nothing]: schedules.yml:1: selector `tag:quarterly` matches no report
+error[selector-matches-nothing]: schedules.yml:3: selector `nothing_here` matches no report name, tag or folder
+error[selector-matches-nothing]: schedules.yml:5: report `fin_monthly` has no Set `client_b`
+error[selector-matches-nothing]: schedules.yml:8: report `no_such_report` doesn't exist
+Validation failed: 4 errors, 0 warnings

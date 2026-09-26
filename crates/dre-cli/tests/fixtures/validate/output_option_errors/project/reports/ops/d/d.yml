@@ -1,0 +1,6 @@
+queries: [qd]
+output:
+  format: fixed_width
+  columns:
+    - {name: id, width: 0, align: middle}
+    - {width: 5, pad: "ab", truncate: maybe}

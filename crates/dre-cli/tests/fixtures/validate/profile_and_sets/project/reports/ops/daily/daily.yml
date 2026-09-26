@@ -1,0 +1,3 @@
+queries: [daily_q]
+profile: local_dev
+sets: [client_a]

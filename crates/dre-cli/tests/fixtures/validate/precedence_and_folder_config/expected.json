@@ -1,0 +1,186 @@
+exit: 0
+{
+  "ok": true,
+  "errors": 0,
+  "warnings": 1,
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "code": "unmanaged-report",
+      "message": "`bare` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report",
+      "file": "reports/ops/bare.sql",
+      "line": null
+    }
+  ],
+  "project": {
+    "name": "acme_reports",
+    "default_profile": "local_dev",
+    "vars": {
+      "region": "AU",
+      "level": "project",
+      "schema": "public"
+    },
+    "run_query_max_rows": 10000,
+    "reports": [
+      {
+        "name": "bare",
+        "managed": false,
+        "file": "reports/ops/bare.sql",
+        "folder": [
+          "ops"
+        ],
+        "tags": [],
+        "queries": [
+          {
+            "query": "bare",
+            "path": "reports/ops/bare.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {
+              "region": "AU",
+              "level": "project",
+              "schema": "public"
+            },
+            "queries": [
+              {
+                "query": "bare",
+                "path": "reports/ops/bare.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {
+                "delimiter": ";"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "name": "filing",
+        "managed": true,
+        "file": "reports/finance/regulatory/filing/filing.yml",
+        "folder": [
+          "finance",
+          "regulatory",
+          "filing"
+        ],
+        "tags": [
+          "finance",
+          "regulatory"
+        ],
+        "queries": [
+          {
+            "query": "filing_q",
+            "path": "reports/finance/regulatory/filing/filing_q.sql"
+          }
+        ],
+        "has_sets": true,
+        "bindings": [
+          {
+            "set": "client_a",
+            "profile": "local_dev",
+            "vars": {
+              "region": "AU",
+              "level": "binding",
+              "schema": "client_a",
+              "report_only": "yes"
+            },
+            "queries": [
+              {
+                "query": "filing_q",
+                "path": "reports/finance/regulatory/filing/filing_q.sql"
+              }
+            ],
+            "output": {
+              "format": "xlsx",
+              "options": {}
+            }
+          }
+        ]
+      },
+      {
+        "name": "ledger",
+        "managed": true,
+        "file": "reports/finance/ledger/ledger.yml",
+        "folder": [
+          "finance",
+          "ledger"
+        ],
+        "tags": [
+          "finance"
+        ],
+        "queries": [
+          {
+            "query": "ledger_q",
+            "path": "reports/finance/ledger/ledger_q.sql"
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {
+              "region": "AU",
+              "level": "finance",
+              "schema": "public"
+            },
+            "queries": [
+              {
+                "query": "ledger_q",
+                "path": "reports/finance/ledger/ledger_q.sql"
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {
+                "delimiter": ";"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "sets": {
+      "client_a": {
+        "profile": "local_dev",
+        "vars": {
+          "schema": "client_a"
+        }
+      }
+    },
+    "plugins": [
+      {
+        "kind": "source",
+        "name": "duckdb",
+        "version": ">=0.0",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      },
+      {
+        "kind": "format",
+        "name": "csv",
+        "version": "*",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      },
+      {
+        "kind": "format",
+        "name": "xlsx",
+        "version": "*",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      }
+    ],
+    "macros": []
+  }
+}

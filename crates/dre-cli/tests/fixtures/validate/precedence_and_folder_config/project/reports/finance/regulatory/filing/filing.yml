@@ -1,0 +1,5 @@
+queries: [filing_q]
+vars: {report_only: yes}
+sets:
+  - name: client_a
+    vars: {level: binding}

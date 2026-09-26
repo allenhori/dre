@@ -1,0 +1,2 @@
+queries: [qc]
+schedule: {rrule: "FREQ=FORTNIGHTLY"}

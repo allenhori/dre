@@ -1,0 +1,14 @@
+local_dev:
+  target: dev
+  outputs:
+    dev: {type: duckdb, path: ./dev.duckdb}
+no_outputs:
+  target: prod
+bad_target:
+  target: staging
+  outputs:
+    prod: {type: duckdb}
+no_type:
+  target: prod
+  outputs:
+    prod: {path: ./x.duckdb}

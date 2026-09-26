@@ -1,0 +1,99 @@
+exit: 0
+{
+  "ok": true,
+  "errors": 0,
+  "warnings": 0,
+  "diagnostics": [],
+  "project": {
+    "name": "acme_reports",
+    "default_profile": "local_dev",
+    "vars": {},
+    "run_query_max_rows": 10000,
+    "reports": [
+      {
+        "name": "daily",
+        "managed": true,
+        "file": "reports/ops/daily/daily.yml",
+        "folder": [
+          "ops",
+          "daily"
+        ],
+        "tags": [],
+        "queries": [
+          {
+            "query": "setup",
+            "path": "reports/ops/daily/setup.sql"
+          },
+          {
+            "query": "summary",
+            "path": "reports/ops/daily/summary.sql",
+            "tab_name": "Account Summary"
+          },
+          {
+            "query": "multi",
+            "path": "reports/ops/daily/multi.sql",
+            "tab_name": [
+              "Summary",
+              "Detail"
+            ],
+            "anchor": "B3",
+            "header": false
+          }
+        ],
+        "has_sets": false,
+        "bindings": [
+          {
+            "set": null,
+            "profile": "local_dev",
+            "vars": {},
+            "queries": [
+              {
+                "query": "setup",
+                "path": "reports/ops/daily/setup.sql"
+              },
+              {
+                "query": "summary",
+                "path": "reports/ops/daily/summary.sql",
+                "tab_name": "Account Summary"
+              },
+              {
+                "query": "multi",
+                "path": "reports/ops/daily/multi.sql",
+                "tab_name": [
+                  "Summary",
+                  "Detail"
+                ],
+                "anchor": "B3",
+                "header": false
+              }
+            ],
+            "output": {
+              "format": "csv",
+              "options": {}
+            }
+          }
+        ]
+      }
+    ],
+    "sets": {},
+    "plugins": [
+      {
+        "kind": "source",
+        "name": "duckdb",
+        "version": ">=0.0",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      },
+      {
+        "kind": "format",
+        "name": "csv",
+        "version": "*",
+        "declared_in": [
+          "plugins.yml"
+        ]
+      }
+    ],
+    "macros": []
+  }
+}

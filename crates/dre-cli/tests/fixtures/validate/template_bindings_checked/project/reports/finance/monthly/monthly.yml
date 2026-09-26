@@ -1,0 +1,13 @@
+queries: [q1, q2]
+output:
+  format: xlsx
+  template:
+    file: templates/branded.xlsx
+    bindings:
+      - {query: q1, sheet: Summary, anchor: A5, header: false, columns: [n]}
+      - {sheet: Summary, cell: B2, value: "{{ run.date.iso }}"}
+      - {sheet: Summary, cell: B3, query: q2, column: n}
+      - {query: q9, sheet: Summry, anchor: A5}
+      - {sheet: Detail, cell: ZZZZ1, value: x, query: q1, column: n}
+      - {sheet: Detail, cell: C1}
+      - {sheet: Detail, anchor: A1}

@@ -1,0 +1,6 @@
+client_a:
+  profile: local_dev
+  vars: {schema: client_a}
+client_b:
+  profile: local_dev
+  vars: {schema: client_b}

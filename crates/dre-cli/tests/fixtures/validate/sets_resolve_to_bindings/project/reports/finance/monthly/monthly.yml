@@ -1,0 +1,12 @@
+queries: [q1, q2, q3]
+default_set: client_a
+vars: {region: AU}
+sets:
+  - client_a
+  - name: client_b
+    exclude: [q3]
+    tab_names:
+      q1: "Client B Summary"
+  - name: client_c_pilot
+    vars: {fund_id: PILOT01}
+    queries: [q1, q2]

@@ -1,0 +1,3 @@
+exit: 1
+error[duplicate-report-name]: reports/scratch/daily.sql: unmanaged report `daily` has the same name as the report declared in reports/ops/daily/daily.yml; report names must be unique project-wide
+Validation failed: 1 error, 0 warnings

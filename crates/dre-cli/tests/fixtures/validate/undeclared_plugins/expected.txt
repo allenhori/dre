@@ -1,0 +1,5 @@
+exit: 1
+error[undeclared-plugin]: `type: duckdb` used by source profile `local_dev`, but `duckdb` isn't declared as a required source plugin anywhere in the project — add it under `sources:`
+error[undeclared-plugin]: `type: gcs` used by destination profile `reports_gcs`, but `gcs` isn't declared as a required destination plugin anywhere in the project — add it under `destinations:`
+error[undeclared-plugin]: format `csv` is used by report `daily` (csv is the built-in default output), but isn't declared anywhere in the project — add it under `formats:`
+Validation failed: 3 errors, 0 warnings

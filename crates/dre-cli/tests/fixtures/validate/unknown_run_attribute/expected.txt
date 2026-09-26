@@ -1,0 +1,4 @@
+exit: 1
+error[unknown-run-attribute]: reports/ops/daily/summary.sql:1: `run.dat` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.date (.yyyymmdd, .ddmmyyyy, .yyyy, .mm, .dd), run.date_format(...)
+error[unknown-run-attribute]: reports/ops/daily/summary.sql:2: `run.date.yymm` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.date (.yyyymmdd, .ddmmyyyy, .yyyy, .mm, .dd), run.date_format(...)
+Validation failed: 2 errors, 0 warnings

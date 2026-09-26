@@ -1,0 +1,2 @@
+queries: [qb]
+output: {format: delimited, quoting: sometimes, line_ending: "\r", byte_order_mark: 1, encoding: klingon, delimiter: "||"}

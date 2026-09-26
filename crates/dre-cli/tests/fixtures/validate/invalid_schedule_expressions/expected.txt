@@ -1,0 +1,11 @@
+exit: 1
+error[invalid-schedule]: reports/ops/a/a.yml:2: report `a`: invalid cron `0 25 * * *`: hour field `25` has `25` outside 0-23
+error[invalid-schedule]: reports/ops/b/b.yml:2: report `b`: invalid cron `0 6 * *`: expected 5 fields (minute hour day-of-month month day-of-week), found 4
+error[invalid-schedule]: reports/ops/c/c.yml:2: report `c`: invalid rrule `FREQ=FORTNIGHTLY`: unknown FREQ `FORTNIGHTLY`
+error[invalid-schedule]: reports/ops/d/d.yml:2: report `d`: unknown `every` unit `fortnights`: use `days`, `weeks` or `months`
+error[invalid-schedule]: reports/ops/e/e.yml:2: report `e`: a schedule needs exactly one of `cron`, `every` or `rrule`, found `cron` and `rrule`
+error[invalid-schedule]: reports/ops/f/f.yml:2: report `f`: `starting` must be a date in YYYY-MM-DD form
+error[invalid-schedule]: reports/ops/f/f.yml:2: report `f`: `at` must be a 24-hour time in HH:MM form
+error[invalid-schedule]: reports/ops/g/g.yml:2: report `g`: unknown schedule key `tz`
+error[invalid-schedule]: reports/ops/g/g.yml:2: report `g`: a schedule needs exactly one of `cron`, `every` or `rrule`
+Validation failed: 9 errors, 0 warnings

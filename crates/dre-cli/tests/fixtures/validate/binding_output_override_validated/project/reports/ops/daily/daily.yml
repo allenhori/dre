@@ -1,0 +1,6 @@
+queries: [q1]
+sets:
+  - name: client_a
+    output:
+      destination: {profile: client_a_inbox, path: /in/daily.csv}
+      delimiter: ";;"
