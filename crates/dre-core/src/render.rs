@@ -1,13 +1,15 @@
 //! Runtime Jinja rendering: one environment per Binding, shared by SQL, output paths and
-//! template values. Provides `run.*`, `var()`, `env_var()`, `run_query()` and every macro in
-//! `macros/`.
+//! template values. Provides `run.*`, `var()`, `env_var()`, `run_query()`, `ref()` and every
+//! macro in `macros/`.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
+
+use crate::lookups::{self, Cell, Load, Lookup, Table};
 use minijinja::value::{Enumerator, Kwargs, Object, ObjectRepr, Value};
 use minijinja::{Environment, Error, ErrorKind, UndefinedBehavior};
 use serde_json::{Map as JsonMap, Value as Json};
@@ -35,6 +37,11 @@ pub struct QueryRows {
 pub trait QueryRunner: Send + Sync {
     /// Run `sql`, failing if it returns more than `max_rows` rows.
     fn run_query(&self, sql: &str, max_rows: u64) -> Result<QueryRows, String>;
+    /// Load a lookup into a temp table on the session: `Some((relation, plugin warning))`, or
+    /// `None` when the source can't load rows.
+    fn load(&self, _name: &str, _table: &Table) -> Result<Option<(String, Option<String>)>, String> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,6 +62,8 @@ impl fmt::Display for RenderError {
 
 pub struct Renderer {
     env: Environment<'static>,
+    /// Warnings raised while rendering (e.g. a large lookup inlined), drained by the caller.
+    warnings: Arc<Mutex<Vec<String>>>,
     import: String,
     /// `(first line in the combined macro template, file, line count)` per macro file.
     macro_files: Vec<(usize, PathBuf, usize)>,
@@ -70,6 +79,11 @@ pub struct RendererConfig<'a> {
     pub cli_vars: BTreeMap<String, String>,
     pub runner: Option<Arc<dyn QueryRunner>>,
     pub run_query_max_rows: u64,
+    /// Every `.sql` file `ref()` can name, by basename, relative to `root`.
+    pub sql: BTreeMap<String, PathBuf>,
+    /// Lookups `ref()` and `lookup()` can name.
+    pub lookups: BTreeMap<String, Lookup>,
+    pub lookup_inline_max_rows: u64,
 }
 
 impl Renderer {
@@ -110,6 +124,29 @@ impl Renderer {
         });
         env.add_global("run", Value::from_object(Run(cfg.context)));
         let runner = cfg.runner;
+        let warnings: Arc<Mutex<Vec<String>>> = Arc::default();
+        let lookups = Arc::new(Lookups {
+            root: cfg.root.to_path_buf(),
+            defs: cfg.lookups,
+            inline_max: cfg.lookup_inline_max_rows,
+            runner: runner.clone(),
+            tables: Mutex::default(),
+            loaded: Mutex::default(),
+            warnings: warnings.clone(),
+        });
+        let l = lookups.clone();
+        env.add_function("lookup", move |name: String| -> Result<Value, Error> {
+            let t = l.table(&name)?;
+            let rows = QueryRows {
+                columns: t.columns.clone(),
+                rows: t
+                    .rows
+                    .iter()
+                    .map(|r| r.iter().map(cell_value).collect())
+                    .collect(),
+            };
+            Ok(Value::from_object(QueryResult::new(rows)))
+        });
         let default_max = cfg.run_query_max_rows;
         env.add_function(
             "run_query",
@@ -154,8 +191,10 @@ impl Renderer {
         } else {
             format!("{{% from \"{MACROS}\" import {} %}}", names.join(", "))
         };
+        add_ref(&mut env, cfg.root, cfg.sql, lookups, &import);
         let mut r = Renderer {
             env,
+            warnings,
             import,
             macro_files,
         };
@@ -165,6 +204,11 @@ impl Renderer {
                 .map_err(|e| r.error(Path::new(MACROS), &e))?;
         }
         Ok(r)
+    }
+
+    /// Warnings raised since the last call.
+    pub fn take_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut *self.warnings.lock().unwrap())
     }
 
     /// Render `src`, reporting errors against `file`.
@@ -206,6 +250,171 @@ impl Renderer {
             .map(str::to_string)
             .unwrap_or_else(|| deepest.kind().to_string());
         RenderError { file, line, message }
+    }
+}
+
+/// `ref('name')`: another `.sql` file, rendered in the same context (vars, `run.*`, macros, the
+/// Binding's connection) and returned in parentheses, ready to use as a subquery or CTE body.
+/// DRE builds no tables, so a ref inlines SQL rather than pointing at a materialised model.
+fn add_ref(
+    env: &mut Environment<'static>,
+    root: &Path,
+    sql: BTreeMap<String, PathBuf>,
+    lookups: Arc<Lookups>,
+    import: &str,
+) {
+    let root = root.to_path_buf();
+    let import = import.to_string();
+    // The chain of refs being rendered, to report cycles instead of recursing forever.
+    let stack: Arc<Mutex<Vec<String>>> = Arc::default();
+    env.add_function(
+        "ref",
+        move |state: &minijinja::State<'_, '_>, name: String| -> Result<Value, Error> {
+            if lookups.defs.contains_key(&name) {
+                return lookups.relation(&name).map(Value::from);
+            }
+            let Some(rel) = sql.get(&name) else {
+                return Err(Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("`ref('{name}')`: no `{name}.sql` and no lookup `{name}` in the project"),
+                ));
+            };
+            {
+                let mut chain = stack.lock().unwrap();
+                if chain.contains(&name) {
+                    chain.push(name.clone());
+                    let cycle = chain.join(" → ");
+                    chain.clear();
+                    return Err(Error::new(
+                        ErrorKind::InvalidOperation,
+                        format!("`ref()` cycle: {cycle}"),
+                    ));
+                }
+                chain.push(name.clone());
+            }
+            let result = (|| {
+                let src = std::fs::read_to_string(root.join(rel)).map_err(|e| {
+                    Error::new(
+                        ErrorKind::InvalidOperation,
+                        format!("can't read {}: {e}", rel.display()),
+                    )
+                })?;
+                let file = rel.to_string_lossy().to_string();
+                let rendered = state
+                    .env()
+                    .template_from_named_str(&file, &format!("{import}{src}"))?
+                    .render(())?;
+                let statements = crate::sqlsplit::split(&rendered);
+                match statements.as_slice() {
+                    [one] => Ok(Value::from(format!("(\n{}\n)", one.text))),
+                    _ => Err(Error::new(
+                        ErrorKind::InvalidOperation,
+                        format!(
+                            "`ref('{name}')` needs {} to hold exactly one statement, but it has {}",
+                            rel.display(),
+                            statements.len()
+                        ),
+                    )),
+                }
+            })();
+            let mut chain = stack.lock().unwrap();
+            if chain.last() == Some(&name) {
+                chain.pop();
+            }
+            result
+        },
+    );
+}
+
+/// Lookups for one Binding: read once, inlined or loaded once.
+struct Lookups {
+    root: PathBuf,
+    defs: BTreeMap<String, Lookup>,
+    inline_max: u64,
+    runner: Option<Arc<dyn QueryRunner>>,
+    tables: Mutex<BTreeMap<String, Arc<Table>>>,
+    /// What `ref()` returns for each lookup already used: inline SQL or a temp table's name.
+    loaded: Mutex<BTreeMap<String, String>>,
+    warnings: Arc<Mutex<Vec<String>>>,
+}
+
+impl Lookups {
+    fn table(&self, name: &str) -> Result<Arc<Table>, Error> {
+        let def = self.defs.get(name).ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidOperation,
+                format!("no lookup `{name}` under lookups/"),
+            )
+        })?;
+        if let Some(t) = self.tables.lock().unwrap().get(name) {
+            return Ok(t.clone());
+        }
+        let t = Arc::new(lookups::read(&self.root, def).map_err(|e| {
+            Error::new(
+                ErrorKind::InvalidOperation,
+                format!("{}: {e}", def.file.display()),
+            )
+        })?);
+        self.tables.lock().unwrap().insert(name.to_string(), t.clone());
+        Ok(t)
+    }
+
+    fn relation(&self, name: &str) -> Result<String, Error> {
+        if let Some(r) = self.loaded.lock().unwrap().get(name) {
+            return Ok(r.clone());
+        }
+        let t = self.table(name)?;
+        let rows = t.rows.len() as u64;
+        let load = match self.defs[name].load {
+            Load::Inline => false,
+            Load::TempTable => true,
+            Load::Auto => rows > self.inline_max,
+        };
+        let loaded = match (&self.runner, load) {
+            (Some(runner), true) => runner.load(name, &t).map_err(|e| {
+                Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("loading lookup `{name}`: {e}"),
+                )
+            })?,
+            _ => None,
+        };
+        let relation = match loaded {
+            Some((relation, warning)) => {
+                if let Some(w) = warning {
+                    self.warn(format!("lookup `{name}`: {w}"));
+                }
+                relation
+            }
+            None => {
+                if load && self.runner.is_some() {
+                    self.warn(format!(
+                        "lookup `{name}` has {rows} rows; this source can't load it into a temp table, so it's inlined in the SQL. Data this size probably belongs in a table in the database"
+                    ));
+                }
+                t.inline_sql()
+            }
+        };
+        self.loaded
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), relation.clone());
+        Ok(relation)
+    }
+
+    fn warn(&self, w: String) {
+        self.warnings.lock().unwrap().push(w);
+    }
+}
+
+fn cell_value(c: &Cell) -> Value {
+    match c {
+        Cell::Null => Value::from(()),
+        Cell::Text(s) => Value::from(s.clone()),
+        Cell::Int(n) => Value::from(*n),
+        Cell::Num(n) => Value::from(*n),
+        Cell::Bool(b) => Value::from(*b),
+        Cell::Date(d) => Value::from(d.to_string()),
     }
 }
 
@@ -318,6 +527,42 @@ impl Object for QueryResult {
     fn enumerate(self: &Arc<Self>) -> Enumerator {
         Enumerator::Seq(self.rows.len())
     }
+
+    /// `result.column('name')` (or an index): that column's values, one per row.
+    fn call_method(
+        self: &Arc<Self>,
+        _: &minijinja::State<'_, '_>,
+        method: &str,
+        args: &[Value],
+    ) -> Result<Value, Error> {
+        if method != "column" {
+            return Err(Error::from(ErrorKind::UnknownMethod));
+        }
+        let [key] = args else {
+            return Err(Error::new(
+                ErrorKind::InvalidOperation,
+                "`column()` takes one column name or index",
+            ));
+        };
+        let i = match key.as_str() {
+            Some(n) => self.columns.iter().position(|c| c == n).ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("no column `{n}` (columns: {})", self.columns.join(", ")),
+                )
+            })?,
+            None => key
+                .as_usize()
+                .filter(|i| *i < self.columns.len())
+                .ok_or_else(|| Error::new(ErrorKind::InvalidOperation, format!("no column {key}")))?,
+        };
+        Ok(Value::from(
+            self.rows
+                .iter()
+                .map(|r| r.get_item_by_index(i).unwrap_or_default())
+                .collect::<Vec<_>>(),
+        ))
+    }
 }
 
 /// One `run_query()` row: accessible by column name (`row.region`, `row['region']`) or index.
@@ -372,6 +617,9 @@ mod tests {
             cli_vars: cli.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             runner: None,
             run_query_max_rows: 10_000,
+            sql: BTreeMap::new(),
+            lookups: BTreeMap::new(),
+            lookup_inline_max_rows: 200,
         })
         .unwrap();
         (dir, r)
@@ -497,6 +745,9 @@ mod tests {
             cli_vars: BTreeMap::new(),
             runner: Some(Arc::new(Fake)),
             run_query_max_rows: 10_000,
+            sql: BTreeMap::new(),
+            lookups: BTreeMap::new(),
+            lookup_inline_max_rows: 200,
         })
         .unwrap();
         let src = "{% set res = run_query('select') %}{{ res.columns | join(',') }}|\

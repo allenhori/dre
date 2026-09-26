@@ -1,14 +1,21 @@
-local_dev:
-  target: dev
-  outputs:
-    dev: {type: duckdb, path: ./dev.duckdb}
-no_outputs:
-  target: prod
-bad_target:
-  target: staging
-  outputs:
-    prod: {type: duckdb}
-no_type:
-  target: prod
-  outputs:
-    prod: {path: ./x.duckdb}
+sources:
+  local_dev:
+    target: dev
+    targets:
+      dev: {type: duckdb, path: ./dev.duckdb}
+  no_targets:
+    target: prod
+  bad_target:
+    target: staging
+    targets:
+      prod: {type: duckdb}
+  no_type:
+    target: prod
+    targets:
+      prod: {path: ./x.duckdb}
+  old_shape:
+    target: dev
+    outputs:
+      dev: {type: duckdb}
+connections:
+  x: {}

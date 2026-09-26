@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dre_core::manager::{self, Index, IndexPlugin};
+use dre_core::profiles::Role;
 use dre_core::project::PluginKind;
 use dre_protocol::host::PluginProcess;
 use dre_protocol::msg::ConnectionField;
@@ -39,18 +40,32 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
             plugins.push_str(&format!("  - {k}\n"));
         }
     }
-    let output = match s.destinations.first() {
-        Some((_, profile)) => format!(
-            "\n# Delivered in addition to the copy in target/run/. Adjust the path for your destination.\n\
-             output:\n  destination:\n    profile: {profile}\n    path: \"reports/{{{{ run.report }}}}-{{{{ run.date.yyyymmdd }}}}.csv\"\n"
-        ),
-        None => String::new(),
+    let output = if s.destinations.is_empty() {
+        String::new()
+    } else {
+        let mut o = String::from(
+            "\n# Delivered in addition to the copy in target/run/, to each destination in turn.\n\
+             # Adjust the path and options for your destinations.\n\
+             output:\n  destination:\n",
+        );
+        for (kind, profile) in &s.destinations {
+            o.push_str(&format!("    - profile: {profile}\n"));
+            o.push_str(match kind.as_str() {
+                "email" => "      to: someone@example.com\n      subject: \"{{ run.report }} {{ run.date.iso }}\"\n",
+                "slack" => "      channel: \"#reports\"\n      message: \"{{ run.report }} for {{ run.date.iso }}\"\n",
+                "databricks_volumes" => {
+                    "      path: \"/Volumes/<catalog>/<schema>/<volume>/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n"
+                }
+                _ => "      path: \"reports/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n",
+            });
+        }
+        o
     };
     let files: Vec<(&str, String)> = vec![
         (
             "dre_project.yml",
             format!(
-                "name: {}\n# Source profile (in ~/.dre/profiles.yml) for reports that don't name one.\ndefault_profile: {}\n",
+                "name: {}\n# Profile under `sources:` in ~/.dre/profiles.yml for reports that don't name one.\ndefault_profile: {}\n",
                 s.name, s.profile
             ),
         ),
@@ -73,7 +88,7 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
         ),
         ("macros/.gitkeep", String::new()),
         ("templates/.gitkeep", String::new()),
-        (".gitignore", "target/\n".to_string()),
+        (".gitignore", "target/\nlogs/\n".to_string()),
     ];
     let mut written = Vec::new();
     for (rel, content) in files {
@@ -142,6 +157,19 @@ impl<R: BufRead> Prompter<R> {
             Some(d) if !d.is_empty() => eprint!("{q} [{d}]: "),
             _ => eprint!("{q}: "),
         }
+        self.read(default)
+    }
+
+    /// A bare `>` input line, under a field's name and description.
+    fn input(&mut self, default: Option<&str>) -> Result<String, String> {
+        match default {
+            Some(d) if !d.is_empty() => eprint!("    [{d}] > "),
+            _ => eprint!("    > "),
+        }
+        self.read(default)
+    }
+
+    fn read(&mut self, default: Option<&str>) -> Result<String, String> {
         let _ = std::io::stderr().flush();
         let mut line = String::new();
         if self.input.read_line(&mut line).map_err(|e| e.to_string())? == 0 {
@@ -193,37 +221,68 @@ impl<R: BufRead> Prompter<R> {
     }
 }
 
+/// The environment variable a secret defaults to: `dre-demo` + `token` → `DRE_DEMO_TOKEN`.
+fn env_name(profile: &str, field: &str) -> String {
+    format!("{profile}_{field}")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// The source profile just set up, whose values a destination on the same platform can reuse.
+struct SourceConn<'a> {
+    kind: &'a str,
+    profile: &'a str,
+    fields: &'a Mapping,
+}
+
 /// Prompt for a plugin's connection fields; secrets default to an `env_var()` reference.
+///
+/// Each field takes three short lines (name, description, input) so prompts fit a narrow
+/// terminal.
 fn connection<R: BufRead>(
     p: &mut Prompter<R>,
     profile: &str,
     fields: &[ConnectionField],
+    source: Option<&SourceConn>,
 ) -> Result<Mapping, String> {
     let mut m = Mapping::new();
     for f in fields {
-        let env_default = format!(
-            "{{{{ env_var('{}_{}') }}}}",
-            profile.to_uppercase(),
-            f.name.to_uppercase()
-        );
-        let default = if f.secret {
-            Some(env_default)
+        let inherited = source
+            .filter(|s| f.same_as_source.as_deref() == Some(s.kind))
+            .and_then(|s| {
+                s.fields
+                    .get(f.name.as_str())
+                    .and_then(Value::as_str)
+                    .map(|v| (s.profile, v))
+            });
+        let default = if let Some((_, v)) = inherited {
+            Some(v.to_string())
+        } else if f.secret {
+            Some(format!("{{{{ env_var('{}') }}}}", env_name(profile, &f.name)))
         } else {
             f.default.as_ref().map(|d| match d {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
             })
         };
-        let label = match (f.description.is_empty(), f.required) {
-            (true, true) => format!("{} (required)", f.name),
-            (true, false) => f.name.clone(),
-            (false, true) => format!("{} — {} (required)", f.name, f.description),
-            (false, false) => format!("{} — {}", f.name, f.description),
-        };
+        eprintln!("  {}{}", f.name, if f.required { " (required)" } else { "" });
+        if !f.description.is_empty() {
+            eprintln!("    {}", f.description);
+        }
+        if let Some((from, _)) = inherited {
+            eprintln!("    Enter keeps the value from `{from}`");
+        }
         loop {
-            let v = p.ask(&format!("  {label}"), default.as_deref())?;
+            let v = p.input(default.as_deref())?;
             if v.is_empty() && f.required {
-                eprintln!("  `{}` is required.", f.name);
+                eprintln!("    `{}` is required.", f.name);
                 continue;
             }
             if !v.is_empty() {
@@ -265,36 +324,77 @@ fn install_and_describe(
     Ok(fields)
 }
 
-/// Append one profile to profiles.yml, refusing to overwrite an existing one.
-fn add_profile(path: &Path, name: &str, target: &str, kind: &str, fields: Mapping) -> Result<(), String> {
+/// Add one profile to its section of profiles.yml, refusing to overwrite an existing one.
+/// Edits the text rather than re-serialising, so the user's comments and layout survive.
+fn add_profile(
+    path: &Path,
+    role: Role,
+    name: &str,
+    target: &str,
+    kind: &str,
+    fields: Mapping,
+) -> Result<(), String> {
     let existing = std::fs::read_to_string(path).unwrap_or_default();
-    if let Ok(Value::Mapping(m)) = serde_yaml_ng::from_str::<Value>(&existing)
-        && m.contains_key(name)
+    if let Ok(v) = serde_yaml_ng::from_str::<Value>(&existing)
+        && v.get(role.section()).and_then(|s| s.get(name)).is_some()
     {
-        return Err(format!("profile `{name}` already exists in {}", path.display()));
+        return Err(format!(
+            "{} profile `{name}` already exists in {}",
+            role.as_str(),
+            path.display()
+        ));
     }
-    let mut output = Mapping::new();
-    output.insert("type".into(), Value::String(kind.into()));
-    output.extend(fields);
-    let mut outputs = Mapping::new();
-    outputs.insert(Value::String(target.into()), Value::Mapping(output));
+    let mut settings = Mapping::new();
+    settings.insert("type".into(), Value::String(kind.into()));
+    settings.extend(fields);
+    let mut targets = Mapping::new();
+    targets.insert(Value::String(target.into()), Value::Mapping(settings));
     let mut profile = Mapping::new();
     profile.insert("target".into(), Value::String(target.into()));
-    profile.insert("outputs".into(), Value::Mapping(outputs));
+    profile.insert("targets".into(), Value::Mapping(targets));
     let mut root = Mapping::new();
     root.insert(Value::String(name.into()), Value::Mapping(profile));
-    let block = serde_yaml_ng::to_string(&root).map_err(|e| e.to_string())?;
+    let block: String = serde_yaml_ng::to_string(&root)
+        .map_err(|e| e.to_string())?
+        .lines()
+        .map(|l| format!("  {l}\n"))
+        .collect();
+
+    let mut lines: Vec<String> = existing.lines().map(str::to_string).collect();
+    let header = format!("{}:", role.section());
+    match lines.iter().position(|l| l.trim_end() == header) {
+        Some(start) => {
+            // The section runs until the next top-level key; add the profile at its end.
+            let mut end = lines[start + 1..]
+                .iter()
+                .position(|l| !l.is_empty() && !l.starts_with([' ', '#']))
+                .map_or(lines.len(), |i| start + 1 + i);
+            while end > start + 1 && lines[end - 1].trim().is_empty() {
+                end -= 1;
+            }
+            let mut insert: Vec<String> = Vec::new();
+            if end > start + 1 {
+                insert.push(String::new());
+            }
+            insert.extend(block.lines().map(str::to_string));
+            lines.splice(end..end, insert);
+        }
+        None => {
+            while lines.last().is_some_and(|l| l.trim().is_empty()) {
+                lines.pop();
+            }
+            if !lines.is_empty() {
+                lines.push(String::new());
+            }
+            lines.push(header);
+            lines.extend(block.lines().map(str::to_string));
+        }
+    }
+    let mut text = lines.join("\n");
+    text.push('\n');
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let mut text = existing;
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    if !text.is_empty() {
-        text.push('\n');
-    }
-    text.push_str(&block);
     std::fs::write(path, text).map_err(|e| format!("can't write {}: {e}", path.display()))
 }
 
@@ -329,12 +429,22 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
     let fields = install_and_describe(source, printer)?;
     let profile = p.ask("Name for this connection profile", Some("warehouse"))?;
     let target = p.ask("Target (environment) name", Some("dev"))?;
-    eprintln!(
-        "Connection details for `{}` (secrets default to an env_var() reference; type a value to store it instead):",
-        source.name
-    );
-    let conn = connection(&mut p, &profile, &fields)?;
-    add_profile(&profiles_path, &profile, &target, &source.name, conn)?;
+    eprintln!("\nConnection details for `{}`.", source.name);
+    eprintln!("Secrets default to an env_var() reference; type a value to store it instead.\n");
+    let conn = connection(&mut p, &profile, &fields, None)?;
+    add_profile(
+        &profiles_path,
+        Role::Source,
+        &profile,
+        &target,
+        &source.name,
+        conn.clone(),
+    )?;
+    let source_conn = SourceConn {
+        kind: &source.name,
+        profile: &profile,
+        fields: &conn,
+    };
     printer.line(
         Tone::Good,
         "Saved",
@@ -349,7 +459,8 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
     let mut destinations = Vec::new();
     if !dests.is_empty() {
         eprintln!(
-            "\nWhere should reports be delivered? Output always stays in target/ too. (Enter for none; several: 1,3)"
+            "\nWhere should reports be delivered? A copy always stays in target/.\n\
+             Pick any number (e.g. 1,3), or press Enter for none."
         );
         for d in p.pick("Destinations", &dests, true)? {
             let fields = install_and_describe(d, printer)?;
@@ -357,9 +468,9 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
                 &format!("Profile name for `{}`", d.name),
                 Some(&format!("{}_{}", d.name, "out")),
             )?;
-            eprintln!("Connection details for `{}`:", d.name);
-            let conn = connection(&mut p, &name, &fields)?;
-            add_profile(&profiles_path, &name, &target, &d.name, conn)?;
+            eprintln!("\nConnection details for `{}`.\n", d.name);
+            let conn = connection(&mut p, &name, &fields, Some(&source_conn))?;
+            add_profile(&profiles_path, Role::Destination, &name, &target, &d.name, conn)?;
             printer.line(
                 Tone::Good,
                 "Saved",

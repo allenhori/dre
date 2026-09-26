@@ -45,12 +45,25 @@ pub enum Request {
     },
     ResultSetEnd {},
     Finish {},
-    /// Destination: deliver a local file. Replies `delivered`.
+    /// Destination: deliver a local file, or with `files` (only to a plugin advertising
+    /// `multi_file`) every file of one output at once. Exactly one of `local_path`/`files` is set.
+    /// `options` are the destination entry's plugin options, rendered by core. Replies `delivered`.
     Deliver {
-        local_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        local_path: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         remote_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        files: Vec<DeliveryFile>,
         connection: Map<String, Value>,
+        #[serde(default)]
+        options: Map<String, Value>,
+    },
+    /// Source: load rows into a temporary table on the session, named after `name`. Followed by
+    /// Arrow frames (at least one, carrying the schema) and a `result_set_end`. Replies `loaded`.
+    /// Only sent to plugins advertising `load`.
+    Load {
+        name: String,
     },
     /// End the conversation; the plugin exits 0.
     Close {},
@@ -93,9 +106,25 @@ pub enum Response {
     Delivered {
         location: String,
     },
+    /// `relation` is what SQL uses to read the loaded rows. `warning`, when set, is shown to the
+    /// user (e.g. the database has no bulk path, so a load this size is slow).
+    Loaded {
+        relation: String,
+        rows: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warning: Option<String>,
+    },
     Error {
         message: String,
     },
+}
+
+/// One file of a multi-file `deliver`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DeliveryFile {
+    pub local_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_path: Option<String>,
 }
 
 /// Per result set, what a format plugin needs to lay it out.
@@ -125,6 +154,10 @@ pub struct ConnectionField {
     pub secret: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
+    /// A source type whose profile has the same field: `dre init` offers the value entered for
+    /// that source as this field's default (e.g. one Databricks host for source and destination).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub same_as_source: Option<String>,
 }
 
 impl ConnectionField {
@@ -135,6 +168,7 @@ impl ConnectionField {
             required: false,
             secret: false,
             default: None,
+            same_as_source: None,
         }
     }
     pub fn required(mut self) -> Self {
@@ -147,6 +181,10 @@ impl ConnectionField {
     }
     pub fn default(mut self, v: impl Into<Value>) -> Self {
         self.default = Some(v.into());
+        self
+    }
+    pub fn same_as_source(mut self, source_type: &str) -> Self {
+        self.same_as_source = Some(source_type.into());
         self
     }
 }

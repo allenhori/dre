@@ -3,7 +3,7 @@
 //! error replies and panics; plugins log with `eprintln!`.
 
 use std::io::{BufReader, BufWriter, Read, Stdout};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
@@ -61,8 +61,22 @@ pub trait Source {
     fn check(&mut self, _sql: &str) -> Result<()> {
         Err("this source can't check statements".into())
     }
+    /// Load `data` into a temporary table on the session, named after `name`. Only called when
+    /// the plugin advertises `load`.
+    fn load(&mut self, _name: &str, _data: &mut ResultSet<'_>) -> Result<Loaded> {
+        Err("this source can't load rows".into())
+    }
     /// End the session cleanly (called on `close` and at end of input, before exiting).
     fn close(&mut self) {}
+}
+
+/// The outcome of `Source::load`.
+pub struct Loaded {
+    /// How SQL refers to the loaded rows, e.g. the temp table's name.
+    pub relation: String,
+    pub rows: u64,
+    /// Shown to the user, e.g. when the database has no bulk path.
+    pub warning: Option<String>,
 }
 
 /// One incoming result set, streamed from core.
@@ -158,17 +172,50 @@ pub trait Format {
     fn write(&mut self, req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>>;
 }
 
+/// A destination `deliver` request.
+pub struct Delivery {
+    /// One file, or every file of an output when the plugin advertises `multi_file`.
+    pub files: Vec<DeliveryFile>,
+    pub connection: Map<String, Value>,
+    /// The destination entry's plugin options, rendered by core (empty when none).
+    pub options: Map<String, Value>,
+}
+
+/// One file to deliver: the local copy in `target/run/` and its rendered remote path, if any.
+pub struct DeliveryFile {
+    pub local: PathBuf,
+    pub remote: Option<String>,
+}
+
 pub trait Destination {
     fn connection_fields(&self) -> Vec<ConnectionField> {
         Vec::new()
     }
-    /// Deliver `local` to `remote` (rendered by core); return where it landed.
+    /// Deliver `local` to `remote` (rendered by core); return where it landed. Enough for a
+    /// destination that takes no options; others implement [`Destination::deliver_files`].
     fn deliver(
         &mut self,
-        local: &Path,
-        remote: Option<&str>,
-        connection: &Map<String, Value>,
-    ) -> Result<String>;
+        _local: &Path,
+        _remote: Option<&str>,
+        _connection: &Map<String, Value>,
+    ) -> Result<String> {
+        Err("this destination doesn't implement `deliver`".into())
+    }
+    /// The whole request, options included. The default refuses options (so a misspelt key in
+    /// the report is an error, not silently dropped) and hands a single file to
+    /// [`Destination::deliver`]; several files arrive only with `multi_file` advertised.
+    fn deliver_files(&mut self, d: &Delivery) -> Result<String> {
+        if let Some(k) = d.options.keys().next() {
+            return Err(format!(
+                "this destination takes no options, but the destination entry has `{k}`; check the key's spelling"
+            )
+            .into());
+        }
+        match d.files.as_slice() {
+            [f] => self.deliver(&f.local, f.remote.as_deref(), &d.connection),
+            _ => Err("this destination takes one file per delivery".into()),
+        }
+    }
 }
 
 pub struct Input {
@@ -361,6 +408,34 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
             s.open(&connection, read_only)?;
             out.send(&Response::Ok {});
         }
+        (Handler::Source(s), Request::Load { name }) => {
+            let ipc = match input.read()? {
+                Frame::Arrow(ipc) => ipc,
+                Frame::Json(v) => return Err(format!("expected the rows to load, got {v}").into()),
+            };
+            let (schema, batches) = frame::decode_batches(&ipc)?;
+            let mut data = ResultSet {
+                meta: ResultSetMeta {
+                    name: name.clone(),
+                    query: name.clone(),
+                    result_index: 1,
+                    anchor: None,
+                    header: None,
+                },
+                schema,
+                first: Some(batches),
+                input,
+                done: false,
+            };
+            let r = s.load(&name, &mut data);
+            data.drain()?;
+            let loaded = r?;
+            out.send(&Response::Loaded {
+                relation: loaded.relation,
+                rows: loaded.rows,
+                warning: loaded.warning,
+            });
+        }
         (Handler::Source(s), Request::Check { sql }) => {
             s.check(&sql)?;
             out.send(&Response::Ok {});
@@ -433,10 +508,30 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
             Request::Deliver {
                 local_path,
                 remote_path,
+                files,
                 connection,
+                options,
             },
         ) => {
-            let location = d.deliver(Path::new(&local_path), remote_path.as_deref(), &connection)?;
+            let files = match (local_path, files.is_empty()) {
+                (Some(local), true) => vec![DeliveryFile {
+                    local: PathBuf::from(local),
+                    remote: remote_path,
+                }],
+                (None, false) => files
+                    .into_iter()
+                    .map(|f| DeliveryFile {
+                        local: PathBuf::from(f.local_path),
+                        remote: f.remote_path,
+                    })
+                    .collect(),
+                _ => return Err("`deliver` needs exactly one of `local_path` or `files`".into()),
+            };
+            let location = d.deliver_files(&Delivery {
+                files,
+                connection,
+                options,
+            })?;
             out.send(&Response::Delivered { location });
         }
         (h, req) => {

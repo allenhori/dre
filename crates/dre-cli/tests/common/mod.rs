@@ -15,7 +15,7 @@ pub fn bin_dir() -> PathBuf {
 /// The workspace package that builds `bin`.
 fn package_of(bin: &str) -> &str {
     match bin {
-        "dre-source-fixture" => "dre-protocol",
+        "dre-source-fixture" | "dre-destination-fixture" => "dre-protocol",
         "dre-format-delimited" => "dre-format-csv",
         b => b,
     }
@@ -111,6 +111,7 @@ pub const ALL_PLUGINS: &[&str] = &[
     "dre-format-parquet",
     "dre-format-fixed_width",
     "dre-destination-sftp",
+    "dre-destination-fixture",
 ];
 
 impl TestProject {
@@ -223,5 +224,5 @@ impl Run {
     }
 }
 
-pub const DUCK_PROFILES: &str = "warehouse:\n  target: dev\n  outputs:\n    dev: {type: duckdb, path: data.duckdb}\n    prod: {type: duckdb, path: prod.duckdb}\n";
+pub const DUCK_PROFILES: &str = "sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {type: duckdb, path: data.duckdb}\n      prod: {type: duckdb, path: prod.duckdb}\n";
 pub const PLUGINS_YML: &str = "sources:\n  - duckdb\nformats:\n  - csv\n  - delimited\n";

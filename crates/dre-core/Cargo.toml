@@ -17,7 +17,8 @@ semver.workspace = true
 minijinja.workspace = true
 chrono.workspace = true
 encoding_rs = "0.8"
-calamine = "0.36"
+calamine = { version = "0.36", features = ["dates"] }
+csv = "1"
 dre-protocol = { path = "../dre-protocol" }
 arrow.workspace = true
 ureq = "3"

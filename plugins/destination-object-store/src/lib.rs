@@ -6,7 +6,7 @@
 //! `az://container/key`; a path without a scheme is a key inside the profile's `bucket` /
 //! `container`.
 //!
-//! Profile output fields:
+//! Profile target fields:
 //!
 //! - **s3**: `bucket`, `region`, `access_key_id` + `secret_access_key` (+ `session_token`), or
 //!   none of them to use the ambient credential chain (environment, shared config, instance

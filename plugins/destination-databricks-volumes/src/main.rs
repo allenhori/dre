@@ -4,7 +4,7 @@
 //! Inside a Databricks job or cluster, `/Volumes/...` is a mounted path: use the built-in `local`
 //! destination there instead; no plugin or token is needed.
 //!
-//! Profile output fields: `host` and `token`, the same fields as the Databricks source profile,
+//! Profile target fields: `host` and `token`, the same fields as the Databricks source profile,
 //! so one set of credentials can serve both. The remote path must be
 //! `/Volumes/<catalog>/<schema>/<volume>/...`; missing directories are created. Retries while
 //! the workspace answers 429/503.
@@ -61,10 +61,13 @@ fn request(agent: &ureq::Agent, url: &str, token: &str, body: Option<&Path>) -> 
 impl Destination for Volumes {
     fn connection_fields(&self) -> Vec<ConnectionField> {
         vec![
-            ConnectionField::new("host", "workspace host, e.g. adb-123.4.azuredatabricks.net").required(),
+            ConnectionField::new("host", "workspace host, e.g. adb-123.4.azuredatabricks.net")
+                .required()
+                .same_as_source("databricks"),
             ConnectionField::new("token", "personal access token")
                 .required()
-                .secret(),
+                .secret()
+                .same_as_source("databricks"),
         ]
     }
 

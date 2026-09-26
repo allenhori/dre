@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="DRE logo" width="360">
+</p>
+
 # DRE
 
 **DRE** stands for **Declarative Reporting Engine**.
@@ -17,8 +21,22 @@ Status: under active development. There is no released version yet.
 - **Set** and **Binding**: one report can run as many named variants (clients, regions,
   departments). A Binding is a report paired with a Set, with its own profile, variables, query
   subset and output.
+- **Jinja everywhere**: SQL, paths and options render with `var()`, `env_var()`, `run.*` and your
+  macros in `macros/`. `run_query()` lets a macro query the report's own connection while
+  rendering (list a table's columns, build a pivot from the distinct values). `ref('file')` reuses
+  another `.sql` file as a subquery.
+- **Lookups**: mapping tables you maintain as files in `lookups/` (csv, xlsx, xls, json, jsonl,
+  yml) rather than in the database. `ref('countries')` makes one usable like a table: small ones
+  are inlined into the SQL, larger ones (over 200 rows by default) are loaded into a temp table
+  by the source plugin. `lookup('countries')` hands the rows to Jinja.
 - **Plugins**: every source, format and destination is a separate executable that speaks DRE's
   [plugin protocol](docs/protocol.md). Plugins are declared per project and installed on demand.
+- **Delivery**: one output can go to several destinations in a single run, e.g. object storage
+  (S3, GCS, Azure Blob), SFTP/FTP, Databricks Volumes, an email with the file attached, or a
+  Slack channel. See [plugins](docs/plugins.md).
+- **Logs**: every run appends to `logs/dre.log` in the project, including the full SQL of each
+  statement sent to the database (report queries, `run_query()`, lookup loads). The file rotates
+  every 10,000 lines, keeping `dre.log.1` to `dre.log.5`.
 - **Verification**: `dre validate` checks a whole project offline, and `dre validate --live`
   checks every statement against the database. `dre run --dry-run`, `--preview` and
   schema-drift detection check a report before it reaches anyone.
@@ -52,8 +70,25 @@ sets: [client_a, client_b]
 default_set: client_a
 ```
 
-Connections live in `~/.dre/profiles.yml`, outside the project, in dbt's shape (`target` and
-`outputs`). Plugins are declared in `plugins.yml` and installed on demand (`dre deps`). Their
+Connections live in `~/.dre/profiles.yml`, outside the project. Database connections go under
+`sources:` and delivery targets under `destinations:`. Each profile picks a default `target`
+(environment) from its named `targets`:
+
+```yaml
+sources:
+  warehouse:
+    target: dev
+    targets:
+      dev: {type: duckdb, path: dev.duckdb}
+      prod: {type: postgres, host: db.internal, user: reports, password: "{{ env_var('PG_PASSWORD') }}"}
+destinations:
+  reports_s3:
+    target: prod
+    targets:
+      prod: {type: s3, bucket: reports}
+```
+
+`dre init` writes this file for you. Plugins are declared in `plugins.yml` and installed on demand (`dre deps`). Their
 exact versions are pinned in `dre.lock`.
 
 ## Documentation

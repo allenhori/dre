@@ -1,6 +1,6 @@
 //! DRE source plugin for DuckDB.
 //!
-//! Profile output fields: `path` (database file; default `:memory:`, relative to the project
+//! Profile target fields: `path` (database file; default `:memory:`, relative to the project
 //! directory), `threads`, `memory_limit`. One connection is held for the whole Binding, so temp
 //! tables and settings persist across statements.
 
@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Schema};
 use dre_protocol::msg::ConnectionField;
-use dre_protocol::plugin::{About, Result, ResultSink, Source, conn_str, serve_source};
-use dre_protocol::{CAP_CHECK, CAP_READ_ONLY, CAP_SESSIONS};
+use dre_protocol::plugin::{About, Loaded, Result, ResultSet, ResultSink, Source, conn_str, serve_source};
+use dre_protocol::{CAP_CHECK, CAP_LOAD, CAP_READ_ONLY, CAP_SESSIONS};
 use duckdb::{AccessMode, Config, Connection};
 use serde_json::{Map, Value};
 
@@ -33,6 +33,15 @@ const QUERY_KEYWORDS: &[&str] = &[
     "call",
     "(",
 ];
+
+/// Lookup names come from core already checked; refuse anything that isn't a plain identifier.
+fn checked_name(name: &str) -> Result<&str> {
+    if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        Ok(name)
+    } else {
+        Err(format!("`{name}` isn't a valid table name").into())
+    }
+}
 
 fn leading_keyword(sql: &str) -> String {
     let mut s = sql.trim_start();
@@ -113,6 +122,44 @@ impl Source for DuckDb {
         Ok(())
     }
 
+    /// Bulk load through DuckDB's appender into a temp table.
+    fn load(&mut self, name: &str, data: &mut ResultSet<'_>) -> Result<Loaded> {
+        let table = format!("dre_lookup_{}", checked_name(name)?);
+        let columns = data
+            .schema
+            .fields()
+            .iter()
+            .map(|f| {
+                let t = match f.data_type() {
+                    DataType::Utf8 => "VARCHAR",
+                    DataType::Int64 => "BIGINT",
+                    DataType::Float64 => "DOUBLE",
+                    DataType::Boolean => "BOOLEAN",
+                    DataType::Date32 => "DATE",
+                    other => return Err(format!("can't load a column of type {other}")),
+                };
+                Ok(format!("\"{}\" {t}", f.name()))
+            })
+            .collect::<std::result::Result<Vec<_>, String>>()?;
+        let conn = self.conn()?;
+        conn.execute_batch(&format!(
+            "create or replace temp table {table} ({})",
+            columns.join(", ")
+        ))?;
+        let mut appender = conn.appender(&table)?;
+        let mut rows = 0;
+        while let Some(batch) = data.next_batch()? {
+            rows += batch.num_rows() as u64;
+            appender.append_record_batch(batch)?;
+        }
+        appender.flush()?;
+        Ok(Loaded {
+            relation: table,
+            rows,
+            warning: None,
+        })
+    }
+
     fn execute(&mut self, sql: &str, _row_limit: Option<u64>, out: &mut dyn ResultSink) -> Result<()> {
         let conn = self.conn()?;
         let mut stmt = conn.prepare(sql)?;
@@ -177,6 +224,7 @@ fn main() {
         CAP_SESSIONS,
         CAP_READ_ONLY,
         CAP_CHECK,
+        CAP_LOAD,
     ]);
     serve_source(about, DuckDb::default())
 }

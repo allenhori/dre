@@ -3,6 +3,7 @@
 pub mod constraints;
 pub mod diag;
 pub mod lock;
+pub mod lookups;
 pub mod manager;
 pub mod options;
 pub mod plugins;
