@@ -71,7 +71,8 @@ fn copy_dir(from: &Path, to: &Path) {
 fn run_case(orig: &Path, json: bool) -> String {
     // validate compiles into target/, so it runs on a copy, never the checked-in fixture.
     let tmp = tempfile::tempdir().unwrap();
-    let copy = tmp.path().canonicalize().unwrap().join(orig.file_name().unwrap());
+    // Not canonicalize(): on Windows it adds a `\\?\` prefix the printed paths don't have.
+    let copy = tmp.path().join(orig.file_name().unwrap());
     copy_dir(orig, &copy);
     let case = copy.as_path();
     let mut cmd = Command::cargo_bin("dre").unwrap();
