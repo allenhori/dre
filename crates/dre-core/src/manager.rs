@@ -7,7 +7,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use dre_protocol::{Kind, executable_name};
+use dre_protocol::executable_name;
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -112,20 +112,12 @@ impl IndexPlugin {
     }
 }
 
-pub fn to_kind(k: PluginKind) -> Kind {
-    match k {
-        PluginKind::Source => Kind::Source,
-        PluginKind::Format => Kind::Format,
-        PluginKind::Destination => Kind::Destination,
-    }
-}
-
 /// Where a version is installed.
 pub fn install_path(dir: &Path, kind: PluginKind, name: &str, version: &Version) -> PathBuf {
     dir.join(kind.as_str())
         .join(name)
         .join(version.to_string())
-        .join(executable_name(to_kind(kind), name))
+        .join(executable_name(kind, name))
 }
 
 /// Download, verify and install one version. Returns its lock entry.
@@ -166,7 +158,7 @@ pub fn install(
         ));
     }
     let exe = if art.url.ends_with(".tar.gz") || art.url.ends_with(".tgz") {
-        extract_tar_gz(&bytes, &executable_name(to_kind(plugin.kind), &plugin.name))?
+        extract_tar_gz(&bytes, &executable_name(plugin.kind, &plugin.name))?
     } else {
         bytes
     };
@@ -237,7 +229,7 @@ pub fn sync(
         let pin = lock.get(req.kind, &req.name).cloned();
         if let Some(p) = crate::plugins::find(
             &dir,
-            to_kind(req.kind),
+            req.kind,
             &req.name,
             Some(&req.req()),
             pin.as_ref().map(|l| &l.version),

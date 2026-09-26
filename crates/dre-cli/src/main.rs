@@ -1,3 +1,4 @@
+mod init;
 mod output;
 mod plugins;
 
@@ -51,6 +52,10 @@ enum Command {
     Run(RunArgs),
     /// Remove target/ (compiled SQL, run outputs, schema snapshots).
     Clean(CleanArgs),
+    /// Set up a connection (installing its plugin) and optionally a starter project, interactively.
+    Init(InitArgs),
+    /// Create a starter project in a new directory.
+    New(NewArgs),
     /// Install the project's declared plugins (pinned by dre.lock) without running anything.
     Deps(DepsArgs),
     /// Manage plugins (sources, formats, destinations).
@@ -115,6 +120,25 @@ struct PluginArgs {
     /// Project whose dre.lock to update (default: the current directory, if it's a project).
     #[arg(long, default_value = ".")]
     project_dir: PathBuf,
+}
+
+#[derive(Args)]
+struct InitArgs {
+    /// Directory holding profiles.yml (default: $DRE_PROFILES_DIR, then ~/.dre).
+    #[arg(long)]
+    profiles_dir: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct NewArgs {
+    /// Directory to create (must be missing or empty).
+    dir: PathBuf,
+    /// The source profile the project uses by default.
+    #[arg(long, default_value = "warehouse")]
+    profile: String,
+    /// The source plugin the project declares.
+    #[arg(long, default_value = "duckdb")]
+    source: String,
 }
 
 #[derive(Args)]
@@ -187,6 +211,8 @@ fn main() -> ExitCode {
         Command::Run(a) => run(a, printer),
         Command::Clean(a) => clean(a),
         Command::Deps(a) => deps(a, &printer),
+        Command::Init(a) => init::init(a.profiles_dir, &printer),
+        Command::New(a) => init::new(a.dir, a.profile, a.source, &printer),
         Command::Plugin(PluginCommand::List) => plugin_list(),
         Command::Plugin(PluginCommand::Install(a)) => {
             plugins::install(a.plugin, a.project_dir, false, &printer)

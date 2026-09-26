@@ -328,3 +328,24 @@ fn unmanaged_reports_open_read_only_unless_they_create_temp_objects() {
     p.dre("run", &["reads", "-v"])
         .says("fixture: opened read_only=false");
 }
+
+#[test]
+fn run_query_in_an_unmanaged_report_may_only_read() {
+    let p = project(&[(
+        "reports/scratch/sneaky_macro.sql",
+        "select {{ run_query('delete from accounts') | length }} as n",
+    )]);
+    p.dre("run", &["sneaky_macro"])
+        .failed()
+        .says("run_query() in an unmanaged report may only read");
+    // Nothing was deleted.
+    p.write(
+        "reports/scratch/sneaky_macro.sql",
+        "select count(*) as n from accounts",
+    );
+    p.dre("run", &["sneaky_macro"]).ok();
+    assert_eq!(
+        p.read("target/run/sneaky_macro/default/sneaky_macro.csv"),
+        "n\r\n12\r\n"
+    );
+}
