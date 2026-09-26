@@ -1,3 +1,4 @@
 exit: 0
 warning[plugin-not-installed]: the format plugin `aba` (>=1.0) isn't installed and auto-install is off; run `dre deps`
+Compiled 1 Binding into target/compiled/
 Validation passed: 0 errors, 1 warning

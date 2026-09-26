@@ -1,5 +1,7 @@
-exit: 0
+exit: 1
+error[compile-failed]: report `templated` doesn't compile: reports/scratch/templated.sql:2: unmanaged report `templated` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `delete from t where id = 1`; nothing was run — rewrite the statement, or give the report a YAML to declare it
 warning[unmanaged-report]: reports/scratch/quick_look.sql: `quick_look` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
 warning[unmanaged-report]: reports/scratch/temp_then_select.sql: `temp_then_select` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
 warning[unmanaged-report]: reports/scratch/templated.sql: `templated` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
-Validation passed: 0 errors, 3 warnings
+Compiled 2 Bindings into target/compiled/
+Validation failed: 1 error, 3 warnings

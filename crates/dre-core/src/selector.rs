@@ -56,7 +56,26 @@ impl std::error::Error for SelectorError {}
 
 /// Resolve one selector token to reports, in project order. An explicit `tag:` or dotted path
 /// that matches nothing returns an empty list; an unknown bare token is `NoMatch`.
-pub fn resolve<'p>(project: &'p Project, token: &str) -> Result<Vec<&'p Report>, SelectorError> {
+/// Resolve a selection: one or more selectors separated by spaces, commas or semicolons
+/// (`daily tag:regulatory`, `daily,monthly`, `daily;monthly`), matching any of them. Reports come
+/// back in project order, each once.
+pub fn resolve<'p>(project: &'p Project, selection: &str) -> Result<Vec<&'p Report>, SelectorError> {
+    let mut picked: Vec<&'p Report> = Vec::new();
+    for term in selection.split(|c: char| c.is_whitespace() || c == ',' || c == ';') {
+        if term.is_empty() {
+            continue;
+        }
+        for r in resolve_one(project, term)? {
+            if !picked.iter().any(|x| x.name == r.name) {
+                picked.push(r);
+            }
+        }
+    }
+    picked.sort_by_key(|r| project.reports.iter().position(|x| x.name == r.name));
+    Ok(picked)
+}
+
+fn resolve_one<'p>(project: &'p Project, token: &str) -> Result<Vec<&'p Report>, SelectorError> {
     let token = token.trim();
     let under = |folder: &[String]| -> Vec<&'p Report> {
         project

@@ -46,10 +46,12 @@ impl Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Check the whole project offline: config, references, templates, schedules.
+    /// Check the project (config, references, templates, schedules) and compile its SQL.
     Validate(ValidateArgs),
     /// Run reports: render, execute, format into target/, and deliver.
     Run(RunArgs),
+    /// Render reports' SQL into target/compiled/ without running it, and list the files.
+    Compile(CompileArgs),
     /// Remove target/ (compiled SQL, run outputs, schema snapshots).
     Clean(CleanArgs),
     /// Set up a connection (installing its plugin) and optionally a starter project, interactively.
@@ -68,6 +70,10 @@ struct RunArgs {
     /// What to run: a report name, `tag:<tag>`, a folder name or a dotted folder path.
     /// Runs every report when omitted.
     selector: Option<String>,
+    /// What to select (dbt's `--select`): report names, `tag:<tag>`, folder names or dotted
+    /// folder paths. Several match any of them: `-s a b`, `-s a,b`, `-s a -s b` (or `"a;b"`).
+    #[arg(short = 's', long = "select", value_name = "SELECTOR", num_args = 1.., action = clap::ArgAction::Append, conflicts_with = "selector")]
+    select: Vec<String>,
     #[command(flatten)]
     project: ProjectArgs,
     /// Run one Set (declared or ad hoc), or `all` of a report's Sets.
@@ -75,7 +81,7 @@ struct RunArgs {
     set: Option<String>,
     /// Run the Bindings a schedules.yml entry targets, with its vars. Pass the scheduled
     /// (logical) date through DRE_RUN_DATE so reruns render the same.
-    #[arg(long, value_name = "NAME", conflicts_with_all = ["selector", "set"])]
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["selector", "select", "set"])]
     schedule: Option<String>,
     /// Use this source profile instead of the resolved one (e.g. for an ad hoc Set).
     #[arg(long)]
@@ -191,8 +197,13 @@ fn parse_var(s: &str) -> Result<(String, String), String> {
 
 #[derive(Args)]
 struct ValidateArgs {
-    /// With --live: which reports to check (same selectors as `dre run`; default: all).
+    /// Which reports to compile and check (same selectors as `dre run`; default: all). With a
+    /// selector, validate also shows where each selected Binding's output would go.
     selector: Option<String>,
+    /// What to select (dbt's `--select`): report names, `tag:<tag>`, folder names or dotted
+    /// folder paths. Several match any of them: `-s a b`, `-s a,b`, `-s a -s b` (or `"a;b"`).
+    #[arg(short = 's', long = "select", value_name = "SELECTOR", num_args = 1.., action = clap::ArgAction::Append, conflicts_with = "selector")]
+    select: Vec<String>,
     #[command(flatten)]
     project: ProjectArgs,
     /// Emit machine-readable JSON instead of text.
@@ -202,7 +213,23 @@ struct ValidateArgs {
     /// statement without executing it (EXPLAIN or the dialect's equivalent).
     #[arg(long)]
     live: bool,
-    /// With --live: check one Set, or `all` of them.
+    /// Compile (and with --live, check) one Set instead of every Set.
+    #[arg(long)]
+    set: Option<String>,
+}
+
+#[derive(Args)]
+struct CompileArgs {
+    /// What to compile: a report name, `tag:<tag>`, a folder name or a dotted folder path.
+    /// Compiles every report when omitted.
+    selector: Option<String>,
+    /// What to select (dbt's `--select`): report names, `tag:<tag>`, folder names or dotted
+    /// folder paths. Several match any of them: `-s a b`, `-s a,b`, `-s a -s b` (or `"a;b"`).
+    #[arg(short = 's', long = "select", value_name = "SELECTOR", num_args = 1.., action = clap::ArgAction::Append, conflicts_with = "selector")]
+    select: Vec<String>,
+    #[command(flatten)]
+    project: ProjectArgs,
+    /// Compile one Set (declared or ad hoc), or `all` of a report's Sets.
     #[arg(long)]
     set: Option<String>,
 }
@@ -213,6 +240,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Validate(a) => validate(a, &printer),
         Command::Run(a) => run(a, printer),
+        Command::Compile(a) => compile(a, printer),
         Command::Clean(a) => clean(a),
         Command::Deps(a) => deps(a, &printer),
         Command::Init(a) => init::init(a.profiles_dir, &printer),
@@ -233,11 +261,17 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     if !a.project.no_auto_install {
         plugins::sync_packages(&a.project.project_dir, printer);
     }
+    let selector = selection(&a.select, &a.selector);
     let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
         plugins::check_for_validate(p, !a.project.no_auto_install, &mut diags, printer);
     }
+    // Only a project that checks out gets compiled.
+    let plans = match &project {
+        Some(p) if !diags.has_errors() => compile_for_validate(p, &selector, &a.set, &a.project, &mut diags),
+        _ => Vec::new(),
+    };
     let ok = !diags.has_errors();
     if a.json {
         let out = serde_json::json!({
@@ -245,12 +279,27 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
             "errors": diags.error_count(),
             "warnings": diags.warning_count(),
             "diagnostics": diags.sorted(),
+            "compiled": plans,
             "project": project,
         });
-        println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        println!(
+            "{}",
+            dre_core::secrets::mask(&serde_json::to_string_pretty(&out).unwrap())
+        );
     } else {
         for d in diags.sorted() {
             println!("{}", printer.diagnostic(d));
+        }
+        if selector.is_some() {
+            for p in &plans {
+                printer.plan(p);
+            }
+        } else if !plans.is_empty() {
+            println!(
+                "Compiled {} Binding{} into target/compiled/",
+                plans.len(),
+                plural(plans.len())
+            );
         }
         let (e, w) = (diags.error_count(), diags.warning_count());
         let verdict = if ok { "passed" } else { "failed" };
@@ -266,9 +315,107 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     if a.live
         && let Some(project) = project
     {
-        return validate_live(&project, a.selector, a.set, &a.project, printer.clone());
+        return validate_live(&project, selector, a.set, &a.project, printer.clone());
     }
     ExitCode::SUCCESS
+}
+
+/// Compiles quietly, collecting what each Binding would do.
+#[derive(Default)]
+struct Collect {
+    plans: Vec<dre_core::run::BindingPlan>,
+}
+
+impl dre_core::run::Ui for Collect {
+    fn step(&mut self, _: dre_core::run::Level, _: &str, _: &str, _: Option<std::time::Duration>) {}
+    fn warn(&mut self, _: &str) {}
+    fn compiled(&mut self, plan: &dre_core::run::BindingPlan) {
+        self.plans.push(plan.clone());
+    }
+    fn choose_set(&mut self, _: &str, _: &[String]) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    fn plugin_log(&self) -> dre_protocol::host::LogSink {
+        std::sync::Arc::new(|_, _| {})
+    }
+}
+
+/// `validate` compiles the selection (every Set of every report by default); a Binding that
+/// doesn't render is an error.
+fn compile_for_validate(
+    project: &dre_core::project::Project,
+    selector: &Option<String>,
+    set: &Option<String>,
+    p: &ProjectArgs,
+    diags: &mut dre_core::Diagnostics,
+) -> Vec<dre_core::run::BindingPlan> {
+    let opts = dre_core::run::RunOptions {
+        selector: selector.clone(),
+        set: Some(set.clone().unwrap_or_else(|| "all".into())),
+        target: p.target.clone(),
+        vars: p.vars.iter().cloned().collect(),
+        date: run_date(),
+        dry_run: true,
+        ..Default::default()
+    };
+    let mut ui = Collect::default();
+    let summary = dre_core::run::run(project, &opts, &mut ui);
+    if let Some(e) = summary.error {
+        diags.error("invalid-selector", None, None, e);
+    }
+    for o in summary
+        .outcomes
+        .iter()
+        .filter(|o| o.status == dre_core::run::Status::Error)
+    {
+        let set = o.set.as_ref().map(|s| format!(", Set `{s}`")).unwrap_or_default();
+        diags.error(
+            "compile-failed",
+            None,
+            None,
+            format!(
+                "report `{}`{set} doesn't compile: {}",
+                o.report,
+                o.error.clone().unwrap_or_default()
+            ),
+        );
+    }
+    ui.plans
+}
+
+/// `dre compile`: render the selection into target/compiled/ and list the files.
+fn compile(a: CompileArgs, mut printer: output::Printer) -> ExitCode {
+    if !a.project.no_auto_install && !plugins::sync_packages(&a.project.project_dir, &printer) {
+        return ExitCode::FAILURE;
+    }
+    let Some(project) = load_for_run(&a.project, &printer) else {
+        return ExitCode::FAILURE;
+    };
+    printer.log_to(&project.root);
+    let opts = dre_core::run::RunOptions {
+        selector: selection(&a.select, &a.selector),
+        set: a.set,
+        target: a.project.target.clone(),
+        vars: a.project.vars.iter().cloned().collect(),
+        date: run_date(),
+        dry_run: true,
+        interactive: {
+            use std::io::IsTerminal;
+            std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+        },
+        ..Default::default()
+    };
+    let summary = dre_core::run::run(&project, &opts, &mut printer);
+    if let Some(e) = &summary.error {
+        printer.error(e);
+        return ExitCode::FAILURE;
+    }
+    printer.finish("compile");
+    if summary.failed() {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
 }
 
 fn validate_live(
@@ -297,6 +444,15 @@ fn validate_live(
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// `-s` values (joined: space means union) or the positional selector.
+fn selection(select: &[String], positional: &Option<String>) -> Option<String> {
+    if select.is_empty() {
+        positional.clone()
+    } else {
+        Some(select.join(" "))
     }
 }
 
@@ -398,7 +554,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let opts = dre_core::run::RunOptions {
-        selector: a.selector,
+        selector: selection(&a.select, &a.selector),
         set: a.set,
         target: a.project.target.clone(),
         profile: a.profile,
