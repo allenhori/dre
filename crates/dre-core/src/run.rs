@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use arrow::array::RecordBatch;
 use arrow::datatypes::SchemaRef;
@@ -49,10 +49,23 @@ pub struct RunOptions {
     pub live_check: bool,
 }
 
-/// How the run talks to the person running it.
+/// How much a message matters: `Info` is shown by default, `Debug` with `-v`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    Debug,
+    Info,
+}
+
+/// How the run reports progress. The engine emits structured events; the CLI decides how
+/// they look (colour, progress bar, JSON, log file).
 pub trait Ui {
-    fn info(&mut self, msg: &str);
+    /// The number of Bindings about to run, once Sets are resolved.
+    fn plan(&mut self, _bindings: usize) {}
+    fn binding_start(&mut self, _report: &str, _set: Option<&str>) {}
+    /// One step inside the current Binding: a short verb, a detail, and how long it took.
+    fn step(&mut self, level: Level, verb: &str, detail: &str, elapsed: Option<Duration>);
     fn warn(&mut self, msg: &str);
+    fn binding_end(&mut self, _outcome: &BindingOutcome) {}
     /// Ask which Set to run; `None` means "all".
     fn choose_set(&mut self, report: &str, sets: &[String]) -> Result<Option<String>, String>;
     /// Where plugin stderr goes.
@@ -71,11 +84,17 @@ pub enum Status {
 #[derive(Debug, Clone, Serialize)]
 pub struct BindingOutcome {
     pub report: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set: Option<String>,
     pub binding: String,
     pub status: Status,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub files: Vec<PathBuf>,
+    /// One line describing what the Binding produced (result sets, rows, outputs, delivery).
+    pub summary: String,
+    #[serde(skip)]
+    pub elapsed: Duration,
 }
 
 #[derive(Debug, Default)]
@@ -108,40 +127,34 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
         },
     };
     let date = opts.date.unwrap_or_else(|| chrono::Local::now().date_naive());
+    // Resolve every report's Bindings first (prompts happen here), so progress has a total.
+    let mut planned: Vec<(&Report, Binding)> = Vec::new();
     for report in reports {
-        let bindings = match choose_bindings(project, report, opts, ui) {
-            Ok(b) => b,
+        match choose_bindings(project, report, opts, ui) {
+            Ok(bs) => planned.extend(bs.into_iter().map(|b| (report, b))),
             Err(e) => {
-                ui.warn(&format!("{}: {e}", report.name));
-                summary.outcomes.push(BindingOutcome {
+                let outcome = BindingOutcome {
                     report: report.name.clone(),
+                    set: None,
                     binding: "-".into(),
                     status: Status::Error,
                     error: Some(e),
                     files: Vec::new(),
-                });
-                continue;
+                    summary: String::new(),
+                    elapsed: Duration::ZERO,
+                };
+                ui.binding_end(&outcome);
+                summary.outcomes.push(outcome);
             }
-        };
-        for b in bindings {
-            let label = match &b.set {
-                Some(s) => format!("{} [{s}]", report.name),
-                None => report.name.clone(),
-            };
-            ui.info(&format!("Running {label}"));
-            let mut r = BindingRun::new(project, report, &b, opts, date, ui);
-            let outcome = r.run();
-            match &outcome.status {
-                Status::Error => ui.warn(&format!(
-                    "  ✗ {label}: {}",
-                    outcome.error.as_deref().unwrap_or("")
-                )),
-                Status::Success => ui.info(&format!("  ✓ {label}")),
-                Status::DryRun => ui.info(&format!("  ✓ {label} (dry run: SQL compiled, nothing executed)")),
-                Status::Checked => ui.info(&format!("  ✓ {label} (checked)")),
-            }
-            summary.outcomes.push(outcome);
         }
+    }
+    ui.plan(planned.len());
+    for (report, b) in &planned {
+        ui.binding_start(&report.name, b.set.as_deref());
+        let mut r = BindingRun::new(project, report, b, opts, date, ui);
+        let outcome = r.run();
+        ui.binding_end(&outcome);
+        summary.outcomes.push(outcome);
     }
     summary
 }
@@ -281,10 +294,13 @@ impl<'a> BindingRun<'a> {
     fn outcome(&self, status: Status, error: Option<String>) -> BindingOutcome {
         BindingOutcome {
             report: self.report.name.clone(),
+            set: self.b.set.clone(),
             binding: self.b.dir_name().to_string(),
             status,
             error,
             files: self.files.iter().map(|(p, _)| p.clone()).collect(),
+            summary: self.summary_line(),
+            elapsed: self.started.elapsed(),
         }
     }
 
@@ -373,6 +389,8 @@ impl<'a> BindingRun<'a> {
                 .map_err(|e: RenderError| e.to_string())?;
             std::fs::write(self.compiled_dir.join(format!("{}.sql", q.query)), &sql)
                 .map_err(|e| e.to_string())?;
+            self.ui
+                .step(Level::Debug, "Rendered", &q.path.display().to_string(), None);
             // 2. Split.
             for st in sqlsplit::split(&sql) {
                 let body = sqlsplit::strip_leading_comments(&st.text);
@@ -404,10 +422,13 @@ impl<'a> BindingRun<'a> {
         }
 
         if self.opts.dry_run {
-            self.ui.info(&format!(
-                "  compiled SQL in {}",
-                rel(&self.project.root, &self.compiled_dir).display()
-            ));
+            let dir = rel(&self.project.root, &self.compiled_dir);
+            self.ui.step(
+                Level::Info,
+                "Compiled",
+                &format!("{} (dry run: nothing executed)", dir.display()),
+                None,
+            );
             return Ok(());
         }
 
@@ -434,6 +455,7 @@ impl<'a> BindingRun<'a> {
         for (i, st) in statements.iter().enumerate() {
             let spool_path = self.run_dir.join(".spool").join(format!("{i}.arrow"));
             let mut writer: Option<FileWriter<File>> = None;
+            let t = Instant::now();
             let exec = {
                 let mut s = session.lock().unwrap();
                 let p = s.get()?;
@@ -446,6 +468,22 @@ impl<'a> BindingRun<'a> {
                 })
                 .map_err(|e| format!("{}:{}: {e}", st.file.display(), st.line))?
             };
+            let what = match &exec {
+                Execution::Result { rows, .. } => {
+                    format!("{} row{}", thousands(*rows), if *rows == 1 { "" } else { "s" })
+                }
+                Execution::NoResult {
+                    rows_affected: Some(n),
+                } => format!("no result set ({n} affected)"),
+                Execution::NoResult { .. } => "no result set".to_string(),
+            };
+            let at = format!("{}:{}", st.file.display(), st.line);
+            self.ui.step(
+                Level::Debug,
+                "Executed",
+                &format!("{at}  {what}"),
+                Some(t.elapsed()),
+            );
             if let Execution::Result { schema, rows } = exec {
                 let mut w = match writer {
                     Some(w) => w,
@@ -501,10 +539,13 @@ impl<'a> BindingRun<'a> {
         // 6. Deliver.
         if self.opts.preview.is_some() {
             self.delivery_note = Some("preview: not delivered".into());
-            self.ui.info(&format!(
-                "  preview: output stays in {}",
-                rel(&self.project.root, &self.run_dir).display()
-            ));
+            let dir = rel(&self.project.root, &self.run_dir);
+            self.ui.step(
+                Level::Info,
+                "Preview",
+                &format!("not delivered; output stays in {}", dir.display()),
+                None,
+            );
         } else {
             self.deliver(remote.as_deref())?;
         }
@@ -630,6 +671,7 @@ impl<'a> BindingRun<'a> {
             None => None,
         };
         for (name, idxs) in groups {
+            let t = Instant::now();
             let path = self.run_dir.join(&name);
             let metas: Vec<ResultSetMeta> = idxs
                 .iter()
@@ -677,10 +719,13 @@ impl<'a> BindingRun<'a> {
             for f in files {
                 let f = PathBuf::from(f);
                 let size = std::fs::metadata(&f).map(|m| m.len()).unwrap_or(0);
-                self.ui.info(&format!(
-                    "  wrote {} ({size} bytes)",
-                    rel(&self.project.root, &f).display()
-                ));
+                let shown = rel(&self.project.root, &f);
+                self.ui.step(
+                    Level::Debug,
+                    "Wrote",
+                    &format!("{} ({})", shown.display(), human_bytes(size)),
+                    Some(t.elapsed()),
+                );
                 self.files.push((f, None));
             }
         }
@@ -725,10 +770,13 @@ impl<'a> BindingRun<'a> {
     fn deliver(&mut self, remote: Option<&str>) -> Result<(), Fail> {
         let Some(dest) = &self.b.output.destination else {
             self.delivery_note = Some("no destination declared; output stays in target/".into());
-            self.ui.info(&format!(
-                "  no destination declared: output stays in {}",
-                rel(&self.project.root, &self.run_dir).display()
-            ));
+            let dir = rel(&self.project.root, &self.run_dir);
+            self.ui.step(
+                Level::Debug,
+                "Kept",
+                &format!("no destination declared: output stays in {}", dir.display()),
+                None,
+            );
             return Ok(());
         };
         if self.files.is_empty() {
@@ -748,7 +796,7 @@ impl<'a> BindingRun<'a> {
                 "destination profile `{}` has no `{dtarget}` output: not delivered, output stays in target/",
                 dest.profile
             );
-            self.ui.info(&format!("  {note}"));
+            self.ui.step(Level::Info, "Kept", &note, None);
             self.delivery_note = Some(note);
             return Ok(());
         };
@@ -773,6 +821,7 @@ impl<'a> BindingRun<'a> {
             .collect();
         if out.kind == LOCAL_TYPE {
             for (i, (f, r)) in targets.iter().enumerate() {
+                let t = Instant::now();
                 let r = r
                     .as_ref()
                     .ok_or("the local destination needs `output.destination.path`")?;
@@ -787,7 +836,12 @@ impl<'a> BindingRun<'a> {
                         dst.display()
                     )
                 })?;
-                self.ui.info(&format!("  delivered to {}", dst.display()));
+                self.ui.step(
+                    Level::Debug,
+                    "Delivered",
+                    &dst.display().to_string(),
+                    Some(t.elapsed()),
+                );
                 self.files[i].1 = Some(dst.to_string_lossy().to_string());
             }
             return Ok(());
@@ -796,6 +850,7 @@ impl<'a> BindingRun<'a> {
         let mut p = PluginProcess::start_in(&plugin, self.ui.plugin_log(), Some(&self.project.root))
             .map_err(|e| e.to_string())?;
         for (i, (f, r)) in targets.iter().enumerate() {
+            let t = Instant::now();
             let loc = p
                 .deliver(&f.to_string_lossy(), r.as_deref(), connection.clone())
                 .map_err(|e| {
@@ -804,7 +859,7 @@ impl<'a> BindingRun<'a> {
                         out.kind
                     )
                 })?;
-            self.ui.info(&format!("  delivered to {loc}"));
+            self.ui.step(Level::Debug, "Delivered", &loc, Some(t.elapsed()));
             self.files[i].1 = Some(loc);
         }
         let _ = p.close();
@@ -1178,6 +1233,62 @@ fn summarize(stmt: &str) -> String {
         format!("{}…", one.chars().take(60).collect::<String>())
     } else {
         one
+    }
+}
+
+impl BindingRun<'_> {
+    /// What this Binding produced, for its end-of-run line.
+    fn summary_line(&self) -> String {
+        let rows: u64 = self.produced.iter().map(|p| p.rows).sum();
+        let mut parts = Vec::new();
+        if !self.produced.is_empty() {
+            let n = self.produced.len();
+            parts.push(format!(
+                "{n} result set{}, {} row{}",
+                if n == 1 { "" } else { "s" },
+                thousands(rows),
+                if rows == 1 { "" } else { "s" }
+            ));
+        }
+        let names: Vec<String> = self
+            .files
+            .iter()
+            .map(|(f, _)| f.file_name().unwrap_or_default().to_string_lossy().to_string())
+            .collect();
+        if !names.is_empty() {
+            parts.push(format!("→ {}", names.join(", ")));
+        }
+        let delivered: Vec<&str> = self.files.iter().filter_map(|(_, d)| d.as_deref()).collect();
+        if !delivered.is_empty() {
+            parts.push(format!("→ {}", delivered.join(", ")));
+        } else if let Some(n) = &self.delivery_note
+            && self.opts.preview.is_none()
+            && self.b.output.destination.is_some()
+        {
+            parts.push(format!("({n})"));
+        }
+        parts.join(" ")
+    }
+}
+
+/// `1234567` → `1,234,567`.
+pub fn thousands(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn human_bytes(n: u64) -> String {
+    match n {
+        n if n < 1024 => format!("{n} B"),
+        n if n < 1024 * 1024 => format!("{:.1} KB", n as f64 / 1024.0),
+        n => format!("{:.1} MB", n as f64 / (1024.0 * 1024.0)),
     }
 }
 

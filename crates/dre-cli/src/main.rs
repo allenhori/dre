@@ -1,3 +1,5 @@
+mod output;
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -9,6 +11,35 @@ use dre_core::project::{self, LoadOptions};
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// Show every step (same as `--log-level debug`).
+    #[arg(short, long, global = true)]
+    verbose: bool,
+    /// Only show errors and the final summary.
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    quiet: bool,
+    /// How much to show.
+    #[arg(long, global = true, value_enum)]
+    log_level: Option<output::Verbosity>,
+    /// `text` for people, `json` (one object per line) for CI and tooling.
+    #[arg(long, global = true, value_enum, default_value = "text")]
+    log_format: output::LogFormat,
+    /// Colour output: auto (default; off when NO_COLOR is set or output isn't a terminal),
+    /// always or never.
+    #[arg(long, global = true, value_enum, default_value = "auto")]
+    color: output::ColorChoice,
+}
+
+impl Cli {
+    fn printer(&self) -> output::Printer {
+        let v = self.log_level.unwrap_or(if self.verbose {
+            output::Verbosity::Debug
+        } else if self.quiet {
+            output::Verbosity::Quiet
+        } else {
+            output::Verbosity::Info
+        });
+        output::Printer::new(v, self.log_format, self.color)
+    }
 }
 
 #[derive(Subcommand)]
@@ -115,15 +146,16 @@ struct ValidateArgs {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let printer = cli.printer();
     match cli.command {
-        Command::Validate(a) => validate(a),
-        Command::Run(a) => run(a),
+        Command::Validate(a) => validate(a, &printer),
+        Command::Run(a) => run(a, printer),
         Command::Clean(a) => clean(a),
         Command::Plugin(PluginCommand::List) => plugin_list(),
     }
 }
 
-fn validate(a: ValidateArgs) -> ExitCode {
+fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     let (project, diags) = project::load(&a.project.project_dir, &a.project.load_options());
     let ok = !diags.has_errors();
     if a.json {
@@ -137,7 +169,7 @@ fn validate(a: ValidateArgs) -> ExitCode {
         println!("{}", serde_json::to_string_pretty(&out).unwrap());
     } else {
         for d in diags.sorted() {
-            println!("{d}");
+            println!("{}", printer.diagnostic(d));
         }
         let (e, w) = (diags.error_count(), diags.warning_count());
         let verdict = if ok { "passed" } else { "failed" };
@@ -203,68 +235,21 @@ fn plugin_list() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-struct TermUi {
-    log: dre_protocol::host::LogSink,
-}
-
-impl dre_core::run::Ui for TermUi {
-    fn info(&mut self, msg: &str) {
-        eprintln!("{msg}");
-    }
-
-    fn warn(&mut self, msg: &str) {
-        eprintln!("warning: {msg}");
-    }
-
-    fn choose_set(&mut self, report: &str, sets: &[String]) -> Result<Option<String>, String> {
-        use std::io::Write;
-        eprintln!("Report `{report}` has several Sets:");
-        for (i, s) in sets.iter().enumerate() {
-            eprintln!("  {}) {s}", i + 1);
-        }
-        eprintln!("  a) all");
-        loop {
-            eprint!("Which one? ");
-            let _ = std::io::stderr().flush();
-            let mut line = String::new();
-            if std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())? == 0 {
-                return Err("no Set chosen".into());
-            }
-            let answer = line.trim();
-            if answer == "a" || answer == "all" {
-                return Ok(None);
-            }
-            if let Ok(n) = answer.parse::<usize>()
-                && (1..=sets.len()).contains(&n)
-            {
-                return Ok(Some(sets[n - 1].clone()));
-            }
-            if sets.iter().any(|s| s == answer) {
-                return Ok(Some(answer.to_string()));
-            }
-        }
-    }
-
-    fn plugin_log(&self) -> dre_protocol::host::LogSink {
-        self.log.clone()
-    }
-}
-
 /// Load and validate the project; print problems. `None` when it can't run.
-fn load_for_run(p: &ProjectArgs) -> Option<dre_core::project::Project> {
+fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::project::Project> {
     let (project, diags) = project::load(&p.project_dir, &p.load_options());
     for d in diags.sorted() {
         // Unmanaged reports warn again when they run.
         if d.severity == dre_core::Severity::Warning && d.code == "unmanaged-report" {
             continue;
         }
-        eprintln!("{d}");
+        println!("{}", printer.diagnostic(d));
     }
     if diags.has_errors() {
-        eprintln!(
-            "The project has {} error(s); fix them before running (see `dre validate`).",
+        printer.error(&format!(
+            "the project has {} error(s); fix them before running (see `dre validate`)",
             diags.error_count()
-        );
+        ));
         return None;
     }
     project
@@ -276,11 +261,12 @@ fn run_date() -> Option<chrono::NaiveDate> {
         .and_then(|d| chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok())
 }
 
-fn run(a: RunArgs) -> ExitCode {
+fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     use std::io::IsTerminal;
-    let Some(project) = load_for_run(&a.project) else {
+    let Some(project) = load_for_run(&a.project, &printer) else {
         return ExitCode::FAILURE;
     };
+    printer.log_to(&project.root);
     let opts = dre_core::run::RunOptions {
         selector: a.selector,
         set: a.set,
@@ -296,21 +282,12 @@ fn run(a: RunArgs) -> ExitCode {
         date: run_date(),
         live_check: false,
     };
-    let mut ui = TermUi {
-        log: dre_protocol::host::stderr_log(),
-    };
-    let summary = dre_core::run::run(&project, &opts, &mut ui);
+    let summary = dre_core::run::run(&project, &opts, &mut printer);
     if let Some(e) = &summary.error {
-        eprintln!("error: {e}");
+        printer.error(e);
         return ExitCode::FAILURE;
     }
-    let ok = summary
-        .outcomes
-        .iter()
-        .filter(|o| o.status != dre_core::run::Status::Error)
-        .count();
-    let failed = summary.outcomes.len() - ok;
-    eprintln!("Done: {ok} succeeded, {failed} failed.");
+    printer.finish("run");
     if summary.failed() {
         ExitCode::FAILURE
     } else {

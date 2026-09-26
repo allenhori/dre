@@ -79,14 +79,7 @@ impl Format for Xlsx {
                         }
                     }
                     for (c, (col, name)) in batch.columns().iter().zip(&names).enumerate() {
-                        cells.write(
-                            ws,
-                            row,
-                            anchor_col + c as u16,
-                            col.as_ref(),
-                            i,
-                            name,
-                        )?;
+                        cells.write(ws, row, anchor_col + c as u16, col.as_ref(), i, name)?;
                     }
                     row += 1;
                     written += 1;

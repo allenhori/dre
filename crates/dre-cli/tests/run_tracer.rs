@@ -31,7 +31,7 @@ fn project(report_yml: &str, extra_profiles: &str) -> TestProject {
 #[test]
 fn a_one_query_report_writes_csv_into_target_and_records_the_run() {
     let p = project("queries: [summary]\n", "");
-    p.dre("run", &["daily"])
+    p.dre("run", &["daily", "-v"])
         .ok()
         .says("no destination declared: output stays in target/run/daily/default");
 
@@ -85,7 +85,7 @@ fn bad_sql_fails_the_run_and_is_recorded() {
     p.dre("run", &["daily"])
         .failed()
         .says("nope")
-        .says("Done: 0 succeeded, 1 failed.");
+        .says("0 succeeded, 1 failed");
     let r = p.json("target/run/daily/default/run_results.json");
     assert_eq!(r["status"], "error");
     assert!(

@@ -1,0 +1,428 @@
+//! Terminal output: right-aligned coloured status verbs, a live progress bar, log levels,
+//! JSON lines for machines, and a full debug log in `target/dre.log`.
+//!
+//! Lines go to stdout. The progress bar goes to stderr and only appears when stderr is a
+//! terminal. Colour follows `--color`, `NO_COLOR` and whether stdout is a terminal.
+
+use std::fs::File;
+use std::io::{IsTerminal, Write};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use anstyle::{AnsiColor, Effects, Style};
+use dre_core::run::{BindingOutcome, Level, Status, Ui};
+use dre_protocol::host::LogSink;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use serde_json::json;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+pub enum Verbosity {
+    /// Errors and the final summary only.
+    Quiet,
+    /// One line per Binding, plus warnings (the default).
+    Info,
+    /// Every step: rendering, each statement, formatting, delivery, plugin logs.
+    Debug,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum LogFormat {
+    Text,
+    /// One JSON object per line, for CI and tooling.
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ColorChoice {
+    Auto,
+    Always,
+    Never,
+}
+
+#[derive(Clone, Copy)]
+pub enum Tone {
+    Good,
+    Bad,
+    Warn,
+    Step,
+    Note,
+}
+
+fn style(t: Tone) -> Style {
+    let c = match t {
+        Tone::Good => AnsiColor::Green,
+        Tone::Bad => AnsiColor::Red,
+        Tone::Warn => AnsiColor::Yellow,
+        Tone::Step => AnsiColor::Cyan,
+        Tone::Note => AnsiColor::Blue,
+    };
+    Style::new().fg_color(Some(c.into())).effects(Effects::BOLD)
+}
+
+const DIM: Style = Style::new().effects(Effects::DIMMED);
+
+struct Inner {
+    verbosity: Verbosity,
+    format: LogFormat,
+    color: bool,
+    bar: Option<ProgressBar>,
+    log: Option<File>,
+    current: String,
+    started: Instant,
+    succeeded: usize,
+    failed: usize,
+}
+
+/// Renders run events. Cheap to clone; clones share state (plugin log lines arrive on threads).
+#[derive(Clone)]
+pub struct Printer {
+    inner: Arc<Mutex<Inner>>,
+}
+
+impl Printer {
+    pub fn new(verbosity: Verbosity, format: LogFormat, color: ColorChoice) -> Printer {
+        let color = match color {
+            ColorChoice::Always => true,
+            ColorChoice::Never => false,
+            ColorChoice::Auto => {
+                std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty()) && std::io::stdout().is_terminal()
+            }
+        } && format == LogFormat::Text;
+        Printer {
+            inner: Arc::new(Mutex::new(Inner {
+                verbosity,
+                format,
+                color,
+                bar: None,
+                log: None,
+                current: String::new(),
+                started: Instant::now(),
+                succeeded: 0,
+                failed: 0,
+            })),
+        }
+    }
+
+    /// Also write every event, at debug level, to `<project>/target/dre.log`.
+    pub fn log_to(&self, project: &Path) {
+        let dir = project.join(dre_core::project::TARGET_DIR);
+        if std::fs::create_dir_all(&dir).is_ok()
+            && let Ok(f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("dre.log"))
+        {
+            self.inner.lock().unwrap().log = Some(f);
+        }
+    }
+
+    /// Colour a diagnostic's `error[...]`/`warning[...]` prefix.
+    pub fn diagnostic(&self, d: &dre_core::Diagnostic) -> String {
+        let i = self.inner.lock().unwrap();
+        let text = d.to_string();
+        let (tone, prefix) = match d.severity {
+            dre_core::Severity::Error => (Tone::Bad, "error"),
+            dre_core::Severity::Warning => (Tone::Warn, "warning"),
+        };
+        match text.find("]: ") {
+            Some(end) if i.color => format!("{}{}", i.paint(style(tone), &text[..end + 1]), &text[end + 1..]),
+            _ => {
+                let _ = prefix;
+                text
+            }
+        }
+    }
+
+    pub fn error(&self, msg: &str) {
+        let mut i = self.inner.lock().unwrap();
+        i.file_log("ERROR", msg);
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "error", "message": msg}));
+        } else {
+            i.print(Tone::Bad, "Error", msg);
+        }
+    }
+
+    /// Final line of a run.
+    pub fn finish(&self, what: &str) {
+        let mut i = self.inner.lock().unwrap();
+        if let Some(b) = i.bar.take() {
+            b.finish_and_clear();
+        }
+        let (ok, failed) = (i.succeeded, i.failed);
+        let secs = i.started.elapsed().as_secs_f64();
+        let text = format!("'{what}' in {} · {ok} succeeded, {failed} failed", fmt_secs(secs));
+        i.file_log("INFO", &format!("Finished {text}"));
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "finished", "command": what, "succeeded": ok, "failed": failed, "elapsed_ms": (secs * 1000.0) as u64}));
+        } else {
+            i.print(if failed > 0 { Tone::Bad } else { Tone::Good }, "Finished", &text);
+        }
+    }
+}
+
+impl Inner {
+    fn paint(&self, s: Style, text: &str) -> String {
+        if self.color {
+            format!("{s}{text}{s:#}")
+        } else {
+            text.to_string()
+        }
+    }
+
+    fn print(&self, tone: Tone, verb: &str, text: &str) {
+        let verb = self.paint(style(tone), &format!("{verb:>10}"));
+        // Continuation lines line up under the text; blank ones stay blank.
+        let text = text
+            .lines()
+            .enumerate()
+            .map(|(n, l)| {
+                if n == 0 || l.trim().is_empty() {
+                    l.trim_end().to_string()
+                } else {
+                    format!("{:>10}  {l}", "")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let out = format!("{verb}  {text}");
+        match &self.bar {
+            Some(b) => b.suspend(|| println_stdout(&out)),
+            None => println_stdout(&out),
+        }
+    }
+
+    fn line(&mut self, tone: Tone, verb: &str, text: &str, level: Level) {
+        self.file_log(
+            if level == Level::Debug { "DEBUG" } else { "INFO" },
+            &format!("{verb} {text}"),
+        );
+        if !self.shows(level) {
+            return;
+        }
+        if self.format == LogFormat::Json {
+            self.json(json!({"event": "line", "verb": verb, "message": text}));
+        } else {
+            self.print(tone, verb, text);
+        }
+    }
+
+    fn shows(&self, level: Level) -> bool {
+        match self.verbosity {
+            Verbosity::Quiet => false,
+            Verbosity::Info => level == Level::Info,
+            Verbosity::Debug => true,
+        }
+    }
+
+    fn json(&self, mut v: serde_json::Value) {
+        v["ts"] = json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
+        let line = v.to_string();
+        match &self.bar {
+            Some(b) => b.suspend(|| println_stdout(&line)),
+            None => println_stdout(&line),
+        }
+    }
+
+    fn file_log(&mut self, level: &str, msg: &str) {
+        if let Some(f) = self.log.as_mut() {
+            let ts = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            let ctx = if self.current.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", self.current)
+            };
+            let _ = writeln!(f, "{ts} {level:<5}{ctx} {msg}");
+        }
+    }
+}
+
+fn println_stdout(s: &str) {
+    let mut out = std::io::stdout().lock();
+    let _ = writeln!(out, "{s}");
+}
+
+fn fmt_secs(s: f64) -> String {
+    if s < 60.0 {
+        format!("{s:.2}s")
+    } else {
+        format!("{}m {:02}s", (s / 60.0) as u64, (s % 60.0) as u64)
+    }
+}
+
+fn timing(d: Duration) -> String {
+    format!("[{:>6}]", fmt_secs(d.as_secs_f64()))
+}
+
+fn label(report: &str, set: Option<&str>) -> String {
+    match set {
+        Some(s) => format!("{report} [{s}]"),
+        None => report.to_string(),
+    }
+}
+
+impl Ui for Printer {
+    fn plan(&mut self, bindings: usize) {
+        let mut i = self.inner.lock().unwrap();
+        i.started = Instant::now();
+        let text = format!("{bindings} Binding{}", if bindings == 1 { "" } else { "s" });
+        i.file_log("INFO", &format!("Running {text}"));
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "plan", "bindings": bindings}));
+            return;
+        }
+        if i.verbosity != Verbosity::Quiet {
+            i.print(Tone::Note, "Running", &text);
+        }
+        if i.verbosity != Verbosity::Quiet && std::io::stderr().is_terminal() && bindings > 0 {
+            let bar = ProgressBar::with_draw_target(Some(bindings as u64), ProgressDrawTarget::stderr());
+            bar.set_style(
+                ProgressStyle::with_template("{spinner:.green} [{bar:28.green/dim}] {pos}/{len} {wide_msg}")
+                    .unwrap()
+                    .progress_chars("█▉░"),
+            );
+            bar.enable_steady_tick(Duration::from_millis(100));
+            i.bar = Some(bar);
+        }
+    }
+
+    fn binding_start(&mut self, report: &str, set: Option<&str>) {
+        let mut i = self.inner.lock().unwrap();
+        i.current = label(report, set);
+        i.file_log("INFO", "Started");
+        if let Some(b) = &i.bar {
+            b.set_message(i.current.clone());
+        }
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "binding_start", "report": report, "set": set}));
+        } else if i.verbosity == Verbosity::Debug {
+            let text = i.current.clone();
+            i.print(Tone::Note, "Started", &text);
+        }
+    }
+
+    fn step(&mut self, level: Level, verb: &str, detail: &str, elapsed: Option<Duration>) {
+        let mut i = self.inner.lock().unwrap();
+        if let Some(b) = &i.bar {
+            b.set_message(format!("{} · {verb} {detail}", i.current));
+        }
+        let text = match elapsed {
+            Some(d) => format!("{} {detail}", i.paint(DIM, &timing(d))),
+            None => detail.to_string(),
+        };
+        if i.format == LogFormat::Json {
+            i.file_log("DEBUG", &format!("{verb} {detail}"));
+            if i.shows(level) {
+                let ms = elapsed.map(|d| d.as_millis() as u64);
+                i.json(json!({"event": "step", "binding": i.current, "verb": verb, "message": detail, "elapsed_ms": ms}));
+            }
+            return;
+        }
+        i.line(Tone::Step, verb, &text, level);
+    }
+
+    fn warn(&mut self, msg: &str) {
+        let mut i = self.inner.lock().unwrap();
+        i.file_log("WARN", msg);
+        if i.format == LogFormat::Json {
+            i.json(json!({"event": "warning", "binding": i.current, "message": msg}));
+        } else if i.verbosity != Verbosity::Quiet {
+            i.print(Tone::Warn, "Warning", msg);
+        }
+    }
+
+    fn binding_end(&mut self, o: &BindingOutcome) {
+        let mut i = self.inner.lock().unwrap();
+        let name = label(&o.report, o.set.as_deref());
+        let (tone, verb) = match o.status {
+            Status::Error => (Tone::Bad, "Failed"),
+            Status::Success => (Tone::Good, "Succeeded"),
+            Status::DryRun => (Tone::Good, "Compiled"),
+            Status::Checked => (Tone::Good, "Checked"),
+        };
+        if o.status == Status::Error {
+            i.failed += 1;
+        } else {
+            i.succeeded += 1;
+        }
+        if let Some(b) = &i.bar {
+            b.inc(1);
+        }
+        let detail = match &o.error {
+            Some(e) => e.clone(),
+            None => o.summary.clone(),
+        };
+        i.file_log(
+            if o.error.is_some() { "ERROR" } else { "INFO" },
+            &format!("{verb} in {} {detail}", fmt_secs(o.elapsed.as_secs_f64())),
+        );
+        i.current.clear();
+        if i.format == LogFormat::Json {
+            i.json(json!({
+                "event": "binding_end", "report": o.report, "set": o.set, "status": o.status,
+                "elapsed_ms": o.elapsed.as_millis() as u64, "error": o.error, "summary": o.summary,
+                "files": o.files,
+            }));
+            return;
+        }
+        if i.verbosity == Verbosity::Quiet && o.status != Status::Error {
+            return;
+        }
+        let name = i.paint(Style::new().effects(Effects::BOLD), &name);
+        let text = format!("{} {name}  {detail}", i.paint(DIM, &timing(o.elapsed)));
+        i.print(tone, verb, text.trim_end());
+    }
+
+    fn choose_set(&mut self, report: &str, sets: &[String]) -> Result<Option<String>, String> {
+        let bar = self.inner.lock().unwrap().bar.clone();
+        let ask = || -> Result<Option<String>, String> {
+            eprintln!("Report `{report}` has several Sets:");
+            for (i, s) in sets.iter().enumerate() {
+                eprintln!("  {}) {s}", i + 1);
+            }
+            eprintln!("  a) all");
+            loop {
+                eprint!("Which one? ");
+                let _ = std::io::stderr().flush();
+                let mut line = String::new();
+                if std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())? == 0 {
+                    return Err("no Set chosen".into());
+                }
+                let answer = line.trim();
+                if answer == "a" || answer == "all" {
+                    return Ok(None);
+                }
+                if let Ok(n) = answer.parse::<usize>()
+                    && (1..=sets.len()).contains(&n)
+                {
+                    return Ok(Some(sets[n - 1].clone()));
+                }
+                if sets.iter().any(|s| s == answer) {
+                    return Ok(Some(answer.to_string()));
+                }
+            }
+        };
+        match bar {
+            Some(b) => b.suspend(ask),
+            None => ask(),
+        }
+    }
+
+    fn plugin_log(&self) -> LogSink {
+        let p = self.clone();
+        Arc::new(move |plugin, line| {
+            let mut i = p.inner.lock().unwrap();
+            i.file_log("DEBUG", &format!("[{plugin}] {line}"));
+            if !i.shows(Level::Debug) {
+                return;
+            }
+            if i.format == LogFormat::Json {
+                i.json(json!({"event": "plugin_log", "plugin": plugin, "message": line}));
+            } else {
+                let text = i.paint(DIM, &format!("[{plugin}] {line}"));
+                i.print(Tone::Note, "Plugin", &text);
+            }
+        })
+    }
+}

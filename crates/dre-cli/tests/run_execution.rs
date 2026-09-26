@@ -224,7 +224,10 @@ fn preview_limits_rows_keeps_output_local_and_is_flagged() {
         ),
         ("reports/fin/pv/pq.sql", "select id from accounts order by id"),
     ]);
-    p.dre("run", &["pv", "--preview", "2"]).ok().says("preview");
+    p.dre("run", &["pv", "--preview", "2"])
+        .ok()
+        .says("Preview")
+        .says("not delivered");
     assert_eq!(p.read("target/run/pv/default/pv.csv"), "id\r\n0\r\n1\r\n");
     assert!(!p.path("out/pv.csv").exists());
     let r = p.json("target/run/pv/default/run_results.json");
@@ -319,7 +322,9 @@ fn unmanaged_reports_open_read_only_unless_they_create_temp_objects() {
     ]);
     // The fixture source logs how it was opened (it treats any SQL other than its own commands
     // as an error, so this run fails after opening — which is all we need to observe).
-    p.dre("run", &["reads"]).says("fixture: opened read_only=true");
+    p.dre("run", &["reads", "-v"])
+        .says("fixture: opened read_only=true");
     p.write("reports/scratch/reads.sql", "create temp table x as select 1");
-    p.dre("run", &["reads"]).says("fixture: opened read_only=false");
+    p.dre("run", &["reads", "-v"])
+        .says("fixture: opened read_only=false");
 }

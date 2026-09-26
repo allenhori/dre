@@ -171,7 +171,7 @@ fn a_failed_binding_does_not_stop_the_others() {
     p.write("reports/finance/monthly/q2.sql", "select * from missing_table\n");
     p.dre("run", &["monthly", "--set", "all"])
         .failed()
-        .says("Done: 1 succeeded, 1 failed.");
+        .says("1 succeeded, 1 failed");
     assert_eq!(
         p.json("target/run/monthly/client_a/run_results.json")["status"],
         "error"
@@ -225,7 +225,7 @@ fn selectors_pick_reports_by_name_path_tag_or_everything() {
     p.dre("run", &["ops"]).ok();
     assert_eq!(ran(&p), ["daily", "ops_monthly"]);
     p.dre("clean", &[]).ok();
-    p.dre("run", &[]).ok().says("Done: 3 succeeded, 0 failed.");
+    p.dre("run", &[]).ok().says("3 succeeded, 0 failed");
     assert_eq!(ran(&p), ["daily", "fin_monthly", "ops_monthly"]);
 }
 
@@ -234,7 +234,13 @@ fn an_ambiguous_selector_gives_the_same_error_as_validate() {
     let p = many_reports();
     let expected = "\"monthly\" matches more than one location — use the dotted form to disambiguate:\n  \
                     finance.monthly   (reports/finance/monthly/)\n  ops.monthly       (reports/ops/monthly/)";
-    p.dre("run", &["monthly"]).failed().says(expected);
+    // Same message from the same resolver; only the surrounding indentation differs.
+    let flat = |s: &str| s.lines().map(str::trim).collect::<Vec<_>>().join("\n");
+    let run = p.dre("run", &["monthly"]);
+    run.failed();
+    assert!(flat(&run.stdout).contains(&flat(expected)), "{}", run.stdout);
     p.write("schedules.yml", "- select: monthly\n  cron: \"0 6 1 * *\"\n");
-    p.dre("validate", &[]).failed().says(expected);
+    let v = p.dre("validate", &[]);
+    v.failed();
+    assert!(flat(&v.stdout).contains(&flat(expected)), "{}", v.stdout);
 }
