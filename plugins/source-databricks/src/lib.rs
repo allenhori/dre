@@ -5,14 +5,16 @@
 //! HiveServer2 protocol over HTTPS (the protocol Databricks' ODBC/JDBC drivers speak): one
 //! session per Binding, so temp views and `SET`s persist and the plugin advertises `sessions`.
 //!
-//! Profile target fields: `host`, `http_path`, `token` (personal access token or OAuth token),
-//! optional `catalog`, `schema`, and `retry_timeout` (seconds to keep retrying while a stopped
-//! warehouse starts; default 900).
+//! Profile target fields: `host`, `http_path`, `auth_type` (`pat`, the default, or `oauth`; see
+//! [`auth`]), `token` for `pat`, `client_id`/`client_secret`/`scopes`/`redirect_port` for
+//! `oauth`, optional `catalog`, `schema`, and `retry_timeout` (seconds to keep retrying while a
+//! stopped warehouse starts; default 900).
 //!
 //! The session runs in UTC, so timestamps arrive as UTC instants. Complex types (arrays, maps,
 //! structs) and intervals arrive as text. Warehouses have no read-only session mode, so the
 //! plugin doesn't advertise `read_only`. `check` uses `EXPLAIN`.
 
+pub mod auth;
 pub mod thrift;
 
 use std::sync::Arc;
@@ -24,6 +26,7 @@ use arrow::array::{
     TimestampMicrosecondBuilder,
 };
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use auth::Auth;
 use dre_protocol::msg::ConnectionField;
 use dre_protocol::plugin::{
     About, Loaded, Result, ResultSet, ResultSink, Source, conn_required, conn_str, serve_source,
@@ -45,7 +48,7 @@ const TIMEDOUT: i32 = 8;
 
 pub struct Hs2 {
     url: String,
-    token: String,
+    auth: Auth,
     agent: ureq::Agent,
     seq: i32,
     session: Option<Struct>,
@@ -61,14 +64,19 @@ pub struct Col {
     pub scale: i8,
 }
 
+/// `https://<host>` for a bare host; a URL with a scheme is kept (tests use `http://`).
+pub fn base_url(host: &str) -> String {
+    let host = host.trim_end_matches('/');
+    if host.starts_with("http://") || host.starts_with("https://") {
+        host.to_string()
+    } else {
+        format!("https://{host}")
+    }
+}
+
 impl Hs2 {
-    pub fn new(host: &str, http_path: &str, token: &str, retry_timeout: Duration) -> Hs2 {
-        let host = host.trim_end_matches('/');
-        let base = if host.starts_with("http://") || host.starts_with("https://") {
-            host.to_string()
-        } else {
-            format!("https://{host}")
-        };
+    /// `base` is the workspace URL from [`base_url`].
+    pub fn new(base: &str, http_path: &str, auth: Auth, retry_timeout: Duration) -> Hs2 {
         let path = if http_path.starts_with('/') {
             http_path.to_string()
         } else {
@@ -81,7 +89,7 @@ impl Hs2 {
             .new_agent();
         Hs2 {
             url: format!("{base}{path}"),
-            token: token.to_string(),
+            auth,
             agent,
             seq: 0,
             session: None,
@@ -96,10 +104,11 @@ impl Hs2 {
         let started = Instant::now();
         let mut wait = Duration::from_secs(2);
         let bytes = loop {
+            let bearer = self.auth.bearer(&self.agent)?;
             let resp = self
                 .agent
                 .post(&self.url)
-                .header("Authorization", &format!("Bearer {}", self.token))
+                .header("Authorization", &format!("Bearer {bearer}"))
                 .header("Content-Type", "application/x-thrift")
                 .header("Accept", "application/x-thrift")
                 .header("User-Agent", "dre")
@@ -128,7 +137,10 @@ impl Hs2 {
             }
             let text = resp.body_mut().read_to_string().unwrap_or_default();
             let hint = match status {
-                401 | 403 => " (check the token and that it can use this warehouse)",
+                401 | 403 => match self.auth {
+                    Auth::Token(_) => " (check the token and that it can use this warehouse)",
+                    Auth::OAuth(_) => " (check that the signed-in identity can use this warehouse)",
+                },
                 404 => " (check `host` and `http_path`)",
                 _ => "",
             };
@@ -520,9 +532,17 @@ impl Source for Databricks {
                 "the SQL warehouse's HTTP path, e.g. /sql/1.0/warehouses/abc",
             )
             .required(),
-            ConnectionField::new("token", "personal access token")
-                .required()
-                .secret(),
+            ConnectionField::new(
+                "auth_type",
+                "pat (a token) or oauth (browser sign-in; with client_id and client_secret, a service principal)",
+            )
+            .default("pat"),
+            ConnectionField::new("token", "personal access token, for auth_type pat").secret(),
+            ConnectionField::new(
+                "client_id",
+                "OAuth client; a service principal's application ID (browser sign-in defaults to databricks-cli)",
+            ),
+            ConnectionField::new("client_secret", "service principal OAuth secret").secret(),
             ConnectionField::new("catalog", "default catalog"),
             ConnectionField::new("schema", "default schema"),
         ]
@@ -533,10 +553,12 @@ impl Source for Databricks {
             .get("retry_timeout")
             .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()))
             .unwrap_or(900);
+        let base = base_url(conn_required(c, "host")?);
+        let auth = Auth::from_conn(c, &base)?;
         let mut h = Hs2::new(
-            conn_required(c, "host")?,
+            &base,
             conn_required(c, "http_path")?,
-            conn_required(c, "token")?,
+            auth,
             Duration::from_secs(retry),
         );
         h.open()?;

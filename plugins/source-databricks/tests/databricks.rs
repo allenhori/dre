@@ -1,23 +1,30 @@
 //! The Databricks plugin against a fake HiveServer2 endpoint (there's no Databricks emulator).
 //! The fake speaks the same Thrift-over-HTTP messages with a toy SQL engine, so these tests
-//! exercise the client: sessions, polling, paging, types, errors, retries. Real-warehouse tests
-//! run when `DRE_TEST_DATABRICKS_HOST`, `_HTTP_PATH` and `_TOKEN` are set.
+//! exercise the client: sessions, polling, paging, types, errors, retries. It also plays the
+//! workspace's OAuth token endpoint, and the tests play the browser for the sign-in redirect.
+//! Real-warehouse tests run when `DRE_TEST_DATABRICKS_HOST`, `_HTTP_PATH` and `_TOKEN` are set.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use arrow::array::{Array, AsArray, RecordBatch};
 use arrow::datatypes::{DataType, Decimal128Type, Int64Type, TimeUnit, TimestampMicrosecondType};
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use dre_protocol::host::{Execution, LogSink, PluginProcess};
-use dre_protocol::{CAP_CHECK, CAP_SESSIONS, conformance};
+use dre_protocol::{CAP_CHECK, CAP_SESSIONS, MAX_VERSION, MIN_VERSION, conformance};
+use dre_source_databricks::auth::decode;
 use dre_source_databricks::thrift::{
     REPLY, Reader, Struct, T_BOOL, T_DOUBLE, T_I32, T_I64, T_STRING, T_STRUCT, V, message, s,
 };
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 
 fn bin() -> &'static Path {
     Path::new(env!("CARGO_BIN_EXE_dre-source-databricks"))
@@ -31,6 +38,12 @@ struct State {
     timezone_utc: bool,
     unavailable_left: usize,
     next_id: u8,
+    /// Grants the token endpoint answered, e.g. `["client_credentials", "client_credentials"]`.
+    grants: Vec<String>,
+    /// `expires_in` for issued access tokens.
+    expires_in: u64,
+    /// The PKCE challenge from the authorize URL, checked against the code exchange's verifier.
+    challenge: String,
 }
 
 struct Op {
@@ -321,6 +334,43 @@ fn respond(st: &mut State, name: &str, req: &Struct) -> Struct {
     }
 }
 
+/// The workspace's `/oidc/v1/token`: a service principal `sp`/`sp-secret`, the code `the-code`
+/// from a browser sign-in, and the refresh token `refresh-1` all get `good-token`.
+fn token_endpoint(st: &mut State, auth: &str, body: &[u8]) -> (&'static str, String) {
+    let form: HashMap<String, String> = String::from_utf8_lossy(body)
+        .split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .map(|(k, v)| (decode(k), decode(v)))
+        .collect();
+    let grant = form.get("grant_type").cloned().unwrap_or_default();
+    st.grants.push(grant.clone());
+    let f = |k: &str| form.get(k).map(String::as_str).unwrap_or_default();
+    let ok = match grant.as_str() {
+        "client_credentials" => {
+            auth == format!("Basic {}", STANDARD.encode("sp:sp-secret")) && f("scope") == "all-apis"
+        }
+        "authorization_code" => {
+            f("code") == "the-code"
+                && f("client_id") == "databricks-cli"
+                && f("redirect_uri").starts_with("http://localhost:")
+                && URL_SAFE_NO_PAD.encode(Sha256::digest(f("code_verifier").as_bytes())) == st.challenge
+        }
+        "refresh_token" => f("refresh_token") == "refresh-1",
+        _ => false,
+    };
+    if !ok {
+        return (
+            "400 Bad Request",
+            json!({"error": "invalid_client", "error_description": "bad credentials"}).to_string(),
+        );
+    }
+    let mut t = json!({"access_token": "good-token", "token_type": "Bearer", "expires_in": st.expires_in});
+    if grant != "client_credentials" {
+        t["refresh_token"] = json!("refresh-1");
+    }
+    ("200 OK", t.to_string())
+}
+
 fn serve_conn(mut stream: TcpStream, state: Arc<Mutex<State>>, requests: Arc<AtomicUsize>) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     loop {
@@ -346,7 +396,6 @@ fn serve_conn(mut stream: TcpStream, state: Arc<Mutex<State>>, requests: Arc<Ato
         }
         let mut body = vec![0; len];
         reader.read_exact(&mut body).unwrap();
-        requests.fetch_add(1, Ordering::SeqCst);
         let reply = |stream: &mut TcpStream, status: &str, extra: &str, body: &[u8]| {
             let head = format!(
                 "HTTP/1.1 {status}\r\nContent-Length: {}\r\n{extra}\r\n",
@@ -355,6 +404,17 @@ fn serve_conn(mut stream: TcpStream, state: Arc<Mutex<State>>, requests: Arc<Ato
             stream.write_all(head.as_bytes()).unwrap();
             stream.write_all(body).unwrap();
         };
+        if line.split_whitespace().nth(1) == Some("/oidc/v1/token") {
+            let (status, out) = token_endpoint(&mut state.lock().unwrap(), &auth, &body);
+            reply(
+                &mut stream,
+                status,
+                "Content-Type: application/json\r\n",
+                out.as_bytes(),
+            );
+            continue;
+        }
+        requests.fetch_add(1, Ordering::SeqCst);
         if auth != "Bearer good-token" {
             reply(&mut stream, "401 Unauthorized", "", b"invalid token");
             continue;
@@ -392,6 +452,7 @@ impl Fake {
         let port = listener.local_addr().unwrap().port();
         let state = Arc::new(Mutex::new(State {
             unavailable_left: unavailable,
+            expires_in: 3600,
             ..Default::default()
         }));
         let requests = Arc::new(AtomicUsize::new(0));
@@ -410,11 +471,21 @@ impl Fake {
     }
 
     fn conn(&self, token: &str) -> Map<String, Value> {
-        json!({"host": format!("http://127.0.0.1:{}", self.port), "http_path": "/sql/1.0/warehouses/abc", "token": token,
-               "catalog": "main", "schema": "client_a"})
-        .as_object()
-        .unwrap()
-        .clone()
+        self.conn_with(json!({"token": token}))
+    }
+
+    /// The fake's host and warehouse plus `auth` fields.
+    fn conn_with(&self, auth: Value) -> Map<String, Value> {
+        let mut c = json!({"host": format!("http://127.0.0.1:{}", self.port), "http_path": "/sql/1.0/warehouses/abc",
+               "catalog": "main", "schema": "client_a"});
+        c.as_object_mut()
+            .unwrap()
+            .extend(auth.as_object().unwrap().clone());
+        c.as_object().unwrap().clone()
+    }
+
+    fn grants(&self) -> Vec<String> {
+        self.state.lock().unwrap().grants.clone()
     }
 
     fn open(&self) -> PluginProcess {
@@ -566,6 +637,182 @@ fn a_bad_token_is_a_clear_error() {
     let err = p.open(fake.conn("wrong"), false).unwrap_err().to_string();
     assert!(
         err.contains("HTTP 401") && err.contains("check the token"),
+        "{err}"
+    );
+}
+
+/// A plugin process with its own home folder (for the OAuth token cache) that never opens a
+/// browser; its log lines arrive on the receiver.
+fn start_isolated(home: &Path) -> (PluginProcess, Receiver<String>) {
+    let (tx, rx) = channel();
+    let tx = Mutex::new(tx);
+    let log: LogSink = Arc::new(move |_, line| {
+        let _ = tx.lock().unwrap().send(line.to_string());
+    });
+    let h = home.to_str().unwrap();
+    let env = [("HOME", h), ("USERPROFILE", h), ("DRE_NO_BROWSER", "1")];
+    let mut p = PluginProcess::spawn_env(bin(), log, &env).unwrap();
+    p.handshake((MIN_VERSION, MAX_VERSION), Duration::from_secs(30))
+        .unwrap();
+    (p, rx)
+}
+
+fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// One GET to the sign-in listener, as the browser would make it; returns the response.
+fn browser_get(port: u16, target: &str) -> String {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(s, "GET {target} HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n").unwrap();
+    let mut out = String::new();
+    s.read_to_string(&mut out).unwrap();
+    out
+}
+
+/// Play the browser: read the authorize URL from the plugin's log, record its PKCE challenge in
+/// the fake, and follow the redirect with `redirect_query` (`{state}` is filled in).
+fn browser(
+    fake: &Fake,
+    log: Receiver<String>,
+    redirect_query: &'static str,
+) -> std::thread::JoinHandle<String> {
+    let state = fake.state.clone();
+    std::thread::spawn(move || {
+        let url = loop {
+            let line = log.recv_timeout(Duration::from_secs(30)).unwrap();
+            if line.contains("/oidc/v1/authorize?") {
+                break line;
+            }
+        };
+        let params: HashMap<String, String> = url
+            .split_once('?')
+            .unwrap()
+            .1
+            .split('&')
+            .filter_map(|kv| kv.split_once('='))
+            .map(|(k, v)| (decode(k), decode(v)))
+            .collect();
+        assert_eq!(params["response_type"], "code");
+        assert_eq!(params["code_challenge_method"], "S256");
+        assert_eq!(params["scope"], "all-apis offline_access");
+        state.lock().unwrap().challenge = params["code_challenge"].clone();
+        let port: u16 = params["redirect_uri"]
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        // Browsers also ask for a favicon; that isn't the redirect.
+        assert!(browser_get(port, "/favicon.ico").starts_with("HTTP/1.1 404"));
+        browser_get(
+            port,
+            &format!("/?{}", redirect_query.replace("{state}", &params["state"])),
+        )
+    })
+}
+
+#[test]
+fn oauth_browser_sign_in_is_cached_and_refreshed() {
+    let fake = Fake::start(0);
+    let home = tempfile::tempdir().unwrap();
+    let conn = fake.conn_with(json!({"auth_type": "oauth", "redirect_port": free_port()}));
+
+    let (mut p, log) = start_isolated(home.path());
+    let page = browser(&fake, log, "code=the-code&state={state}");
+    p.open(conn.clone(), false).unwrap();
+    assert!(page.join().unwrap().contains("Signed in"));
+    collect(&mut p, "select range", Some(1));
+    p.close().unwrap();
+    assert_eq!(fake.grants(), ["authorization_code"]);
+
+    // The cached token is used as is: no browser, no token request.
+    let cache = std::fs::read_dir(home.path().join(".dre/oauth"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&cache).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "only the user can read the tokens");
+    }
+    let (mut p, _log) = start_isolated(home.path());
+    p.open(conn.clone(), false).unwrap();
+    p.close().unwrap();
+    assert_eq!(fake.grants(), ["authorization_code"]);
+
+    // An expired access token is renewed with the refresh token, still without a browser.
+    let mut cached: Value = serde_json::from_str(&std::fs::read_to_string(&cache).unwrap()).unwrap();
+    cached["expires_at"] = json!(0);
+    std::fs::write(&cache, cached.to_string()).unwrap();
+    let (mut p, _log) = start_isolated(home.path());
+    p.open(conn, false).unwrap();
+    collect(&mut p, "select range", Some(1));
+    p.close().unwrap();
+    assert_eq!(fake.grants(), ["authorization_code", "refresh_token"]);
+}
+
+#[test]
+fn a_declined_browser_sign_in_is_a_clear_error() {
+    let fake = Fake::start(0);
+    let home = tempfile::tempdir().unwrap();
+    let (mut p, log) = start_isolated(home.path());
+    let page = browser(
+        &fake,
+        log,
+        "error=access_denied&error_description=The+user+declined&state={state}",
+    );
+    let err = p
+        .open(
+            fake.conn_with(json!({"auth_type": "oauth", "redirect_port": free_port()})),
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(page.join().unwrap().contains("Sign-in failed"));
+    assert!(err.contains("access_denied: The user declined"), "{err}");
+}
+
+#[test]
+fn a_service_principal_signs_in_and_renews_expiring_tokens() {
+    let fake = Fake::start(0);
+    // Every token expires at once, so each request has to renew it.
+    fake.state.lock().unwrap().expires_in = 0;
+    let home = tempfile::tempdir().unwrap();
+    let (mut p, _log) = start_isolated(home.path());
+    let conn = fake.conn_with(json!({"auth_type": "oauth", "client_id": "sp", "client_secret": "sp-secret"}));
+    p.open(conn, false).unwrap();
+    collect(&mut p, "create temporary view v as select 7", None);
+    let (_, b) = collect(&mut p, "select * from v", None);
+    assert_eq!(b[0].column(0).as_primitive::<Int64Type>().value(0), 7);
+    p.close().unwrap();
+    let grants = fake.grants();
+    assert!(
+        grants.len() > 3 && grants.iter().all(|g| g == "client_credentials"),
+        "{grants:?}"
+    );
+    assert!(
+        !home.path().join(".dre").exists(),
+        "service principal tokens aren't cached"
+    );
+}
+
+#[test]
+fn a_bad_client_secret_is_a_clear_error() {
+    let fake = Fake::start(0);
+    let home = tempfile::tempdir().unwrap();
+    let (mut p, _log) = start_isolated(home.path());
+    let conn = fake.conn_with(json!({"auth_type": "oauth", "client_id": "sp", "client_secret": "wrong"}));
+    let err = p.open(conn, false).unwrap_err().to_string();
+    assert!(
+        err.contains("HTTP 400") && err.contains("client_secret") && err.contains("invalid_client"),
         "{err}"
     );
 }

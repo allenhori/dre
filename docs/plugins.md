@@ -38,9 +38,39 @@ want a typed column. Types DRE can't map ask for a cast, e.g. `interval_col::tex
 |---|---|
 | `host` | Workspace host. |
 | `http_path` | The SQL warehouse's HTTP path. |
-| `token` | Personal access token or OAuth token. |
+| `auth_type` | `pat` (default) or `oauth`. |
+| `token` | For `pat`: a personal access token, or any other bearer token. |
+| `client_id` | For `oauth`: the OAuth client. Browser sign-in defaults to `databricks-cli`, which every workspace has. For a service principal, its application ID. |
+| `client_secret` | For `oauth`: a service principal's OAuth secret. Without it, `oauth` signs you in through the browser. |
+| `scopes` | For `oauth`: default `all-apis offline_access` for browser sign-in, `all-apis` for a service principal. |
+| `redirect_port` | For browser sign-in: the localhost port the sign-in redirects to. Default 8020, which is what `databricks-cli` allows. |
 | `catalog`, `schema` | Defaults for the session. |
 | `retry_timeout` | Seconds to keep waiting while a stopped warehouse starts. Default 900. |
+
+```yaml
+sources:
+  warehouse:
+    target: dev
+    targets:
+      dev:        # you, through the browser
+        type: databricks
+        host: dbc-123.cloud.databricks.com
+        http_path: /sql/1.0/warehouses/abc
+        auth_type: oauth
+      prod:       # a service principal, for the orchestrator
+        type: databricks
+        host: dbc-123.cloud.databricks.com
+        http_path: /sql/1.0/warehouses/abc
+        auth_type: oauth
+        client_id: "{{ env_var('DATABRICKS_CLIENT_ID') }}"
+        client_secret: "{{ env_var('DATABRICKS_CLIENT_SECRET') }}"
+```
+
+Browser sign-in opens your browser the first time and caches the tokens in
+`~/.dre/oauth/` (readable only by you). After that the refresh token renews them, and the
+browser only opens again once the refresh token stops working. Set `DRE_NO_BROWSER=1` to only
+print the sign-in URL. Service principal tokens stay in memory. With either kind, the access token
+is renewed before it expires, so a long run keeps its session.
 
 Capabilities: `sessions`, `check` (via `EXPLAIN`). The plugin holds a real warehouse session,
 so temp views and `SET`s last for the whole Binding. The session runs in UTC. Warehouses have no
