@@ -70,7 +70,7 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
             ),
         ),
         (
-            "plugins.yml",
+            "dependencies.yml",
             format!("# Plugins this project needs. `dre deps` installs them.\n{plugins}"),
         ),
         (
@@ -88,7 +88,7 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
         ),
         ("macros/.gitkeep", String::new()),
         ("templates/.gitkeep", String::new()),
-        (".gitignore", "target/\nlogs/\n".to_string()),
+        (".gitignore", "target/\nlogs/\ndre_deps/\n".to_string()),
     ];
     let mut written = Vec::new();
     for (rel, content) in files {
@@ -305,7 +305,7 @@ fn install_and_describe(
             manager::platform()
         )
     })?;
-    let dir = dre_core::plugins::plugins_dir();
+    let dir = dre_core::plugins::plugins_dir(None);
     let locked = manager::install(&dir, index_plugin, v, None)?;
     printer.line(
         Tone::Good,

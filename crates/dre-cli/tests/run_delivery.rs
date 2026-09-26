@@ -23,7 +23,7 @@ fn a_failed_upload_leaves_the_output_in_target_and_says_so() {
                 "name: acme_reports\ndefault_profile: warehouse\n",
             ),
             (
-                "plugins.yml",
+                "dependencies.yml",
                 "sources: [duckdb]\nformats: [csv]\ndestinations: [sftp]\n",
             ),
             (

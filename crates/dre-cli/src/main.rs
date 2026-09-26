@@ -225,6 +225,10 @@ fn main() -> ExitCode {
 }
 
 fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
+    // With auto-install off, a missing package is reported by the load.
+    if !a.project.no_auto_install {
+        plugins::sync_packages(&a.project.project_dir, printer);
+    }
     let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
     if let Some(p) = &project {
         plugins::check_for_validate(p, !a.project.no_auto_install, &mut diags, printer);
@@ -295,8 +299,11 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
+/// The project's plugins when run inside a project, otherwise the shared cache.
 fn plugin_list() -> ExitCode {
-    let dir = dre_core::plugins::plugins_dir();
+    let here = std::path::Path::new(".");
+    let in_project = here.join(dre_core::project::PROJECT_FILE).is_file();
+    let dir = dre_core::plugins::plugins_dir(in_project.then_some(here));
     let found = dre_core::plugins::discover(&dir);
     if found.is_empty() {
         println!("No plugins installed in {}", dir.display());
@@ -372,6 +379,9 @@ fn run_date() -> Option<chrono::NaiveDate> {
 
 fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     use std::io::IsTerminal;
+    if !a.project.no_auto_install && !plugins::sync_packages(&a.project.project_dir, &printer) {
+        return ExitCode::FAILURE;
+    }
     let Some(project) = load_for_run(&a.project, &printer) else {
         return ExitCode::FAILURE;
     };
@@ -425,6 +435,9 @@ fn clean(a: CleanArgs) -> ExitCode {
 }
 
 fn deps(a: DepsArgs, printer: &output::Printer) -> ExitCode {
+    if !plugins::sync_packages(&a.project_dir, printer) {
+        return ExitCode::FAILURE;
+    }
     let opts = LoadOptions {
         profiles_dir: a.profiles_dir,
         ..Default::default()
@@ -441,8 +454,9 @@ fn deps(a: DepsArgs, printer: &output::Printer) -> ExitCode {
             output::Tone::Good,
             "Synced",
             &format!(
-                "{} declared plugin(s); dre.lock is up to date",
-                project.plugins.len()
+                "{} plugin(s) and {} package(s); dre.lock is up to date",
+                project.plugins.len(),
+                project.packages.len()
             ),
         );
         ExitCode::SUCCESS

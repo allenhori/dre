@@ -75,7 +75,7 @@ impl Env {
             "name: acme_reports\ndefault_profile: fx\n",
         )
         .unwrap();
-        std::fs::write(project.join("plugins.yml"), plugins_yml).unwrap();
+        std::fs::write(project.join("dependencies.yml"), plugins_yml).unwrap();
         std::fs::write(project.join("reports/ops/f/f.yml"), "queries: [fq]\n").unwrap();
         std::fs::write(project.join("reports/ops/f/fq.sql"), "rows 3").unwrap();
         std::fs::create_dir_all(dir.path().join("profiles")).unwrap();
@@ -217,4 +217,61 @@ fn install_update_and_remove_keep_dre_lock_in_step() {
     e.dre(&["plugin", "install", "fixture@<1.0"])
         .failed()
         .says("contradicts the project's declared constraint");
+}
+
+impl Env {
+    /// Like `dre`, without `DRE_PLUGINS_DIR`: plugins go to the project's dre_deps/, via the
+    /// shared cache in $HOME/.dre/plugins.
+    fn dre_in_project(&self, args: &[&str], registry: &str) -> Run {
+        let mut c = assert_cmd::Command::cargo_bin("dre").unwrap();
+        c.args(args)
+            .current_dir(self.p("project"))
+            .env_remove("DRE_PLUGINS_DIR")
+            .env("DRE_REGISTRY_URL", self.p(registry))
+            .env("DRE_PROFILES_DIR", self.p("profiles"))
+            .env("HOME", self.p("home"));
+        let out = c.output().unwrap();
+        Run {
+            code: out.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&out.stdout).into(),
+            stderr: String::from_utf8_lossy(&out.stderr).into(),
+        }
+    }
+}
+
+#[test]
+fn plugins_install_into_dre_deps_linked_from_the_shared_cache() {
+    let e = Env::new(DECLARED);
+    // The hand-placed csv plugin goes in the project's own plugins folder.
+    let csv = format!("dre-format-csv{}", std::env::consts::EXE_SUFFIX);
+    std::fs::create_dir_all(e.p("project/dre_deps/plugins")).unwrap();
+    std::fs::copy(
+        e.p("plugins").join(&csv),
+        e.p("project/dre_deps/plugins").join(&csv),
+    )
+    .unwrap();
+
+    e.dre_in_project(&["deps"], "registry/index.json")
+        .ok()
+        .says("source plugin `fixture` 1.1.0");
+    let exe = format!("dre-source-fixture{}", std::env::consts::EXE_SUFFIX);
+    let in_project = e.p("project/dre_deps/plugins/source/fixture/1.1.0").join(&exe);
+    let in_cache = e.p("home/.dre/plugins/source/fixture/1.1.0").join(&exe);
+    assert!(in_project.is_file() && in_cache.is_file());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let (a, b) = (
+            std::fs::metadata(&in_project).unwrap(),
+            std::fs::metadata(&in_cache).unwrap(),
+        );
+        assert_eq!((a.dev(), a.ino()), (b.dev(), b.ino()), "hard-linked, not copied");
+    }
+    e.dre_in_project(&["run", "f"], "registry/index.json").ok();
+
+    // A fresh checkout with the same dre.lock links the pinned version from the cache, with no
+    // registry at all.
+    std::fs::remove_dir_all(e.p("project/dre_deps/plugins/source")).unwrap();
+    e.dre_in_project(&["deps"], "no-registry/index.json").ok();
+    assert!(in_project.is_file());
 }

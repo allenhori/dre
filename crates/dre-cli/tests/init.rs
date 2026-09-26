@@ -72,7 +72,7 @@ fn init_installs_the_source_writes_profiles_and_scaffolds_a_project() {
     let p = d.path().join("my_reports");
     for f in [
         "dre_project.yml",
-        "plugins.yml",
+        "dependencies.yml",
         "reports/examples/hello/hello.yml",
         "reports/examples/hello/hello.sql",
         ".gitignore",
@@ -81,9 +81,9 @@ fn init_installs_the_source_writes_profiles_and_scaffolds_a_project() {
     }
     assert_eq!(
         std::fs::read_to_string(p.join(".gitignore")).unwrap(),
-        "target/\nlogs/\n"
+        "target/\nlogs/\ndre_deps/\n"
     );
-    let plugins = std::fs::read_to_string(p.join("plugins.yml")).unwrap();
+    let plugins = std::fs::read_to_string(p.join("dependencies.yml")).unwrap();
     assert!(
         plugins.contains("sources:\n  - fixture\n") && plugins.contains("destinations:\n  - inbox\n"),
         "{plugins}"
@@ -169,7 +169,7 @@ fn new_scaffolds_without_prompts_and_never_overwrites() {
         Some("name: acme_reports")
     );
     assert!(
-        std::fs::read_to_string(p.join("plugins.yml"))
+        std::fs::read_to_string(p.join("dependencies.yml"))
             .unwrap()
             .contains("  - duckdb\n")
     );

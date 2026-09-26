@@ -255,6 +255,8 @@ struct BindingRun<'a> {
     run_dir: PathBuf,
     schema_dir: PathBuf,
     target: String,
+    /// The source plugin type, once the profile resolves.
+    source_type: String,
     started: Instant,
     started_at: chrono::DateTime<chrono::Utc>,
     produced: Vec<Produced>,
@@ -298,6 +300,7 @@ impl<'a> BindingRun<'a> {
             run_dir: t.join("run").join(&rel),
             schema_dir: t.join("schema").join(&rel),
             target: String::new(),
+            source_type: String::new(),
             started: Instant::now(),
             started_at: chrono::Utc::now(),
             produced: Vec::new(),
@@ -363,6 +366,7 @@ impl<'a> BindingRun<'a> {
                 )
             })?;
         self.target = target.clone();
+        self.source_type = output.kind.clone();
         let source_path = find_plugin(self.project, PluginKind::Source, &output.kind)?;
         let connection = render_connection(output)?;
 
@@ -391,6 +395,7 @@ impl<'a> BindingRun<'a> {
                 set: self.b.set.clone(),
                 target: target.clone(),
                 profile: profile_name.clone(),
+                source_type: output.kind.clone(),
                 date: self.date,
             },
             vars: self.b.vars.clone(),
@@ -400,6 +405,9 @@ impl<'a> BindingRun<'a> {
             sql: self.project.sql.clone(),
             lookups: self.project.lookups.clone(),
             lookup_inline_max_rows: self.project.lookup_inline_max_rows,
+            packages: self.project.packages.clone(),
+            project_name: self.project.name.clone(),
+            dispatch: self.project.dispatch.clone(),
         })
         .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.compiled_dir).map_err(|e| e.to_string())?;
@@ -801,6 +809,7 @@ impl<'a> BindingRun<'a> {
                 set: self.b.set.clone(),
                 target: self.target.clone(),
                 profile: self.b.profile.clone().unwrap_or_default(),
+                source_type: self.source_type.clone(),
                 date: self.date,
             },
             vars: self.b.vars.clone(),
@@ -810,6 +819,9 @@ impl<'a> BindingRun<'a> {
             sql: self.project.sql.clone(),
             lookups: self.project.lookups.clone(),
             lookup_inline_max_rows: self.project.lookup_inline_max_rows,
+            packages: self.project.packages.clone(),
+            project_name: self.project.name.clone(),
+            dispatch: self.project.dispatch.clone(),
         })
         .map_err(|e| e.to_string())?;
         let mut values = JsonMap::new();
@@ -1383,7 +1395,7 @@ pub fn find_plugin(project: &Project, kind: PluginKind, name: &str) -> Result<Pa
     let pin = lock::Lock::load(&project.root)
         .ok()
         .and_then(|l| l.version(kind, name));
-    let dir = crate::plugins::plugins_dir();
+    let dir = crate::plugins::plugins_dir(Some(&project.root));
     crate::plugins::find(&dir, kind, name, req.as_ref(), pin.as_ref()).map(|p| p.path).ok_or_else(|| {
         format!(
             "the {} plugin `{name}` isn't installed (looked in {}); run `dre deps` to install the project's plugins",

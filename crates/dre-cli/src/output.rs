@@ -244,7 +244,7 @@ impl Inner {
     }
 }
 
-pub const LOGS_DIR: &str = "logs";
+pub use dre_core::project::LOGS_DIR;
 const LOG_MAX_LINES: usize = 10_000;
 /// Rotated files kept: `dre.log.1` (newest) to `dre.log.5`.
 const LOG_KEEP: usize = 5;

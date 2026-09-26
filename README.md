@@ -88,8 +88,25 @@ destinations:
       prod: {type: s3, bucket: reports}
 ```
 
-`dre init` writes this file for you. Plugins are declared in `plugins.yml` and installed on demand (`dre deps`). Their
-exact versions are pinned in `dre.lock`.
+`dre init` writes this file for you.
+
+Plugins and macro packages are declared in `dependencies.yml` (or `packages.yml`, or both) and
+installed into the project's `dre_deps/` folder by `dre deps`. Their exact versions and commits
+are pinned in `dre.lock`. Package macros are called through the package's name
+(`{{ dre_utils.star_except(...) }}`), and `dispatch()` lets a package offer per-database variants
+that a project can override. See [the registry docs](docs/registry.md).
+
+## Environment variables
+
+| Variable | Effect |
+|---|---|
+| `DRE_PROFILES_DIR` | Directory holding `profiles.yml` (default `~/.dre`). `--profiles-dir` overrides it. |
+| `DRE_PLUGINS_DIR` | One plugins directory for every project, instead of each project's `dre_deps/plugins`. |
+| `DRE_REGISTRY_URL` | The plugin registry index (a URL or a local path). |
+| `DRE_RUN_DATE` | The run date (`YYYY-MM-DD`) behind `run.date`, instead of today. |
+| `DRE_LOG_MAX_LINES` | Lines per `logs/dre.log` before it rotates (default 10,000). |
+| `DRE_PLUGIN_HANDSHAKE_TIMEOUT_MS` | How long to wait for a plugin to start (default 30,000). |
+| `NO_COLOR` | Turns off coloured output. |
 
 ## Documentation
 
@@ -106,8 +123,8 @@ cargo build --release
 ./target/release/dre --help
 ```
 
-The first-party plugins are built from the same workspace (`target/release/dre-*`). Put them in
-`~/.dre/plugins/` (or `DRE_PLUGINS_DIR`) to use them without a registry.
+The first-party plugins are built from the same workspace (`target/release/dre-*`). Put them in a
+project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them without a registry.
 
 ## License
 

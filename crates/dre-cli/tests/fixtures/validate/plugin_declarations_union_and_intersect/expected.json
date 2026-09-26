@@ -52,7 +52,7 @@ exit: 0
         "name": "duckdb",
         "version": ">=0.0",
         "declared_in": [
-          "plugins.yml"
+          "dependencies.yml"
         ]
       },
       {
@@ -60,7 +60,7 @@ exit: 0
         "name": "csv",
         "version": "^0, >=0.1",
         "declared_in": [
-          "plugins.yml",
+          "dependencies.yml",
           "reports/ops/daily/daily.yml"
         ]
       },
@@ -74,6 +74,7 @@ exit: 0
       }
     ],
     "macros": [],
+    "packages": [],
     "lookup_inline_max_rows": 200
   }
 }

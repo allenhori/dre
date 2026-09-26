@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use chrono::NaiveDate;
 
 use crate::lookups::{self, Cell, Load, Lookup, Table};
+use crate::packages::{DispatchOrder, Package};
 use minijinja::value::{Enumerator, Kwargs, Object, ObjectRepr, Value};
 use minijinja::{Environment, Error, ErrorKind, UndefinedBehavior};
 use serde_json::{Map as JsonMap, Value as Json};
@@ -23,6 +24,8 @@ pub struct RunContext {
     pub set: Option<String>,
     pub target: String,
     pub profile: String,
+    /// The source plugin type (`duckdb`, `databricks`, ...), for SQL that differs per database.
+    pub source_type: String,
     pub date: NaiveDate,
 }
 
@@ -65,8 +68,8 @@ pub struct Renderer {
     /// Warnings raised while rendering (e.g. a large lookup inlined), drained by the caller.
     warnings: Arc<Mutex<Vec<String>>>,
     import: String,
-    /// `(first line in the combined macro template, file, line count)` per macro file.
-    macro_files: Vec<(usize, PathBuf, usize)>,
+    /// Per combined macro template: `(first line, file, line count)` of each macro file in it.
+    macro_files: BTreeMap<String, Vec<(usize, PathBuf, usize)>>,
 }
 
 pub struct RendererConfig<'a> {
@@ -84,6 +87,11 @@ pub struct RendererConfig<'a> {
     /// Lookups `ref()` and `lookup()` can name.
     pub lookups: BTreeMap<String, Lookup>,
     pub lookup_inline_max_rows: u64,
+    /// Macro packages, imported under their names.
+    pub packages: Vec<Package>,
+    /// The project's name: the root namespace in `dispatch()` search orders.
+    pub project_name: String,
+    pub dispatch: DispatchOrder,
 }
 
 impl Renderer {
@@ -122,6 +130,7 @@ impl Renderer {
                 }),
             }
         });
+        let source_type = cfg.context.source_type.clone();
         env.add_global("run", Value::from_object(Run(cfg.context)));
         let runner = cfg.runner;
         let warnings: Arc<Mutex<Vec<String>>> = Arc::default();
@@ -167,41 +176,51 @@ impl Renderer {
         );
 
         // Every macro file is combined into one template, imported (on the first line, so line
-        // numbers don't move) into everything rendered.
-        let mut combined = String::new();
-        let mut names = Vec::new();
-        let mut macro_files = Vec::new();
-        let re = regex::Regex::new(r"\{%-?\s*macro\s+([A-Za-z_]\w*)").unwrap();
-        for m in cfg.macros {
-            let src = std::fs::read_to_string(cfg.root.join(m)).map_err(|e| RenderError {
-                file: m.clone(),
-                line: None,
-                message: format!("can't read macro file: {e}"),
-            })?;
-            let start = combined.matches('\n').count() + 1;
-            names.extend(re.captures_iter(&src).map(|c| c[1].to_string()));
-            combined.push_str(&src);
-            if !combined.ends_with('\n') {
-                combined.push('\n');
-            }
-            macro_files.push((start, m.clone(), src.matches('\n').count() + 1));
-        }
-        let import = if names.is_empty() {
+        // numbers don't move) into everything rendered. Each package gets its own template,
+        // imported under the package's name.
+        let root = cfg.root.to_path_buf();
+        let display = |p: &Path| {
+            p.strip_prefix(&root)
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|_| p.to_path_buf())
+        };
+        let own: Vec<(PathBuf, PathBuf)> = cfg.macros.iter().map(|m| (cfg.root.join(m), m.clone())).collect();
+        let (combined, names, spans) = combine(&own)?;
+        let mut import = if names.is_empty() {
             String::new()
         } else {
             format!("{{% from \"{MACROS}\" import {} %}}", names.join(", "))
         };
+        let mut templates = vec![(MACROS.to_string(), combined, spans, !names.is_empty())];
+        for p in &cfg.packages {
+            let files: Vec<(PathBuf, PathBuf)> = p.macros.iter().map(|m| (m.clone(), display(m))).collect();
+            let (src, _, spans) = combine(&files)?;
+            let t = package_template(&p.name);
+            import.push_str(&format!("{{% import \"{t}\" as {} %}}", p.name));
+            templates.push((t, src, spans, true));
+        }
         add_ref(&mut env, cfg.root, cfg.sql, lookups, &import);
+        add_dispatch(
+            &mut env,
+            &cfg.project_name,
+            !names.is_empty(),
+            &cfg.packages,
+            cfg.dispatch,
+            source_type,
+        );
         let mut r = Renderer {
             env,
             warnings,
             import,
-            macro_files,
+            macro_files: BTreeMap::new(),
         };
-        if !names.is_empty() {
-            r.env
-                .add_template_owned(MACROS, combined)
-                .map_err(|e| r.error(Path::new(MACROS), &e))?;
+        for (name, src, spans, add) in templates {
+            r.macro_files.insert(name.clone(), spans);
+            if add {
+                r.env
+                    .add_template_owned(name.clone(), src)
+                    .map_err(|e| r.error(Path::new(&name), &e))?;
+            }
         }
         Ok(r)
     }
@@ -232,9 +251,9 @@ impl Renderer {
             (Some(n), l) => (n.to_string(), l),
             _ => (e.name().unwrap_or_default().to_string(), e.line()),
         };
-        let (file, line) = if name == MACROS {
+        let (file, line) = if let Some(spans) = self.macro_files.get(&name) {
             match line.and_then(|l| {
-                self.macro_files
+                spans
                     .iter()
                     .find(|(s, _, n)| l >= *s && l < s + n)
                     .map(|(s, f, _)| (f, l - s + 1))
@@ -250,6 +269,121 @@ impl Renderer {
             .map(str::to_string)
             .unwrap_or_else(|| deepest.kind().to_string());
         RenderError { file, line, message }
+    }
+}
+
+fn package_template(name: &str) -> String {
+    format!("__dre_package_{name}__")
+}
+
+/// Concatenate macro files `(path to read, path to report)` into one template source, with
+/// every macro name defined and where each file starts.
+#[allow(clippy::type_complexity)]
+fn combine(
+    files: &[(PathBuf, PathBuf)],
+) -> Result<(String, Vec<String>, Vec<(usize, PathBuf, usize)>), RenderError> {
+    let re = regex::Regex::new(r"\{%-?\s*macro\s+([A-Za-z_]\w*)").unwrap();
+    let mut combined = String::new();
+    let mut names = Vec::new();
+    let mut spans = Vec::new();
+    for (read, shown) in files {
+        let src = std::fs::read_to_string(read).map_err(|e| RenderError {
+            file: shown.clone(),
+            line: None,
+            message: format!("can't read macro file: {e}"),
+        })?;
+        let start = combined.matches('\n').count() + 1;
+        names.extend(re.captures_iter(&src).map(|c| c[1].to_string()));
+        combined.push_str(&src);
+        if !combined.ends_with('\n') {
+            combined.push('\n');
+        }
+        spans.push((start, shown.clone(), src.matches('\n').count() + 1));
+    }
+    Ok((combined, names, spans))
+}
+
+/// `dispatch('name', 'namespace')` returns the macro to call for the active source: in each
+/// namespace of the search order, `<source type>__name`, then `default__name`. The search order
+/// is `dispatch:` in dre_project.yml, else the root project then the namespace, so a project can
+/// override a package's macro by defining, say, `databricks__name` in its own macros/.
+fn add_dispatch(
+    env: &mut Environment<'static>,
+    project: &str,
+    project_has_macros: bool,
+    packages: &[Package],
+    order: DispatchOrder,
+    source_type: String,
+) {
+    let project = project.to_string();
+    let templates: BTreeMap<String, String> = packages
+        .iter()
+        .map(|p| (p.name.clone(), package_template(&p.name)))
+        .collect();
+    env.add_function(
+        "dispatch",
+        move |state: &minijinja::State<'_, '_>,
+              name: String,
+              namespace: Option<String>|
+              -> Result<Value, Error> {
+            let ns = namespace.unwrap_or_else(|| project.clone());
+            let search = order.get(&ns).cloned().unwrap_or_else(|| {
+                if ns == project {
+                    vec![ns.clone()]
+                } else {
+                    vec![project.clone(), ns.clone()]
+                }
+            });
+            let candidates = [format!("{source_type}__{name}"), format!("default__{name}")];
+            for n in &search {
+                let template = if n == &project {
+                    if !project_has_macros {
+                        continue;
+                    }
+                    MACROS.to_string()
+                } else {
+                    match templates.get(n) {
+                        Some(t) => t.clone(),
+                        None => continue,
+                    }
+                };
+                let tmpl = state.env().get_template(&template)?;
+                let captured = tmpl.render_captured(())?;
+                let st = captured.state();
+                for c in &candidates {
+                    if st.lookup(c).is_some_and(|v| !v.is_undefined()) {
+                        return Ok(Value::from_object(Dispatched {
+                            template,
+                            name: c.clone(),
+                        }));
+                    }
+                }
+            }
+            Err(Error::new(
+                ErrorKind::InvalidOperation,
+                format!(
+                    "`dispatch('{name}', '{ns}')`: no `{}` or `{}` in {}",
+                    candidates[0],
+                    candidates[1],
+                    search.join(", ")
+                ),
+            ))
+        },
+    );
+}
+
+/// A macro chosen by `dispatch()`, called by name in its own template.
+#[derive(Debug)]
+struct Dispatched {
+    template: String,
+    name: String,
+}
+
+impl Object for Dispatched {
+    fn call(self: &Arc<Self>, state: &minijinja::State<'_, '_>, args: &[Value]) -> Result<Value, Error> {
+        let tmpl = state.env().get_template(&self.template)?;
+        let out = tmpl.render_captured(())?.state().call_macro(&self.name, args)?;
+        Ok(Value::from(out))
     }
 }
 
@@ -429,6 +563,7 @@ impl Object for Run {
             "set" => c.set.clone().map(Value::from).unwrap_or(Value::from(())),
             "target" => Value::from(c.target.clone()),
             "profile" => Value::from(c.profile.clone()),
+            "source_type" => Value::from(c.source_type.clone()),
             "date" => Value::from_object(RunDate(c.date)),
             _ => return None,
         })
@@ -611,6 +746,7 @@ mod tests {
                 set: Some("client_a".into()),
                 target: "prod".into(),
                 profile: "warehouse".into(),
+                source_type: "duckdb".into(),
                 date: NaiveDate::from_ymd_opt(2026, 1, 25).unwrap(),
             },
             vars: vars.as_object().cloned().unwrap_or_default(),
@@ -620,6 +756,9 @@ mod tests {
             sql: BTreeMap::new(),
             lookups: BTreeMap::new(),
             lookup_inline_max_rows: 200,
+            packages: Vec::new(),
+            project_name: "acme".into(),
+            dispatch: DispatchOrder::new(),
         })
         .unwrap();
         (dir, r)
@@ -739,6 +878,7 @@ mod tests {
                 set: None,
                 target: "t".into(),
                 profile: "p".into(),
+                source_type: "duckdb".into(),
                 date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
             },
             vars: JsonMap::new(),
@@ -748,6 +888,9 @@ mod tests {
             sql: BTreeMap::new(),
             lookups: BTreeMap::new(),
             lookup_inline_max_rows: 200,
+            packages: Vec::new(),
+            project_name: "acme".into(),
+            dispatch: DispatchOrder::new(),
         })
         .unwrap();
         let src = "{% set res = run_query('select') %}{{ res.columns | join(',') }}|\

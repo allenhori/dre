@@ -26,6 +26,19 @@ pub fn ensure(project: &Project, install: bool, printer: &Printer) -> bool {
     }
 }
 
+/// Install missing or outdated macro packages. Runs before the project loads, which needs them.
+pub fn sync_packages(root: &std::path::Path, printer: &Printer) -> bool {
+    match dre_core::packages::sync(root, true, |m| printer.line(Tone::Note, "Installed", m)) {
+        Ok(()) => true,
+        Err(errors) => {
+            for e in errors {
+                printer.error(&e);
+            }
+            false
+        }
+    }
+}
+
 /// `dre validate`: install missing plugins, or (with `--no-auto-install`) warn about them.
 pub fn check_for_validate(
     project: &Project,
@@ -138,8 +151,8 @@ pub fn install(spec: String, project_dir: PathBuf, update: bool, printer: &Print
         ));
         return ExitCode::FAILURE;
     };
-    let dir = dre_core::plugins::plugins_dir();
-    match manager::install(&dir, plugin, version, None) {
+    let dir = dre_core::plugins::plugins_dir(project.as_ref().map(|p| p.root.as_path()));
+    match manager::install_linked(&dir, plugin, version, None) {
         Ok(locked) => {
             printer.line(
                 Tone::Good,
@@ -181,7 +194,8 @@ pub fn remove(spec: String, project_dir: PathBuf, printer: &Printer) -> ExitCode
         },
         None => (spec.clone(), None),
     };
-    let dir = dre_core::plugins::plugins_dir();
+    let in_project = project_dir.join(project::PROJECT_FILE).is_file();
+    let dir = dre_core::plugins::plugins_dir(in_project.then_some(project_dir.as_path()));
     let (kind_filter, name) = match id.split_once('/') {
         Some((k, n)) => (PluginKind::parse(k), n.to_string()),
         None => (None, id),
