@@ -1,8 +1,10 @@
 //! Finding installed plugin executables.
 //!
-//! Plugins live in `DRE_PLUGINS_DIR` (default `~/.dre/plugins`), either side by side by version,
-//! `<dir>/<kind>/<name>/<version>/dre-<kind>-<name>`, as installed by the plugin manager, or flat,
-//! `<dir>/dre-<kind>-<name>`, for plugins placed by hand (development, tests).
+//! A project's plugins live in `<project>/dre_deps/plugins`, hard-linked (or copied) from a shared
+//! download cache in `~/.dre/plugins`. `DRE_PLUGINS_DIR` replaces both. Inside a plugins
+//! directory, plugins sit side by side by version, `<dir>/<kind>/<name>/<version>/dre-<kind>-<name>`,
+//! as installed by the plugin manager, or flat, `<dir>/dre-<kind>-<name>`, for plugins placed by
+//! hand (development, tests).
 
 use std::path::{Path, PathBuf};
 
@@ -18,11 +20,46 @@ pub struct InstalledPlugin {
     pub path: PathBuf,
 }
 
-pub fn plugins_dir() -> PathBuf {
-    match std::env::var_os("DRE_PLUGINS_DIR").filter(|p| !p.is_empty()) {
-        Some(p) => PathBuf::from(p),
-        None => crate::dre_home().join("plugins"),
+/// Everything a project installs: plugins and macro packages.
+pub const DEPS_DIR: &str = "dre_deps";
+
+/// `DRE_PLUGINS_DIR`, when set: plugins live and install there, for every project.
+pub fn override_dir() -> Option<PathBuf> {
+    std::env::var_os("DRE_PLUGINS_DIR")
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The shared download cache, which project installs link from; also where `dre init` installs
+/// before a project exists.
+pub fn cache_dir() -> PathBuf {
+    override_dir().unwrap_or_else(|| crate::dre_home().join("plugins"))
+}
+
+/// Where a project's plugins live (`None`: outside any project, the cache).
+pub fn plugins_dir(project: Option<&Path>) -> PathBuf {
+    match (override_dir(), project) {
+        (Some(d), _) => d,
+        (None, Some(root)) => root.join(DEPS_DIR).join("plugins"),
+        (None, None) => cache_dir(),
     }
+}
+
+/// Put `src` at `dst` without a second copy on disk where possible.
+pub fn link_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
+    let parent = dst.parent().unwrap();
+    std::fs::create_dir_all(parent).map_err(|e| format!("can't create {}: {e}", parent.display()))?;
+    let _ = std::fs::remove_file(dst);
+    if std::fs::hard_link(src, dst).is_ok() {
+        return Ok(());
+    }
+    std::fs::copy(src, dst).map_err(|e| format!("can't copy {} to {}: {e}", src.display(), dst.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dst, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn is_executable(p: &Path) -> bool {

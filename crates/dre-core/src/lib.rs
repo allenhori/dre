@@ -6,6 +6,7 @@ pub mod lock;
 pub mod lookups;
 pub mod manager;
 pub mod options;
+pub mod packages;
 pub mod plugins;
 pub mod preflight;
 pub mod profiles;

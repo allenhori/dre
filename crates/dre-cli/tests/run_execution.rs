@@ -30,7 +30,7 @@ fn project(files: &[(&str, &str)]) -> TestProject {
             "dre_project.yml",
             "name: acme_reports\ndefault_profile: warehouse\n",
         ),
-        ("plugins.yml", PLUGINS),
+        ("dependencies.yml", PLUGINS),
     ];
     all.extend_from_slice(files);
     let p = TestProject::new(&all, PROFILES);
