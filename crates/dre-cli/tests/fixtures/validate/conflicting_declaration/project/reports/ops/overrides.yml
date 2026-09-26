@@ -1,2 +1,2 @@
 name: daily
-schedule: {cron: "0 7 * * *"}
+profile: local_dev

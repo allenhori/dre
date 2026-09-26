@@ -1,0 +1,12 @@
+- {name: a_hourly, report: a, cron: "0 25 * * *"}
+- {name: b_daily, report: b, cron: "0 6 * *"}
+- {name: c_fortnightly, report: c, rrule: "FREQ=FORTNIGHTLY"}
+- {name: d_every, report: d, every: {fortnights: 2}}
+- {name: e_both, report: e, cron: "0 6 * * *", rrule: "FREQ=DAILY"}
+- {name: f_every, report: f, every: {days: 5}, starting: "01/02/2026", at: "6am"}
+- {name: g_none, report: g, tz: UTC}
+- {report: a, cron: "0 6 * * *"}
+- {name: a_hourly, report: b, cron: "0 7 * * *"}
+- {name: 7days, report: c, cron: "0 7 * * *"}
+- {name: vars_list, report: d, cron: "0 7 * * *", vars: [period, day]}
+- {name: no_target, cron: "0 7 * * *"}

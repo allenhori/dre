@@ -26,6 +26,8 @@ pub struct RunContext {
     pub profile: String,
     /// The source plugin type (`duckdb`, `databricks`, ...), for SQL that differs per database.
     pub source_type: String,
+    /// The schedule's name under `dre run --schedule`, else `None`.
+    pub schedule: Option<String>,
     pub date: NaiveDate,
 }
 
@@ -564,6 +566,7 @@ impl Object for Run {
             "target" => Value::from(c.target.clone()),
             "profile" => Value::from(c.profile.clone()),
             "source_type" => Value::from(c.source_type.clone()),
+            "schedule" => c.schedule.clone().map(Value::from).unwrap_or(Value::from(())),
             "date" => Value::from_object(RunDate(c.date)),
             _ => return None,
         })
@@ -747,6 +750,7 @@ mod tests {
                 target: "prod".into(),
                 profile: "warehouse".into(),
                 source_type: "duckdb".into(),
+                schedule: None,
                 date: NaiveDate::from_ymd_opt(2026, 1, 25).unwrap(),
             },
             vars: vars.as_object().cloned().unwrap_or_default(),
@@ -879,6 +883,7 @@ mod tests {
                 target: "t".into(),
                 profile: "p".into(),
                 source_type: "duckdb".into(),
+                schedule: None,
                 date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
             },
             vars: JsonMap::new(),

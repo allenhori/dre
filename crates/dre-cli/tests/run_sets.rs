@@ -241,7 +241,10 @@ fn an_ambiguous_selector_gives_the_same_error_as_validate() {
     let run = p.dre("run", &["monthly"]);
     run.failed();
     assert!(flat(&run.stdout).contains(&flat(expected)), "{}", run.stdout);
-    p.write("schedules.yml", "- select: monthly\n  cron: \"0 6 1 * *\"\n");
+    p.write(
+        "schedules.yml",
+        "- name: monthly_run\n  select: monthly\n  cron: \"0 6 1 * *\"\n",
+    );
     let v = p.dre("validate", &[]);
     v.failed();
     assert!(flat(&v.stdout).contains(&flat(expected)), "{}", v.stdout);

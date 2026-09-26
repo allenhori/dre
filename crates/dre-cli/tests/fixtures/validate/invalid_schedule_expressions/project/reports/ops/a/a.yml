@@ -1,2 +1,1 @@
 queries: [qa]
-schedule: {cron: "0 25 * * *"}

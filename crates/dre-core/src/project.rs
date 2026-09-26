@@ -51,6 +51,7 @@ const PROJECT_KEYS: &[&str] = &[
     "run_query_max_rows",
     "lookup_inline_max_rows",
     "dispatch",
+    "mask_secrets",
     "reports",
 ];
 const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars"];
@@ -91,6 +92,8 @@ pub struct Project {
     pub macros: Vec<PathBuf>,
     /// Macro packages, each called through its name (`{{ dre_utils.x() }}`).
     pub packages: Vec<Package>,
+    /// Mask `DRE_SECRET_*` values in logs and records (default true).
+    pub mask_secrets: bool,
     /// `dispatch:` search orders, by macro namespace.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub dispatch: DispatchOrder,
@@ -172,8 +175,9 @@ pub struct Binding {
     pub vars: JsonMap<String, Json>,
     pub queries: Vec<QueryEntry>,
     pub output: Output,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub schedule: Option<JsonMap<String, Json>>,
+    /// Names of every `schedules.yml` entry that runs this Binding.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub schedules: Vec<String>,
 }
 
 impl Binding {
@@ -261,6 +265,7 @@ impl PluginRequirement {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScheduleEntry {
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub select: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -268,6 +273,12 @@ pub struct ScheduleEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub set: Option<String>,
     pub schedule: JsonMap<String, Json>,
+    /// Layered into `var()` when run with `--schedule <name>`, above the Binding's own vars.
+    #[serde(skip_serializing_if = "JsonMap::is_empty")]
+    pub vars: JsonMap<String, Json>,
+    /// Line in its schedules.yml, for messages.
+    #[serde(skip)]
+    pub location: (PathBuf, Option<usize>),
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -317,7 +328,6 @@ struct FolderCfg {
     tags: Vec<String>,
     output: Option<Mapping>,
     profile: Option<(String, Option<usize>)>,
-    schedule: Option<Mapping>,
     vars: Option<Mapping>,
 }
 
@@ -555,6 +565,19 @@ impl Loader {
             },
         };
         let dispatch = self.parse_dispatch(yf, m.get("dispatch"));
+        let mask_secrets = match m.get("mask_secrets") {
+            None => true,
+            Some(Value::Bool(b)) => *b,
+            Some(_) => {
+                self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    yf.line_of("mask_secrets", None),
+                    "`mask_secrets` must be true or false",
+                );
+                true
+            }
+        };
         let lookup_inline_max_rows = match m.get("lookup_inline_max_rows") {
             None => DEFAULT_INLINE_MAX_ROWS,
             Some(v) => match v.as_u64() {
@@ -583,6 +606,7 @@ impl Loader {
             schedules: Vec::new(),
             macros: Vec::new(),
             packages: Vec::new(),
+            mask_secrets,
             dispatch,
             sql: BTreeMap::new(),
             lookups: BTreeMap::new(),
@@ -764,8 +788,8 @@ impl Loader {
                             None => bad(self, "a string"),
                         },
                         "schedule" => {
-                            let ctx = format!("folder `{}`", dotted(&path));
-                            cfg.schedule = self.check_schedule(v, &yf.display, kline, &ctx);
+                            let ctx = format!("folder `{}`: `+schedule`", dotted(&path));
+                            self.moved_to_schedules(&yf.display, kline, &ctx);
                         }
                         _ => match v.as_mapping() {
                             Some(s) => cfg.vars = Some(s.clone()),
@@ -857,7 +881,7 @@ impl Loader {
                 if !items.is_empty()
                     && items
                         .iter()
-                        .all(|i| i.get("select").is_some() || i.get("report").is_some()) =>
+                        .all(|i| ["name", "select", "report"].iter().any(|k| i.get(k).is_some())) =>
             {
                 schedules.push(yf.clone());
             }
@@ -1470,10 +1494,9 @@ impl Loader {
             }
         }
 
-        let mut schedule = layers.iter().rev().find_map(|l| l.schedule.clone());
-        if let Some(s) = key("schedule") {
+        if key("schedule").is_some() {
             let (f, l) = located("schedule").unwrap();
-            schedule = self.check_schedule(&s.value, &f, l, &format!("report `{name}`"));
+            self.moved_to_schedules(&f, l, &format!("report `{name}`: `schedule`"));
         }
 
         let default_set = match key("default_set") {
@@ -1485,7 +1508,6 @@ impl Loader {
             profile: base_profile,
             vars,
             output,
-            schedule,
         };
         let has_sets = key("sets").is_some();
         let report_base = self.silent_binding(&name, &base, &queries, &r.file.display);
@@ -1612,7 +1634,6 @@ impl Loader {
                 profile: base.profile.clone(),
                 vars: base.vars.clone(),
                 output: base.output.clone(),
-                schedule: base.schedule.clone(),
             };
             if let Some(reg) = registry {
                 if let Some(p) = &reg.profile {
@@ -1675,8 +1696,8 @@ impl Loader {
                         ),
                     }
                 }
-                if let Some(s) = m.get("schedule") {
-                    b.schedule = self.check_schedule(s, &yf.display, line, &ctx);
+                if m.contains_key("schedule") {
+                    self.moved_to_schedules(&yf.display, line, &format!("{ctx}: `schedule`"));
                 }
                 let listed: Vec<&str> = queries.iter().map(|q| q.query.as_str()).collect();
                 match (m.get("exclude"), m.get("queries")) {
@@ -1841,14 +1862,13 @@ impl Loader {
                 ),
             );
         }
-        let schedule = base.schedule.as_ref().map(yaml_map_to_json);
         Binding {
             set,
             profile: base.profile.clone(),
             vars: base.vars.clone(),
             queries: std::mem::take(&mut queries),
             output,
-            schedule,
+            schedules: Vec::new(),
         }
     }
 
@@ -2171,7 +2191,6 @@ impl Loader {
                 format!("folder config: {p}"),
             );
         }
-        let schedule = layers.iter().rev().find_map(|l| l.schedule.clone());
         self.diags.warning(
             "unmanaged-report",
             Some(path.to_path_buf()),
@@ -2192,7 +2211,6 @@ impl Loader {
             profile: profile.clone(),
             vars,
             output,
-            schedule,
         };
         if let Some(p) = &profile {
             used.source(p, None, None);
@@ -2248,42 +2266,21 @@ impl Loader {
 
     // -- schedules ----------------------------------------------------------------------------
 
-    fn check_schedule(&mut self, v: &Value, file: &Path, line: Option<usize>, ctx: &str) -> Option<Mapping> {
-        let Some(m) = v.as_mapping() else {
-            self.diags.error(
-                "invalid-schedule",
-                Some(file.to_path_buf()),
-                line,
-                format!("{ctx}: `schedule` must be a map"),
-            );
-            return None;
-        };
-        let mut ok = true;
-        for k in m.keys().filter_map(Value::as_str) {
-            if !schedule::SCHEDULE_KEYS.contains(&k) {
-                self.diags.error(
-                    "invalid-schedule",
-                    Some(file.to_path_buf()),
-                    line,
-                    format!("{ctx}: unknown schedule key `{k}`"),
-                );
-                ok = false;
-            }
-        }
-        for e in schedule::validate_block(m) {
-            self.diags.error(
-                "invalid-schedule",
-                Some(file.to_path_buf()),
-                line,
-                format!("{ctx}: {e}"),
-            );
-            ok = false;
-        }
-        ok.then(|| m.clone())
+    /// Schedules live only in schedules.yml (named, with vars); anywhere else is an error.
+    fn moved_to_schedules(&mut self, file: &Path, line: Option<usize>, ctx: &str) {
+        self.diags.error(
+            "schedule-moved",
+            Some(file.to_path_buf()),
+            line,
+            format!(
+                "{ctx} is no longer supported; declare schedules in schedules.yml as named entries (`name`, `report:`/`select:`, `cron`/`every`/`rrule`, optional `vars`)"
+            ),
+        );
     }
 
     fn parse_schedules(&mut self, files: &[Rc<YamlFile>], project: &Project) -> Vec<ScheduleEntry> {
         let mut out = Vec::new();
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
         for yf in files {
             let Some(items) = yf.value.as_sequence() else {
                 continue;
@@ -2294,10 +2291,63 @@ impl Loader {
                 let file = Some(yf.display.clone());
                 let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
                 let (select, report, set) = (s("select"), s("report"), s("set"));
+                let mut ok = true;
+                let name = match s("name") {
+                    Some(n) if is_identifier(&n) => {
+                        if let Some(prev) = seen.get(&n) {
+                            self.diags.error(
+                                "duplicate-schedule-name",
+                                file.clone(),
+                                line,
+                                format!("schedule `{n}` is already declared at {prev}; schedule names must be unique"),
+                            );
+                            ok = false;
+                        }
+                        seen.insert(
+                            n.clone(),
+                            format!("{}:{}", yf.display.display(), line.unwrap_or(0)),
+                        );
+                        n
+                    }
+                    Some(n) => {
+                        self.diags.error(
+                            "invalid-schedule",
+                            file.clone(),
+                            line,
+                            format!("schedule name `{n}` must be letters, digits and `_`, not starting with a digit"),
+                        );
+                        ok = false;
+                        n
+                    }
+                    None => {
+                        self.diags.error(
+                            "invalid-schedule",
+                            file.clone(),
+                            line,
+                            "every schedule needs a `name`",
+                        );
+                        ok = false;
+                        String::new()
+                    }
+                };
+                let vars = match m.get("vars") {
+                    None => JsonMap::new(),
+                    Some(Value::Mapping(v)) => yaml_map_to_json(v),
+                    Some(_) => {
+                        self.diags.error(
+                            "invalid-schedule",
+                            file.clone(),
+                            line,
+                            format!("schedule `{name}`: `vars` must be a map"),
+                        );
+                        ok = false;
+                        JsonMap::new()
+                    }
+                };
                 let mut sched = Mapping::new();
                 for (k, v) in m {
                     let Some(k) = k.as_str() else { continue };
-                    if ["select", "report", "set"].contains(&k) {
+                    if ["name", "select", "report", "set", "vars"].contains(&k) {
                         continue;
                     }
                     if !schedule::SCHEDULE_KEYS.contains(&k) {
@@ -2311,7 +2361,6 @@ impl Loader {
                     }
                     sched.insert(Value::String(k.to_string()), v.clone());
                 }
-                let mut ok = true;
                 for e in schedule::validate_block(&sched) {
                     self.diags.error("invalid-schedule", file.clone(), line, e);
                     ok = false;
@@ -2378,12 +2427,24 @@ impl Loader {
                         }
                     }
                 }
+                if select.is_none() && report.is_none() {
+                    self.diags.error(
+                        "invalid-schedule",
+                        file.clone(),
+                        line,
+                        format!("schedule `{name}` needs `report:` (optionally with `set:`) or `select:`"),
+                    );
+                    ok = false;
+                }
                 if ok {
                     out.push(ScheduleEntry {
+                        name,
                         select,
                         report,
                         set,
                         schedule: yaml_map_to_json(&sched),
+                        vars,
+                        location: (yf.display.clone(), line),
                     });
                 }
             }
@@ -2391,64 +2452,102 @@ impl Loader {
         out
     }
 
-    /// `schedules.yml` sits below report- and Binding-level schedules: fill only what's unset.
-    fn apply_schedules(&mut self, project: &mut Project) {
-        let entries = project.schedules.clone();
-        let matches: Vec<(usize, Vec<String>)> = entries
-            .iter()
-            .enumerate()
-            .map(|(i, e)| {
-                let names = match (&e.select, &e.report) {
-                    (Some(sel), _) => selector::resolve(project, sel)
-                        .map(|r| r.into_iter().map(|r| r.name.clone()).collect())
-                        .unwrap_or_default(),
-                    (_, Some(r)) => vec![r.clone()],
-                    _ => Vec::new(),
-                };
-                (i, names)
-            })
-            .collect();
-        for report in &mut project.reports {
-            for b in &mut report.bindings {
-                if b.schedule.is_some() {
+    /// Warn when two schedules of one Binding would deliver to the same path: each schedule's
+    /// paths are rendered with its vars and one fixed date. Paths that can't render offline (a
+    /// `run_query()`, a missing `env_var()`) are skipped.
+    fn check_schedule_paths(&mut self, project: &Project) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        for report in &project.reports {
+            for b in report.bindings.iter().filter(|b| b.schedules.len() > 1) {
+                let paths: Vec<&String> = b
+                    .output
+                    .destinations
+                    .iter()
+                    .filter_map(|d| d.path.as_ref())
+                    .collect();
+                if paths.is_empty() {
                     continue;
                 }
-                // Most specific first: report+set, then report, then selectors.
-                let tiers: [Tier; 3] = [
-                    Box::new(|e: &ScheduleEntry| {
-                        e.report.as_deref() == Some(&report.name) && e.set.is_some() && e.set == b.set
-                    }),
-                    Box::new(|e: &ScheduleEntry| {
-                        e.report.as_deref() == Some(&report.name) && e.set.is_none()
-                    }),
-                    Box::new(|e: &ScheduleEntry| e.select.is_some()),
-                ];
-                for tier in tiers {
-                    let hits: Vec<&ScheduleEntry> = matches
-                        .iter()
-                        .filter(|(i, names)| tier(&entries[*i]) && names.contains(&report.name))
-                        .map(|(i, _)| &entries[*i])
-                        .collect();
-                    if hits.len() > 1 {
-                        self.diags.error(
-                            "conflicting-declaration",
-                            None,
-                            None,
-                            format!(
-                                "report `{}`{} is scheduled by more than one schedules.yml entry at the same level",
-                                report.name,
-                                b.set.as_ref().map(|s| format!(", Set `{s}`,")).unwrap_or_default()
-                            ),
-                        );
-                        break;
+                let mut rendered: Vec<(&String, Vec<String>)> = Vec::new();
+                for name in &b.schedules {
+                    let Some(e) = project.schedules.iter().find(|e| &e.name == name) else {
+                        continue;
+                    };
+                    let mut vars = b.vars.clone();
+                    vars.extend(e.vars.clone());
+                    let Ok(r) = crate::render::Renderer::new(crate::render::RendererConfig {
+                        root: &project.root,
+                        macros: &project.macros,
+                        context: crate::render::RunContext {
+                            report: report.name.clone(),
+                            set: b.set.clone(),
+                            target: String::new(),
+                            profile: b.profile.clone().unwrap_or_default(),
+                            source_type: String::new(),
+                            schedule: Some(name.clone()),
+                            date,
+                        },
+                        vars,
+                        cli_vars: self.opts.vars.clone(),
+                        runner: None,
+                        run_query_max_rows: project.run_query_max_rows,
+                        sql: project.sql.clone(),
+                        lookups: project.lookups.clone(),
+                        lookup_inline_max_rows: project.lookup_inline_max_rows,
+                        packages: project.packages.clone(),
+                        project_name: project.name.clone(),
+                        dispatch: project.dispatch.clone(),
+                    }) else {
+                        continue;
+                    };
+                    let out: Result<Vec<String>, _> =
+                        paths.iter().map(|p| r.render(&report.file, p)).collect();
+                    if let Ok(out) = out {
+                        rendered.push((name, out));
                     }
-                    if let Some(e) = hits.first() {
-                        b.schedule = Some(e.schedule.clone());
-                        break;
+                }
+                for (i, (a, pa)) in rendered.iter().enumerate() {
+                    for (bn, pb) in &rendered[i + 1..] {
+                        if let Some(same) = pa.iter().find(|p| pb.contains(p)) {
+                            self.diags.warning(
+                                "schedule-path-clash",
+                                Some(report.file.clone()),
+                                None,
+                                format!(
+                                    "schedules `{a}` and `{bn}` both run report `{}`{} and deliver to `{same}`; the second overwrites the first — put a schedule var or `run.schedule` in the path",
+                                    report.name,
+                                    b.set.as_ref().map(|s| format!(", Set `{s}`,")).unwrap_or_default()
+                                ),
+                            );
+                        }
                     }
                 }
             }
         }
+    }
+
+    /// Attach every schedules.yml entry to the Bindings it targets: `report:` + `set:` one
+    /// Binding, `report:` alone all of that report's Bindings, `select:` all Bindings of every
+    /// report it matches. Several schedules per Binding is the point, not a conflict.
+    fn apply_schedules(&mut self, project: &mut Project) {
+        let entries = project.schedules.clone();
+        for e in &entries {
+            let reports: Vec<String> = match (&e.select, &e.report) {
+                (Some(sel), _) => selector::resolve(project, sel)
+                    .map(|r| r.into_iter().map(|r| r.name.clone()).collect())
+                    .unwrap_or_default(),
+                (_, Some(r)) => vec![r.clone()],
+                _ => Vec::new(),
+            };
+            for report in project.reports.iter_mut().filter(|r| reports.contains(&r.name)) {
+                for b in &mut report.bindings {
+                    if e.set.is_none() || e.set == b.set {
+                        b.schedules.push(e.name.clone());
+                    }
+                }
+            }
+        }
+        self.check_schedule_paths(project);
     }
 
     // -- profiles and plugins -----------------------------------------------------------------
@@ -2822,7 +2921,7 @@ impl Loader {
                 f.clone(),
                 Some(fixed_line.unwrap_or(line + line_offset)),
                 format!(
-                    "`{r}` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.date (.yyyymmdd, .ddmmyyyy, .yyyy, .mm, .dd), run.date_format(...)"
+                    "`{r}` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.source_type, run.schedule, run.date (.yyyymmdd, .ddmmyyyy, .yyyy, .mm, .dd), run.date_format(...)"
                 ),
             );
         }
@@ -2912,9 +3011,6 @@ pub fn template_sheets(path: &Path) -> Result<Vec<String>, String> {
     Ok(wb.sheet_names().to_vec())
 }
 
-/// One precedence tier of schedules.yml matching.
-type Tier<'a> = Box<dyn Fn(&ScheduleEntry) -> bool + 'a>;
-
 struct RawReport {
     name: String,
     file: Rc<YamlFile>,
@@ -2926,7 +3022,6 @@ struct BindingBase {
     profile: Option<String>,
     vars: JsonMap<String, Json>,
     output: Mapping,
-    schedule: Option<Mapping>,
 }
 
 /// Everything the project references, for profile and plugin checks.
@@ -3121,4 +3216,11 @@ pub fn yaml_map_to_json(m: &Mapping) -> JsonMap<String, Json> {
         Json::Object(o) => o,
         _ => JsonMap::new(),
     }
+}
+
+/// Letters, digits and `_`, not starting with a digit.
+fn is_identifier(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with(|c: char| c.is_ascii_digit())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
