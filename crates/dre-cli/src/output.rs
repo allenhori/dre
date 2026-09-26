@@ -134,6 +134,11 @@ impl Printer {
         }
     }
 
+    /// `     Verb  text`, the verb right-aligned in a 10-column gutter.
+    pub fn line(&self, tone: Tone, verb: &str, text: &str) {
+        self.inner.lock().unwrap().line(tone, verb, text, Level::Info);
+    }
+
     pub fn error(&self, msg: &str) {
         let mut i = self.inner.lock().unwrap();
         i.file_log("ERROR", msg);

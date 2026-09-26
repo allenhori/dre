@@ -1,4 +1,361 @@
+//! Filling a branded template authored in Excel.
+//!
+//! Single cells are written first, in template coordinates. Table blocks are then filled bottom
+//! to top per sheet, so inserting rows for one block never moves an anchor not yet filled.
+//!
+//! A table block owns one template row (its first data row). For `n` rows DRE inserts `n - 1`
+//! rows after it: content below shifts down, the reserved row's formatting is copied to each new
+//! row, and formulas whose range ends on the reserved row (a totals `SUM(C5:C5)`) are extended
+//! over the new rows. Ranges spanning the insertion point are adjusted by the insert itself.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::LazyLock;
+
+use arrow::array::{Array, AsArray, RecordBatch};
+use arrow::datatypes::{
+    DataType, Date32Type, Float64Type, Int64Type, TimeUnit, TimestampMicrosecondType, UInt64Type,
+};
+use arrow::util::display::{ArrayFormatter, FormatOptions};
 use dre_protocol::plugin::{Result, ResultSets, WriteRequest};
-pub fn fill(_req: &WriteRequest, _sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
-    Err("xlsx templates are not supported yet".into())
+use regex::Regex;
+use serde::Deserialize;
+use serde_json::Value;
+use umya_spreadsheet::{Workbook as Spreadsheet, Worksheet};
+
+use crate::EXCEL_MAX_ROWS;
+use crate::cells::{normalize, parse_cell};
+
+#[derive(Debug, Deserialize)]
+struct Binding {
+    sheet: String,
+    query: Option<String>,
+    result_index: Option<usize>,
+    anchor: Option<String>,
+    header: Option<bool>,
+    columns: Option<Vec<String>>,
+    cell: Option<String>,
+    value: Option<String>,
+    column: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Payload {
+    file: String,
+    #[serde(default)]
+    bindings: Vec<Binding>,
+    /// `"Sheet!B2"` → rendered value, for single-cell `value` bindings.
+    #[serde(default)]
+    values: HashMap<String, String>,
+}
+
+struct Collected {
+    query: String,
+    index: usize,
+    name: String,
+    names: Vec<String>,
+    batch: RecordBatch,
+}
+
+const EPOCH_OFFSET: f64 = 25_569.0;
+
+pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
+    let payload: Payload = serde_json::from_value(req.template.clone().unwrap_or(Value::Null))
+        .map_err(|e| format!("invalid template payload: {e}"))?;
+    let mut book = umya_spreadsheet::reader::xlsx::read(Path::new(&payload.file))
+        .map_err(|e| format!("can't open template {}: {e:?}", payload.file))?;
+
+    // Template filling needs every row in hand to know how many rows to insert.
+    let mut results = Vec::new();
+    while let Some(mut rs) = sets.next_set()? {
+        let mut batches = Vec::new();
+        while let Some(b) = rs.next_batch()? {
+            batches.push(normalize(&b)?);
+        }
+        let schema = match batches.first() {
+            Some(b) => b.schema(),
+            None => normalize(&RecordBatch::new_empty(rs.schema.clone()))?.schema(),
+        };
+        let batch = arrow::compute::concat_batches(&schema, &batches)?;
+        results.push(Collected {
+            query: rs.meta.query.clone(),
+            index: rs.meta.result_index,
+            name: rs.meta.name.clone(),
+            names: schema.fields().iter().map(|f| f.name().clone()).collect(),
+            batch,
+        });
+    }
+    let find = |b: &Binding| -> Result<usize> {
+        let q = b.query.as_deref().unwrap_or_default();
+        let idx = b.result_index.unwrap_or(1);
+        results
+            .iter()
+            .position(|r| r.query == q && r.index == idx)
+            .ok_or_else(|| format!("template binding on `{}` uses query `{q}` result {idx}, which didn't return a result set", b.sheet).into())
+    };
+    let mut bound = vec![false; results.len()];
+
+    // 1. Single cells, in template coordinates.
+    for b in payload.bindings.iter().filter(|b| b.cell.is_some()) {
+        let cell = b.cell.as_deref().unwrap();
+        let ws = sheet(&mut book, &b.sheet)?;
+        let (r, c) = parse_cell(cell).ok_or_else(|| format!("invalid cell `{cell}`"))?;
+        let coord = (u32::from(c) + 1, r + 1);
+        if b.value.is_some() {
+            let v = payload
+                .values
+                .get(&format!("{}!{cell}", b.sheet))
+                .cloned()
+                .unwrap_or_default();
+            ws.cell_mut(coord).set_value(v);
+        } else {
+            let i = find(b)?;
+            bound[i] = true;
+            let res = &results[i];
+            let col = b.column.as_deref().unwrap_or_default();
+            let ci = res.names.iter().position(|n| n == col).ok_or_else(|| {
+                format!(
+                    "`{}` has no column `{col}` (it has: {})",
+                    res.query,
+                    res.names.join(", ")
+                )
+            })?;
+            match res.batch.num_rows() {
+                1 => {}
+                n => {
+                    return Err(format!(
+                        "the single-cell binding {}!{cell} reads one row of `{}`, but it returned {n} rows",
+                        b.sheet, res.query
+                    )
+                    .into());
+                }
+            }
+            write_value(ws, coord, res.batch.column(ci).as_ref(), 0);
+        }
+    }
+
+    // 2. Table blocks, bottom to top within each sheet.
+    let mut blocks: Vec<(&Binding, u32, u16)> = Vec::new();
+    for b in payload.bindings.iter().filter(|b| b.cell.is_none()) {
+        let a = b.anchor.as_deref().unwrap_or("A1");
+        let (r, c) = parse_cell(a).ok_or_else(|| format!("invalid anchor `{a}`"))?;
+        blocks.push((b, r, c));
+    }
+    blocks.sort_by(|x, y| (x.0.sheet.as_str(), y.1).cmp(&(y.0.sheet.as_str(), x.1)));
+    for (b, r0, c0) in blocks {
+        let i = find(b)?;
+        bound[i] = true;
+        fill_block(&mut book, b, r0, c0, &results[i])?;
+    }
+
+    // 3. Result sets not bound anywhere become plain sheets after the template's own.
+    for (res, _) in results.iter().zip(&bound).filter(|(_, b)| !**b) {
+        let ws = book
+            .new_sheet(&res.name)
+            .map_err(|e| format!("can't add sheet `{}`: {e}", res.name))?;
+        for (c, n) in res.names.iter().enumerate() {
+            let cell = ws.cell_mut((c as u32 + 1, 1));
+            cell.set_value(n.clone());
+            cell.style_mut().font_mut().set_bold(true);
+        }
+        for row in 0..res.batch.num_rows() {
+            for c in 0..res.names.len() {
+                write_value(
+                    ws,
+                    (c as u32 + 1, row as u32 + 2),
+                    res.batch.column(c).as_ref(),
+                    row,
+                );
+            }
+        }
+    }
+
+    umya_spreadsheet::writer::xlsx::write(&book, Path::new(&req.path))
+        .map_err(|e| format!("can't save {}: {e:?}", req.path))?;
+    Ok(vec![req.path.clone()])
+}
+
+fn sheet<'a>(book: &'a mut Spreadsheet, name: &str) -> Result<&'a mut Worksheet> {
+    let names: Vec<String> = book
+        .sheet_collection()
+        .iter()
+        .map(|s| s.name().to_string())
+        .collect();
+    book.sheet_by_name_mut(name).map_err(|_| {
+        format!(
+            "the template has no sheet `{name}` (sheets: {})",
+            names.join(", ")
+        )
+        .into()
+    })
+}
+
+fn fill_block(book: &mut Spreadsheet, b: &Binding, r0: u32, c0: u16, res: &Collected) -> Result<()> {
+    let header = b.header.unwrap_or(true);
+    let cols: Vec<usize> = match &b.columns {
+        Some(list) => list
+            .iter()
+            .map(|c| {
+                res.names.iter().position(|n| n == c).ok_or_else(|| {
+                    format!(
+                        "template block on `{}`: `{}` has no column `{c}` (it has: {})",
+                        b.sheet,
+                        res.query,
+                        res.names.join(", ")
+                    )
+                    .into()
+                })
+            })
+            .collect::<Result<_>>()?,
+        None => (0..res.names.len()).collect(),
+    };
+    let n = res.batch.num_rows() as u32;
+    // 1-based rows from here on.
+    let first = r0 + 1 + u32::from(header);
+    if n > 0 && first + n - 1 > EXCEL_MAX_ROWS {
+        return Err(format!(
+            "template block on `{}` at {}: {n} rows don't fit on the sheet (template blocks never split)",
+            b.sheet,
+            b.anchor.as_deref().unwrap_or("A1")
+        )
+        .into());
+    }
+    let sheet_name = b.sheet.clone();
+    {
+        let ws = sheet(book, &b.sheet)?;
+        if n > 1 {
+            ws.insert_new_row(first + 1, n - 1);
+            // Copy the reserved row's formatting (every styled cell in it) onto the new rows.
+            let styled: Vec<(u32, umya_spreadsheet::Style)> = ws
+                .collection_by_row(first)
+                .into_iter()
+                .map(|c| (c.coordinate().col_num(), c.style().clone()))
+                .collect();
+            for row in first + 1..first + n {
+                for (col, style) in &styled {
+                    ws.cell_mut((*col, row)).set_style(style.clone());
+                }
+            }
+        }
+        if header {
+            for (k, &ci) in cols.iter().enumerate() {
+                ws.cell_mut((u32::from(c0) + 1 + k as u32, r0 + 1))
+                    .set_value(res.names[ci].clone());
+            }
+        }
+        if n == 0 {
+            for k in 0..cols.len() {
+                ws.cell_mut((u32::from(c0) + 1 + k as u32, first))
+                    .set_value(String::new());
+            }
+        }
+        for row in 0..n as usize {
+            for (k, &ci) in cols.iter().enumerate() {
+                write_value(
+                    ws,
+                    (u32::from(c0) + 1 + k as u32, first + row as u32),
+                    res.batch.column(ci).as_ref(),
+                    row,
+                );
+            }
+        }
+    }
+    if n > 1 {
+        extend_formulas(book, &sheet_name, first, first + n - 1);
+    }
+    Ok(())
+}
+
+static RANGE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:(?P<sheet>'(?:[^']|'')+'|[A-Za-z_][\w.]*)!)?(?P<c1>\$?[A-Z]{1,3})(?P<a1>\$?)(?P<r1>\d+):(?P<c2>\$?[A-Z]{1,3})(?P<a2>\$?)(?P<r2>\d+)").unwrap()
+});
+
+/// Extend every range ending on the block's reserved row `reserved` (and starting at or above
+/// it) down to `last`, in formulas on the block's sheet and in other sheets referring to it.
+fn extend_formulas(book: &mut Spreadsheet, block_sheet: &str, reserved: u32, last: u32) {
+    for ws in book.sheet_collection_mut() {
+        let same = ws.name() == block_sheet;
+        let cells: Vec<(u32, u32, String)> = ws
+            .cells()
+            .into_iter()
+            .filter(|c| !c.formula().is_empty())
+            .map(|c| {
+                (
+                    c.coordinate().col_num(),
+                    c.coordinate().row_num(),
+                    c.formula().to_string(),
+                )
+            })
+            .collect();
+        for (col, row, f) in cells {
+            let new = RANGE.replace_all(&f, |caps: &regex::Captures<'_>| {
+                let whole = caps[0].to_string();
+                let refers = match caps.name("sheet") {
+                    Some(s) => s.as_str().trim_matches('\'').replace("''", "'") == block_sheet,
+                    None => same,
+                };
+                let (r1, r2): (u32, u32) = (caps["r1"].parse().unwrap_or(0), caps["r2"].parse().unwrap_or(0));
+                if !refers || r2 != reserved || r1 > reserved {
+                    return whole;
+                }
+                let prefix = caps
+                    .name("sheet")
+                    .map(|s| format!("{}!", s.as_str()))
+                    .unwrap_or_default();
+                format!(
+                    "{prefix}{}{}{r1}:{}{}{last}",
+                    &caps["c1"], &caps["a1"], &caps["c2"], &caps["a2"]
+                )
+            });
+            if new != f {
+                ws.cell_mut((col, row)).set_formula(new.to_string());
+            }
+        }
+    }
+}
+
+fn write_value(ws: &mut Worksheet, coord: (u32, u32), a: &dyn Array, i: usize) {
+    let cell = ws.cell_mut(coord);
+    if a.is_null(i) {
+        cell.set_value(String::new());
+        return;
+    }
+    let date_fmt = |cell: &mut umya_spreadsheet::Cell, fmt: &str| {
+        let nf = cell.style_mut().number_format_mut();
+        if nf.format_code() == "General" {
+            nf.set_format_code(fmt);
+        }
+    };
+    match a.data_type() {
+        DataType::Float64 => {
+            cell.set_value_number(a.as_primitive::<Float64Type>().value(i));
+        }
+        DataType::Int64 => {
+            cell.set_value_number(a.as_primitive::<Int64Type>().value(i) as f64);
+        }
+        DataType::UInt64 => {
+            cell.set_value_number(a.as_primitive::<UInt64Type>().value(i) as f64);
+        }
+        DataType::Boolean => {
+            cell.set_value_bool(a.as_boolean().value(i));
+        }
+        DataType::Date32 => {
+            cell.set_value_number(a.as_primitive::<Date32Type>().value(i) as f64 + EPOCH_OFFSET);
+            date_fmt(cell, "yyyy-mm-dd");
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, _) => {
+            let us = a.as_primitive::<TimestampMicrosecondType>().value(i) as f64;
+            cell.set_value_number(us / 86_400_000_000.0 + EPOCH_OFFSET);
+            date_fmt(cell, "yyyy-mm-dd hh:mm:ss");
+        }
+        DataType::Utf8 => {
+            cell.set_value(a.as_string::<i32>().value(i).to_string());
+        }
+        _ => {
+            let v = ArrayFormatter::try_new(a, &FormatOptions::default())
+                .map(|f| f.value(i).to_string())
+                .unwrap_or_default();
+            cell.set_value(v);
+        }
+    }
 }
