@@ -59,6 +59,12 @@ pub enum Request {
         #[serde(default)]
         options: Map<String, Value>,
     },
+    /// Source: load rows into a temporary table on the session, named after `name`. Followed by
+    /// Arrow frames (at least one, carrying the schema) and a `result_set_end`. Replies `loaded`.
+    /// Only sent to plugins advertising `load`.
+    Load {
+        name: String,
+    },
     /// End the conversation; the plugin exits 0.
     Close {},
 }
@@ -99,6 +105,14 @@ pub enum Response {
     },
     Delivered {
         location: String,
+    },
+    /// `relation` is what SQL uses to read the loaded rows. `warning`, when set, is shown to the
+    /// user (e.g. the database has no bulk path, so a load this size is slow).
+    Loaded {
+        relation: String,
+        rows: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        warning: Option<String>,
     },
     Error {
         message: String,

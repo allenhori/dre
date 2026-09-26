@@ -16,10 +16,11 @@ use arrow::ipc::writer::FileWriter;
 use chrono::NaiveDate;
 use dre_protocol::host::{Execution, LogSink, PluginProcess};
 use dre_protocol::msg::{DeliveryFile, ResultSetMeta};
-use dre_protocol::{CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
+use dre_protocol::{CAP_LOAD, CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as Json, json};
 
+use crate::lookups::Table;
 use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Role};
 use crate::project::{Binding, PluginKind, Project, QueryEntry, Report, TARGET_DIR, TabName};
 use crate::render::{QueryRows, QueryRunner, RenderError, Renderer, RendererConfig, RunContext};
@@ -393,6 +394,8 @@ impl<'a> BindingRun<'a> {
             runner: Some(Arc::new(SessionRunner(session.clone()))),
             run_query_max_rows: self.project.run_query_max_rows,
             sql: self.project.sql.clone(),
+            lookups: self.project.lookups.clone(),
+            lookup_inline_max_rows: self.project.lookup_inline_max_rows,
         })
         .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.compiled_dir).map_err(|e| e.to_string())?;
@@ -421,6 +424,9 @@ impl<'a> BindingRun<'a> {
             }
         }
         self.dests = self.render_destinations(&renderer)?;
+        for w in renderer.take_warnings() {
+            self.ui.warn(&w);
+        }
 
         // 3. Unmanaged: every rendered statement must only read (or create temp objects).
         if !self.report.managed {
@@ -433,7 +439,8 @@ impl<'a> BindingRun<'a> {
                     dre_protocol::util::summarize(&bad.text, 60)
                 ));
             }
-            let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate);
+            let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
+                || session.lock().unwrap().loaded;
             session.lock().unwrap().want_read_only(!creates_temp);
         }
 
@@ -795,6 +802,8 @@ impl<'a> BindingRun<'a> {
             runner: None,
             run_query_max_rows: self.project.run_query_max_rows,
             sql: self.project.sql.clone(),
+            lookups: self.project.lookups.clone(),
+            lookup_inline_max_rows: self.project.lookup_inline_max_rows,
         })
         .map_err(|e| e.to_string())?;
         let mut values = JsonMap::new();
@@ -1179,6 +1188,8 @@ struct Session {
     /// Unmanaged reports run read-only unless they create temp objects.
     unmanaged: bool,
     read_only: bool,
+    /// A lookup was loaded into a temp table, so the session must stay open as it is.
+    loaded: bool,
     proc_: Option<PluginProcess>,
 }
 
@@ -1197,6 +1208,7 @@ impl Session {
             log,
             unmanaged,
             read_only: unmanaged,
+            loaded: false,
             proc_: None,
         }
     }
@@ -1272,6 +1284,20 @@ impl QueryRunner for SessionRunner {
             out.columns = schema.fields().iter().map(|f| f.name().clone()).collect();
         }
         Ok(out)
+    }
+
+    fn load(&self, name: &str, table: &Table) -> Result<Option<(String, Option<String>)>, String> {
+        let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
+        // A temp table is allowed even in an unmanaged report; it needs a writable session.
+        s.want_read_only(false);
+        if !s.get()?.has(CAP_LOAD) {
+            return Ok(None);
+        }
+        let batch = table.to_batch()?;
+        let schema = batch.schema();
+        let r = s.get()?.load(name, &schema, [batch]).map_err(|e| e.to_string())?;
+        s.loaded = true;
+        Ok(Some(r))
     }
 }
 

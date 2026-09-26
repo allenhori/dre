@@ -13,19 +13,22 @@
 //! (`amount::numeric(18,2)`) for a typed column. Other types need a cast, e.g. `::text`.
 
 use std::error::Error as StdError;
+use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
+use arrow::array::Array;
 use arrow::array::{
     ArrayBuilder, ArrayRef, BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder, Float32Builder,
     Float64Builder, Int16Builder, Int32Builder, Int64Builder, RecordBatch, StringBuilder,
     Time64MicrosecondBuilder, TimestampMicrosecondBuilder,
 };
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use arrow::util::display::{ArrayFormatter, FormatOptions};
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 use dre_protocol::msg::ConnectionField;
-use dre_protocol::plugin::{About, Result, ResultSink, Source, conn_str, serve_source};
-use dre_protocol::{CAP_CHECK, CAP_READ_ONLY, CAP_SESSIONS};
+use dre_protocol::plugin::{About, Loaded, Result, ResultSet, ResultSink, Source, conn_str, serve_source};
+use dre_protocol::{CAP_CHECK, CAP_LOAD, CAP_READ_ONLY, CAP_SESSIONS};
 use postgres::fallible_iterator::FallibleIterator;
 use postgres::types::{FromSql, Kind, Type};
 use postgres::{Client, Column, Config, NoTls};
@@ -440,6 +443,67 @@ impl Source for Postgres {
         Ok(())
     }
 
+    /// Bulk load with `COPY ... FROM STDIN` into a temp table.
+    fn load(&mut self, name: &str, data: &mut ResultSet<'_>) -> Result<Loaded> {
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(format!("`{name}` isn't a valid table name").into());
+        }
+        let table = format!("dre_lookup_{name}");
+        let mut columns = Vec::new();
+        for f in data.schema.fields() {
+            let t = match f.data_type() {
+                DataType::Utf8 => "text",
+                DataType::Int64 => "bigint",
+                DataType::Float64 => "double precision",
+                DataType::Boolean => "boolean",
+                DataType::Date32 => "date",
+                other => return Err(format!("can't load a column of type {other}").into()),
+            };
+            columns.push(format!("{} {t}", quote_ident(f.name())));
+        }
+        let client = self.client()?;
+        client
+            .batch_execute(&format!(
+                "drop table if exists pg_temp.{table}; create temp table {table} ({})",
+                columns.join(", ")
+            ))
+            .map_err(|e| describe(&e))?;
+        let mut w = client
+            .copy_in(&format!("copy {table} from stdin (format csv)"))
+            .map_err(|e| describe(&e))?;
+        let opts = FormatOptions::default();
+        let mut line = String::new();
+        while let Some(batch) = data.next_batch()? {
+            let cols: Vec<ArrayFormatter<'_>> = batch
+                .columns()
+                .iter()
+                .map(|c| ArrayFormatter::try_new(c.as_ref(), &opts))
+                .collect::<std::result::Result<_, _>>()?;
+            for row in 0..batch.num_rows() {
+                line.clear();
+                for (i, (c, f)) in batch.columns().iter().zip(&cols).enumerate() {
+                    if i > 0 {
+                        line.push(',');
+                    }
+                    // Unquoted empty is NULL in CSV mode; every value is quoted.
+                    if !c.is_null(row) {
+                        line.push('"');
+                        line.push_str(&f.value(row).to_string().replace('"', "\"\""));
+                        line.push('"');
+                    }
+                }
+                line.push('\n');
+                w.write_all(line.as_bytes())?;
+            }
+        }
+        let rows = w.finish().map_err(|e| describe(&e))?;
+        Ok(Loaded {
+            relation: table,
+            rows,
+            warning: None,
+        })
+    }
+
     fn execute(&mut self, sql: &str, row_limit: Option<u64>, out: &mut dyn ResultSink) -> Result<()> {
         let client = self.client()?;
         let stmt = client.prepare(sql).map_err(|e| describe(&e))?;
@@ -531,6 +595,7 @@ fn main() {
         CAP_SESSIONS,
         CAP_READ_ONLY,
         CAP_CHECK,
+        CAP_LOAD,
     ]);
     serve_source(about, Postgres::default())
 }

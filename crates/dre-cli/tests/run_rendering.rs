@@ -283,7 +283,7 @@ fn ref_problems_are_reported() {
     ]);
     p.dre("validate", &[])
         .failed()
-        .says("reports/ops/u/u1.sql:1: `ref('nope')`: there's no `nope.sql` under reports/")
+        .says("reports/ops/u/u1.sql:1: `ref('nope')`: there's no `nope.sql` under reports/ and no lookup `nope` under lookups/")
         .says("reports/shared/b.sql:1: `ref()` cycle: a → b → a");
 }
 

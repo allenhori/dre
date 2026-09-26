@@ -25,8 +25,10 @@ use arrow::array::{
 };
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use dre_protocol::msg::ConnectionField;
-use dre_protocol::plugin::{About, Result, ResultSink, Source, conn_required, conn_str, serve_source};
-use dre_protocol::{CAP_CHECK, CAP_SESSIONS};
+use dre_protocol::plugin::{
+    About, Loaded, Result, ResultSet, ResultSink, Source, conn_required, conn_str, serve_source,
+};
+use dre_protocol::{CAP_CHECK, CAP_LOAD, CAP_SESSIONS};
 use serde_json::{Map, Value};
 use thrift::{CALL, EXCEPTION, Reader, Struct, T_STRING, V, message, s};
 
@@ -445,6 +447,64 @@ fn quote(ident: &str) -> String {
     format!("`{}`", ident.replace('`', "``"))
 }
 
+/// A temporary view holding `batches`, as one `VALUES` statement. A SQL warehouse connection has
+/// no bulk path, so this is the only way in; column types are cast explicitly so an all-NULL
+/// column still gets its type.
+pub fn temp_view_sql(view: &str, schema: &Schema, batches: &[RecordBatch]) -> Result<String> {
+    let mut casts = Vec::new();
+    let mut names = Vec::new();
+    for f in schema.fields() {
+        let t = match f.data_type() {
+            DataType::Utf8 => "STRING",
+            DataType::Int64 => "BIGINT",
+            DataType::Float64 => "DOUBLE",
+            DataType::Boolean => "BOOLEAN",
+            DataType::Date32 => "DATE",
+            other => return Err(format!("can't load a column of type {other}").into()),
+        };
+        casts.push(format!("CAST({n} AS {t}) AS {n}", n = quote(f.name())));
+        names.push(quote(f.name()));
+    }
+    let opts = arrow::util::display::FormatOptions::default();
+    let mut rows = Vec::new();
+    for b in batches {
+        let fmts: Vec<_> = b
+            .columns()
+            .iter()
+            .map(|c| arrow::util::display::ArrayFormatter::try_new(c.as_ref(), &opts))
+            .collect::<std::result::Result<_, _>>()?;
+        for r in 0..b.num_rows() {
+            let vals: Vec<String> = b
+                .columns()
+                .iter()
+                .zip(&fmts)
+                .map(|(c, f)| {
+                    if c.is_null(r) {
+                        return "NULL".to_string();
+                    }
+                    let v = f.value(r).to_string();
+                    match c.data_type() {
+                        DataType::Utf8 => format!("'{}'", v.replace('\\', "\\\\").replace('\'', "\\'")),
+                        DataType::Date32 => format!("DATE'{v}'"),
+                        _ => v,
+                    }
+                })
+                .collect();
+            rows.push(format!("({})", vals.join(", ")));
+        }
+    }
+    let from = if rows.is_empty() {
+        let nulls = vec!["NULL"; names.len()].join(", ");
+        format!("VALUES ({nulls}) AS t({}) WHERE 1 = 0", names.join(", "))
+    } else {
+        format!("VALUES\n  {}\nAS t({})", rows.join(",\n  "), names.join(", "))
+    };
+    Ok(format!(
+        "CREATE OR REPLACE TEMPORARY VIEW {view} AS SELECT {} FROM {from}",
+        casts.join(", ")
+    ))
+}
+
 impl Databricks {
     fn conn(&mut self) -> Result<&mut Hs2> {
         self.conn.as_mut().ok_or_else(|| "no open session".into())
@@ -542,6 +602,30 @@ impl Source for Databricks {
         Ok(())
     }
 
+    fn load(&mut self, name: &str, data: &mut ResultSet<'_>) -> Result<Loaded> {
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(format!("`{name}` isn't a valid view name").into());
+        }
+        let view = format!("dre_lookup_{name}");
+        let schema = data.schema.clone();
+        let mut batches = Vec::new();
+        while let Some(b) = data.next_batch()? {
+            batches.push(b);
+        }
+        let rows: u64 = batches.iter().map(|b| b.num_rows() as u64).sum();
+        let sql = temp_view_sql(&view, &schema, &batches)?;
+        let h = self.conn()?;
+        let op = h.execute(&sql)?;
+        h.close_op(&op)?;
+        Ok(Loaded {
+            relation: view,
+            rows,
+            warning: Some(format!(
+                "Databricks has no bulk load over a SQL warehouse connection, so {rows} rows were sent as one SQL statement into a temporary view. Data this size probably belongs in a table in Databricks"
+            )),
+        })
+    }
+
     fn check(&mut self, sql: &str) -> Result<()> {
         let h = self.conn()?;
         let op = h.execute(&format!("EXPLAIN {sql}"))?;
@@ -585,6 +669,45 @@ impl Source for Databricks {
 }
 
 pub fn serve() -> ! {
-    let about = About::new("databricks", env!("CARGO_PKG_VERSION")).capabilities(&[CAP_SESSIONS, CAP_CHECK]);
+    let about = About::new("databricks", env!("CARGO_PKG_VERSION")).capabilities(&[
+        CAP_SESSIONS,
+        CAP_CHECK,
+        CAP_LOAD,
+    ]);
     serve_source(about, Databricks::default())
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+    use arrow::array::{Date32Array, Int64Array, StringArray};
+
+    #[test]
+    fn temp_view_sql_escapes_for_spark_and_casts_every_column() {
+        let schema = Schema::new(vec![
+            Field::new("code", DataType::Utf8, true),
+            Field::new("n", DataType::Int64, true),
+            Field::new("d", DataType::Date32, true),
+        ]);
+        let b = RecordBatch::try_new(
+            Arc::new(schema.clone()),
+            vec![
+                Arc::new(StringArray::from(vec![Some("O'Brien \\ Co"), None])),
+                Arc::new(Int64Array::from(vec![Some(1), None])),
+                Arc::new(Date32Array::from(vec![Some(20454), None])),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            temp_view_sql("dre_lookup_x", &schema, &[b]).unwrap(),
+            "CREATE OR REPLACE TEMPORARY VIEW dre_lookup_x AS SELECT CAST(`code` AS STRING) AS `code`, \
+             CAST(`n` AS BIGINT) AS `n`, CAST(`d` AS DATE) AS `d` FROM VALUES\n  \
+             ('O\\'Brien \\\\ Co', 1, DATE'2026-01-01'),\n  (NULL, NULL, NULL)\nAS t(`code`, `n`, `d`)"
+        );
+        assert!(
+            temp_view_sql("v", &schema, &[])
+                .unwrap()
+                .ends_with("VALUES (NULL, NULL, NULL) AS t(`code`, `n`, `d`) WHERE 1 = 0")
+        );
+    }
 }

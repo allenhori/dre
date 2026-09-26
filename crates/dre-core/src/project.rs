@@ -13,6 +13,7 @@ use serde_json::{Map as JsonMap, Value as Json};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::diag::Diagnostics;
+use crate::lookups::{self, DEFAULT_INLINE_MAX_ROWS, LOOKUPS_DIR, Lookup};
 use crate::profiles::{LOCAL_TYPE, Profiles, Role};
 use crate::yaml::YamlFile;
 use crate::{constraints, options, preflight, schedule, selector, sqlsplit};
@@ -42,6 +43,7 @@ const PROJECT_KEYS: &[&str] = &[
     "default_set",
     "vars",
     "run_query_max_rows",
+    "lookup_inline_max_rows",
     "reports",
 ];
 const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars"];
@@ -83,6 +85,11 @@ pub struct Project {
     /// Every uniquely named `.sql` file under `reports/`, by basename: what `ref()` resolves.
     #[serde(skip)]
     pub sql: BTreeMap<String, PathBuf>,
+    /// Lookups under `lookups/`, which `ref()` also resolves.
+    #[serde(skip)]
+    pub lookups: BTreeMap<String, Lookup>,
+    /// A lookup with more rows than this is loaded into a temp table rather than inlined.
+    pub lookup_inline_max_rows: u64,
     /// Every folder under `reports/`, as path segments.
     #[serde(skip)]
     pub folders: Vec<Vec<String>>,
@@ -307,6 +314,8 @@ struct Discovered {
     /// `.sql` under `reports/`, relative paths.
     sql: Vec<PathBuf>,
     macros: Vec<PathBuf>,
+    /// Files under `lookups/`, relative paths.
+    lookups: Vec<PathBuf>,
     folders: Vec<Vec<String>>,
 }
 
@@ -400,8 +409,25 @@ impl Loader {
             .flatten()
             .filter_map(entry_name)
             .collect();
+        project.lookups = lookups::discover(&self.root, &found.lookups, &mut self.diags);
+        for (name, l) in &project.lookups {
+            if let Some(sql) = sql_index.get(name) {
+                self.diags.error(
+                    "duplicate-ref-name",
+                    Some(l.file.clone()),
+                    None,
+                    format!(
+                        "lookup `{name}` has the same name as {}; `ref()` names must be unique",
+                        sql[0].display()
+                    ),
+                );
+            }
+            if let Err(e) = lookups::read(&self.root, l) {
+                self.diags.error("invalid-lookup", Some(l.file.clone()), None, e);
+            }
+        }
         // A file used through `ref()` is shared SQL, not an unmanaged report.
-        referenced.extend(self.check_refs(&found.sql, &found.macros, &sql_index));
+        referenced.extend(self.check_refs(&found.sql, &found.macros, &sql_index, &project.lookups));
         let mut reports = self.merge_reports(fragments);
 
         let mut built = Vec::new();
@@ -513,6 +539,21 @@ impl Loader {
                 }
             },
         };
+        let lookup_inline_max_rows = match m.get("lookup_inline_max_rows") {
+            None => DEFAULT_INLINE_MAX_ROWS,
+            Some(v) => match v.as_u64() {
+                Some(n) => n,
+                _ => {
+                    self.diags.error(
+                        "invalid-field",
+                        file.clone(),
+                        yf.line_of("lookup_inline_max_rows", None),
+                        "`lookup_inline_max_rows` must be a whole number",
+                    );
+                    DEFAULT_INLINE_MAX_ROWS
+                }
+            },
+        };
         Some(Project {
             name: name?,
             root: self.root.clone(),
@@ -526,6 +567,8 @@ impl Loader {
             schedules: Vec::new(),
             macros: Vec::new(),
             sql: BTreeMap::new(),
+            lookups: BTreeMap::new(),
+            lookup_inline_max_rows,
             folders: Vec::new(),
             profiles: Profiles::default(),
         })
@@ -664,6 +707,7 @@ impl Loader {
             yaml: Vec::new(),
             sql: Vec::new(),
             macros: Vec::new(),
+            lookups: Vec::new(),
             folders: Vec::new(),
         };
         let walker = walkdir::WalkDir::new(&self.root)
@@ -683,6 +727,10 @@ impl Loader {
                 continue;
             }
             let ext = e.path().extension().and_then(|x| x.to_str()).unwrap_or("");
+            if rel.starts_with(LOOKUPS_DIR) {
+                d.lookups.push(rel);
+                continue;
+            }
             match ext {
                 "yml" | "yaml" if rel != Path::new(PROJECT_FILE) => d.yaml.push(e.path().to_path_buf()),
                 "sql" if rel.starts_with(MACROS_DIR) => d.macros.push(rel),
@@ -850,6 +898,7 @@ impl Loader {
         sql: &[PathBuf],
         macros: &[PathBuf],
         index: &BTreeMap<String, Vec<PathBuf>>,
+        lookups: &BTreeMap<String, Lookup>,
     ) -> BTreeSet<String> {
         let mut names = BTreeSet::new();
         // name → the names its file refs, for cycle detection.
@@ -866,12 +915,12 @@ impl Loader {
                         graph.entry(stem).or_default().push((name.clone(), line));
                     }
                     names.insert(name);
-                } else {
+                } else if !lookups.contains_key(&name) {
                     self.diags.error(
                         "unknown-ref",
                         Some(file.clone()),
                         Some(line),
-                        format!("`ref('{name}')`: there's no `{name}.sql` under reports/"),
+                        format!("`ref('{name}')`: there's no `{name}.sql` under reports/ and no lookup `{name}` under lookups/"),
                     );
                 }
             }

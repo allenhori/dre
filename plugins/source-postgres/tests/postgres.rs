@@ -264,3 +264,44 @@ fn numeric_scales_outside_arrow_decimals_come_back_as_exact_text() {
         "0.00123"
     );
 }
+
+#[test]
+fn load_copies_rows_into_a_temp_table() {
+    needs_server!();
+    use arrow::array::{BooleanArray, Date32Array, Float64Array, Int64Array, StringArray};
+    use arrow::datatypes::{Field, Schema};
+    let mut p = open(false, json!({}));
+    assert!(p.has(dre_protocol::CAP_LOAD));
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("code", DataType::Utf8, true),
+        Field::new("n", DataType::Int64, true),
+        Field::new("x", DataType::Float64, true),
+        Field::new("ok", DataType::Boolean, true),
+        Field::new("d", DataType::Date32, true),
+    ]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(StringArray::from(vec![Some("a \"quoted\", value"), None])),
+            Arc::new(Int64Array::from(vec![Some(1), None])),
+            Arc::new(Float64Array::from(vec![Some(2.5), None])),
+            Arc::new(BooleanArray::from(vec![Some(true), None])),
+            Arc::new(Date32Array::from(vec![Some(20454), None])),
+        ],
+    )
+    .unwrap();
+    // Twice: a second load of the same name replaces the first.
+    for _ in 0..2 {
+        let (relation, warning) = p.load("things", &schema, [batch.clone()]).unwrap();
+        assert_eq!((relation.as_str(), warning), ("dre_lookup_things", None));
+    }
+    let (_, b) = collect(
+        &mut p,
+        "select code, n, x, ok, d::text as d, (code is null) as code_null from dre_lookup_things order by n nulls last",
+        None,
+    );
+    assert_eq!(b[0].num_rows(), 2);
+    assert_eq!(b[0].column(0).as_string::<i32>().value(0), "a \"quoted\", value");
+    assert_eq!(b[0].column(4).as_string::<i32>().value(0), "2026-01-01");
+    assert!(b[0].column(5).as_boolean().value(1));
+}

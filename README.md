@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="DRE logo" width="360">
+</p>
+
 # DRE
 
 **DRE** stands for **Declarative Reporting Engine**.
@@ -21,6 +25,10 @@ Status: under active development. There is no released version yet.
   macros in `macros/`. `run_query()` lets a macro query the report's own connection while
   rendering (list a table's columns, build a pivot from the distinct values). `ref('file')` reuses
   another `.sql` file as a subquery.
+- **Lookups**: mapping tables you maintain as files in `lookups/` (csv, xlsx, xls, json, jsonl,
+  yml) rather than in the database. `ref('countries')` makes one usable like a table: small ones
+  are inlined into the SQL, larger ones (over 200 rows by default) are loaded into a temp table
+  by the source plugin. `lookup('countries')` hands the rows to Jinja.
 - **Plugins**: every source, format and destination is a separate executable that speaks DRE's
   [plugin protocol](docs/protocol.md). Plugins are declared per project and installed on demand.
 - **Delivery**: one output can go to several destinations in a single run, e.g. object storage
