@@ -878,14 +878,19 @@ impl<'a> BindingRun<'a> {
             .clone()
             .or_else(|| self.project.profiles.get(profile).map(|p| p.target.clone()))
             .unwrap_or_default();
-        format!("destination profile `{profile}` has no `{dtarget}` output: not delivered, output stays in target/")
+        format!(
+            "destination profile `{profile}` has no `{dtarget}` output: not delivered, output stays in target/"
+        )
     }
 
     /// Deliver every file to one destination. `Ok(None)`: its profile has no output for the
     /// active target, so nothing was sent.
     fn deliver_one(&mut self, d: &RenderedDest) -> Result<Option<String>, Fail> {
         if self.project.profiles.get(&d.profile).is_none() {
-            return Err(format!("destination profile `{}` isn't in profiles.yml", d.profile));
+            return Err(format!(
+                "destination profile `{}` isn't in profiles.yml",
+                d.profile
+            ));
         }
         let Some((_, out)) = self.dest_output(&d.profile) else {
             let note = self.skip_note(&d.profile);

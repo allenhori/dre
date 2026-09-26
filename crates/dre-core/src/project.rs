@@ -1421,7 +1421,8 @@ impl Loader {
                     match o.as_mapping() {
                         Some(o) => {
                             if let Some(p) = merge_output(&mut b.output, o) {
-                                self.diags.error("invalid-field", file.clone(), line, format!("{ctx}: {p}"));
+                                self.diags
+                                    .error("invalid-field", file.clone(), line, format!("{ctx}: {p}"));
                             }
                         }
                         None => self.diags.error(
@@ -1921,8 +1922,12 @@ impl Loader {
             }
         }
         for p in merge_problems {
-            self.diags
-                .error("invalid-field", Some(path.to_path_buf()), None, format!("folder config: {p}"));
+            self.diags.error(
+                "invalid-field",
+                Some(path.to_path_buf()),
+                None,
+                format!("folder config: {p}"),
+            );
         }
         let schedule = layers.iter().rev().find_map(|l| l.schedule.clone());
         self.diags.warning(
@@ -2740,9 +2745,9 @@ pub fn merge_output(base: &mut Mapping, over: &Mapping) -> Option<String> {
                 }
                 Some(Value::Sequence(list))
                     if list.len() == 1
-                        && list[0].as_mapping().is_some_and(|b| {
-                            o.get("profile").is_none() || profile(b) == profile(o)
-                        }) =>
+                        && list[0]
+                            .as_mapping()
+                            .is_some_and(|b| o.get("profile").is_none() || profile(b) == profile(o)) =>
                 {
                     let mut b = list[0].as_mapping().cloned().unwrap_or_default();
                     b.extend(o.clone());

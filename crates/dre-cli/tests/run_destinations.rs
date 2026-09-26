@@ -20,8 +20,14 @@ fn project(report_yml: &str, sql: &[(&str, &str)]) -> (TestProject, std::path::P
     let rec_dir = tempfile::tempdir().unwrap().keep();
     let rec = rec_dir.to_string_lossy().replace('\\', "/");
     let mut files = vec![
-        ("dre_project.yml", "name: acme_reports\ndefault_profile: warehouse\nvars: {team: finance}\n"),
-        ("plugins.yml", "sources: [duckdb]\nformats: [csv]\ndestinations: [fixture]\n"),
+        (
+            "dre_project.yml",
+            "name: acme_reports\ndefault_profile: warehouse\nvars: {team: finance}\n",
+        ),
+        (
+            "plugins.yml",
+            "sources: [duckdb]\nformats: [csv]\ndestinations: [fixture]\n",
+        ),
         ("reports/ops/daily/daily.yml", report_yml),
     ];
     for (name, body) in sql {
@@ -86,7 +92,10 @@ fn a_single_map_still_works_and_is_recorded_as_one_delivery() {
     assert_eq!(p.read("out/daily.csv"), "n\r\n1\r\n");
     let r = results(&p);
     assert_eq!(r["deliveries"].as_array().unwrap().len(), 1);
-    assert_eq!(r["outputs"][0]["delivered_to"], p.path("out/daily.csv").to_string_lossy().as_ref());
+    assert_eq!(
+        r["outputs"][0]["delivered_to"],
+        p.path("out/daily.csv").to_string_lossy().as_ref()
+    );
 }
 
 #[test]
@@ -107,7 +116,12 @@ fn a_failed_destination_does_not_stop_the_next_one() {
     let r = results(&p);
     assert_eq!(r["status"], "error");
     assert_eq!(r["deliveries"][0]["status"], "failed");
-    assert!(r["deliveries"][0]["error"].as_str().unwrap().contains("told to fail"));
+    assert!(
+        r["deliveries"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("told to fail")
+    );
     assert_eq!(r["deliveries"][1]["status"], "delivered");
     assert_eq!(p.read("target/run/daily/default/a.csv"), "n\r\n1\r\n");
 }
@@ -181,11 +195,10 @@ fn a_set_can_replace_the_destination_list() {
 
 #[test]
 fn validate_rejects_malformed_destination_lists() {
-    let (p, _rec) = project(
-        "queries: [q]\noutput:\n  destination: []\n",
-        &[Q],
-    );
-    p.dre("validate", &[]).failed().says("`output.destination` is an empty list");
+    let (p, _rec) = project("queries: [q]\noutput:\n  destination: []\n", &[Q]);
+    p.dre("validate", &[])
+        .failed()
+        .says("`output.destination` is an empty list");
 
     p.write(
         "reports/ops/daily/daily.yml",

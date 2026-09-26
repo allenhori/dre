@@ -133,5 +133,40 @@ serve both. Paths are `/Volumes/<catalog>/<schema>/<volume>/...`, uploaded throu
 job or cluster, `/Volumes/...` is already a mounted path, so use the built-in `local` destination
 with that path instead.
 
+### `email`
+
+Sends the output as attachments on one email over SMTP. If a report produces several files, they
+all go on the same message.
+
+Profile fields: `host`, `port` (587 for `starttls`, 465 for `implicit`, 25 for `none`), `tls`
+(`starttls` by default, `implicit` or `none`), `username` and `password`, and `from`
+(`reports@example.com` or `"Reports <reports@example.com>"`). Optional fields:
+- `to`, `cc`, `bcc`: default recipients.
+- `max_attachment_mb`: default 20.
+- `tls_accept_invalid_certs`: allows a self-signed server certificate.
+
+Destination options:
+
+| Option | Meaning |
+|---|---|
+| `to`, `cc`, `bcc` | An address, a comma-separated string or a list. Each one replaces the profile's default. |
+| `subject` | Default `Report: <file names>`. |
+| `body` | Plain text. Default `Attached: <file names>`. |
+| `attachment_name` | Renames the attachment. Only allowed when the output is a single file. |
+
+```yaml
+destination:
+  - profile: finance_mail
+    to: ["{{ var('client') }}-finance@example.com"]
+    bcc: archive@example.com
+    subject: "Monthly report {{ run.date.iso }}"
+    body: "Attached is this month's report for {{ var('client') }}."
+```
+
+The plugin checks the email before it connects. It fails without sending anything when there are
+no recipients, an address is invalid, an option is unknown, or the attachments exceed
+`max_attachment_mb`. Most mail servers cap a message at 20–25 MB. For bigger files, deliver to
+object storage and email a link in `body`. The password is never logged.
+
 Every destination streams the file from `target/run/`. If an upload fails, the output stays
 there and the run reports which Binding failed.

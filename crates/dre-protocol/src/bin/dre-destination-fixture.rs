@@ -11,7 +11,9 @@ use std::io::Write;
 
 use dre_protocol::CAP_MULTI_FILE;
 use dre_protocol::msg::ConnectionField;
-use dre_protocol::plugin::{About, Delivery, Destination, Result, conn_bool, conn_required, serve_destination};
+use dre_protocol::plugin::{
+    About, Delivery, Destination, Result, conn_bool, conn_required, serve_destination,
+};
 use serde_json::json;
 
 struct Fixture;
@@ -32,7 +34,11 @@ impl Destination for Fixture {
             let content = std::fs::read_to_string(&f.local)
                 .map_err(|e| format!("can't read {}: {e}", f.local.display()))?;
             names.push(f.remote.clone().unwrap_or_else(|| {
-                f.local.file_name().unwrap_or_default().to_string_lossy().to_string()
+                f.local
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string()
             }));
             files.push(json!({"local": f.local, "remote": f.remote, "content": content}));
         }

@@ -192,7 +192,10 @@ pub fn run_with_env(path: &Path, env: &[(&str, &str)]) -> Vec<Check> {
                 (|| {
                     let mut p = start(path).map_err(|e| e.to_string())?;
                     p.send(&req).map_err(|e| e.to_string())?;
-                    match p.recv(Some(TIMEOUT), "a deliver reply").map_err(|e| e.to_string())? {
+                    match p
+                        .recv(Some(TIMEOUT), "a deliver reply")
+                        .map_err(|e| e.to_string())?
+                    {
                         Incoming::Json(Response::Delivered { .. } | Response::Error { .. }) => {}
                         other => return Err(format!("expected delivered or error, got {other:?}")),
                     }
