@@ -1,0 +1,24 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-only"
+repository = "https://github.com/allenhori/dre"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml_ng = "0.10"
+clap = { version = "4", features = ["derive"] }
+minijinja = { version = "2", features = ["loader"] }
+regex = "1"
+chrono = "0.4"
+walkdir = "2"
+semver = { version = "1", features = ["serde"] }
+tempfile = "3"
+assert_cmd = "2"
