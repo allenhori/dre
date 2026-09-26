@@ -164,6 +164,8 @@ pub struct PluginProcess {
     stdin: Option<BufWriter<ChildStdin>>,
     rx: Receiver<std::result::Result<Frame, FrameError>>,
     stderr: Arc<Mutex<VecDeque<String>>>,
+    /// Forwards stderr; joined on close/drop so no log line is lost when the plugin exits.
+    stderr_thread: Option<std::thread::JoinHandle<()>>,
     info: Option<PluginInfo>,
 }
 
@@ -250,7 +252,7 @@ impl PluginProcess {
         let stderr = Arc::new(Mutex::new(VecDeque::new()));
         let tail = stderr.clone();
         let who = label.clone();
-        std::thread::spawn(move || {
+        let stderr_thread = std::thread::spawn(move || {
             for line in BufReader::new(stderr_pipe).lines() {
                 let Ok(line) = line else { break };
                 log(&who, &line);
@@ -268,6 +270,7 @@ impl PluginProcess {
             stdin,
             rx,
             stderr,
+            stderr_thread: Some(stderr_thread),
             info: None,
         })
     }
@@ -639,12 +642,36 @@ impl PluginProcess {
     }
 }
 
+impl PluginProcess {
+    /// Wait (briefly) for the stderr forwarder to reach end of stream.
+    fn drain_stderr(&mut self) {
+        if let Some(t) = self.stderr_thread.take() {
+            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            while !t.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            if t.is_finished() {
+                let _ = t.join();
+            }
+        }
+    }
+}
+
 impl Drop for PluginProcess {
     fn drop(&mut self) {
+        self.stdin.take();
         if let Ok(None) = self.child.try_wait() {
+            // Give it a moment to exit on its own (stdin is closed), then insist.
+            for _ in 0..25 {
+                if let Ok(Some(_)) = self.child.try_wait() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+        self.drain_stderr();
     }
 }
 
