@@ -77,7 +77,7 @@ fn parse(spec: &str, index: &Index) -> Result<(PluginKind, String, Option<Versio
     }
 }
 
-fn project_at(dir: &PathBuf) -> Option<Project> {
+fn project_at(dir: &std::path::Path) -> Option<Project> {
     if !dir.join(project::PROJECT_FILE).is_file() {
         return None;
     }

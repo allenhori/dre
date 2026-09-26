@@ -3,7 +3,7 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use common::{Run, test_plugins};
 use sha2::{Digest, Sha256};
@@ -219,5 +219,3 @@ fn install_update_and_remove_keep_dre_lock_in_step() {
         .says("contradicts the project's declared constraint");
 }
 
-#[allow(dead_code)]
-fn _unused(_: &Path) {}
