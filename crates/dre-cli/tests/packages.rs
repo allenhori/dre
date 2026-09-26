@@ -124,7 +124,8 @@ fn a_git_package_installs_into_dre_deps_and_pins_its_commit() {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "v1"]);
     git(&repo, &["tag", "v1"]);
-    let url = repo.canonicalize().unwrap().to_string_lossy().to_string();
+    // A plain path (not canonicalize(), whose `\\?\` prefix on Windows git reads as a host).
+    let url = repo.to_string_lossy().replace('\\', "/");
     p.write(
         "dependencies.yml",
         &format!("{DEPS}packages:\n  - git: {url}\n    revision: v1\n"),

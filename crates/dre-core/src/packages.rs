@@ -251,26 +251,73 @@ fn git(args: &[&str], cwd: Option<&Path>) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// Clone `url` at `checkout`, then move it (without `.git`) into `dre_deps/packages/<name>`.
+/// Clone `url` at `checkout` into a temporary folder, then copy it (without `.git`) into
+/// `dre_deps/packages/<name>`.
 fn install_git(root: &Path, url: &str, checkout: &str) -> Result<(String, String), String> {
     let base = root.join(DEPS_DIR).join("packages");
     std::fs::create_dir_all(&base).map_err(|e| format!("can't create {}: {e}", base.display()))?;
-    let tmp = base.join(format!(".clone-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
+    let tmp = std::env::temp_dir().join(format!("dre-package-{}-{}", std::process::id(), base_name(url)));
+    remove_dir_force(&tmp);
     let result = (|| {
         git(&["clone", "--quiet", url, &tmp.to_string_lossy()], None)?;
         git(&["checkout", "--quiet", checkout], Some(&tmp))?;
         let commit = git(&["rev-parse", "HEAD"], Some(&tmp))?;
         let name = manifest_name(&tmp)?;
-        let _ = std::fs::remove_dir_all(tmp.join(".git"));
-        std::fs::write(tmp.join(INSTALLED_COMMIT), &commit).map_err(|e| e.to_string())?;
         let dst = installed_dir(root, &name);
-        let _ = std::fs::remove_dir_all(&dst);
-        std::fs::rename(&tmp, &dst).map_err(|e| format!("can't install into {}: {e}", dst.display()))?;
+        remove_dir_force(&dst);
+        copy_tree(&tmp, &dst).map_err(|e| format!("can't install into {}: {e}", dst.display()))?;
+        std::fs::write(dst.join(INSTALLED_COMMIT), &commit).map_err(|e| e.to_string())?;
         Ok((name, commit))
     })();
-    let _ = std::fs::remove_dir_all(&tmp);
+    remove_dir_force(&tmp);
     result
+}
+
+/// The last path segment of a URL or path, for a readable temp folder name.
+fn base_name(url: &str) -> String {
+    url.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\', ':'])
+        .next()
+        .unwrap_or("package")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .collect()
+}
+
+/// Copy `from` into `to`, leaving out `.git`.
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for e in std::fs::read_dir(from)? {
+        let e = e?;
+        if e.file_name() == ".git" {
+            continue;
+        }
+        let dst = to.join(e.file_name());
+        if e.file_type()?.is_dir() {
+            copy_tree(&e.path(), &dst)?;
+        } else {
+            std::fs::copy(e.path(), dst)?;
+        }
+    }
+    Ok(())
+}
+
+/// Remove a folder even when it holds read-only files, as git's object store does on Windows.
+fn remove_dir_force(dir: &Path) {
+    if !dir.exists() {
+        return;
+    }
+    for e in walkdir::WalkDir::new(dir).into_iter().filter_map(Result::ok) {
+        if let Ok(meta) = e.metadata() {
+            let mut perm = meta.permissions();
+            if perm.readonly() {
+                #[allow(clippy::permissions_set_readonly_false)]
+                perm.set_readonly(false);
+                let _ = std::fs::set_permissions(e.path(), perm);
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// Resolve the declared packages to installed folders and their macro files.
