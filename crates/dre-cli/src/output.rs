@@ -135,6 +135,22 @@ impl Printer {
         }
     }
 
+    /// Print a diagnostic: a line of text, or with `--log-format json` a `diagnostic` event, so
+    /// warnings never break the JSON stream.
+    pub fn diag(&self, d: &dre_core::Diagnostic) {
+        let i = self.inner.lock().unwrap();
+        if i.format == LogFormat::Json {
+            let message = dre_core::secrets::mask(&d.message).into_owned();
+            i.json(
+                json!({"event": "diagnostic", "severity": d.severity, "code": d.code,
+                "file": d.file, "line": d.line, "message": message}),
+            );
+            return;
+        }
+        drop(i);
+        println!("{}", self.diagnostic(d));
+    }
+
     /// `     Verb  text`, the verb right-aligned in a 10-column gutter.
     pub fn line(&self, tone: Tone, verb: &str, text: &str) {
         self.inner.lock().unwrap().line(tone, verb, text, Level::Info);
