@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build DRE and its first-party plugins from this checkout and publish them to a local plugin
-# registry, so the whole install flow (dre init → dre deps → dre run) can be tried before
-# anything is released to GitHub.
+# Build DRE and its first-party plugins (Rust, plus the Go Databricks adapter) from this checkout
+# and publish them to a local plugin registry, so the whole install flow (dre init → dre deps →
+# dre run) can be tried before anything is released to GitHub.
 #
 #   scripts/local-registry.sh            # build (release) and publish
 #   scripts/local-registry.sh --no-build # publish what's already built
@@ -19,10 +19,13 @@ registry="${DRE_LOCAL_REGISTRY:-$HOME/.cache/dre-local-registry}"
 version="${DRE_LOCAL_VERSION:-0.0.1}"
 protocol=0
 
+bin_dir="${CARGO_TARGET_DIR:-$root/target}/release"
 if [[ "${1:-}" != "--no-build" ]]; then
   (cd "$root" && cargo build --release --workspace --bins)
+  # The Databricks adapter is Go: one program, installed as both of its plugins.
+  (cd "$root/go/databricks" && go build -trimpath -ldflags "-X main.version=$version" -o "$bin_dir/dre-source-databricks" .)
+  cp "$bin_dir/dre-source-databricks" "$bin_dir/dre-destination-databricks_volumes"
 fi
-bin_dir="${CARGO_TARGET_DIR:-$root/target}/release"
 [[ -x "$bin_dir/dre" ]] || { echo "no build in $bin_dir; run without --no-build" >&2; exit 1; }
 
 case "$(uname -s)" in

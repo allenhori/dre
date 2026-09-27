@@ -81,9 +81,15 @@ Service principal tokens stay in memory. With either kind, the access token is r
 expires, so a long run keeps its session. Passwords, tokens and client secrets are never saved:
 put them in environment variables and use `env_var()`.
 
-Capabilities: `sessions`, `check` (via `EXPLAIN`). The plugin holds a real warehouse session,
-so temp views and `SET`s last for the whole Binding. The session runs in UTC. Warehouses have no
-read-only mode.
+Capabilities: `sessions`, `check` (via `EXPLAIN`), `load`. The plugin holds a real warehouse
+session, so temp views and `SET`s last for the whole Binding. The session runs in UTC. Warehouses
+have no read-only mode.
+
+The Databricks adapter is written in Go, on Databricks' official Go connector
+(`databricks-sql-go`): SQL warehouses only hold sessions for Databricks' own clients, and the
+connector identifies itself with `dre` appended. One program serves as both this source and the
+`databricks_volumes` destination; it's installed under both plugin names. Set
+`DATABRICKS_LOG_LEVEL=debug` to see the connector's own log.
 
 ## Formats
 
@@ -169,7 +175,9 @@ refused unless `accept_unknown_host: true`. Missing directories are created.
 ### `databricks_volumes`
 
 `host` and the same sign-in fields as the `databricks` source (`auth_type`, `token`, `client_id`,
-`client_secret`), so one set of credentials, and one OAuth session per workspace, can serve both. Paths are `/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API.
+`client_secret`), so one set of credentials, and one OAuth session per workspace, can serve both.
+It's the same program as the `databricks` source. Paths are
+`/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API.
 
 **When to use it**: runs outside Databricks, such as a laptop, Airflow or CI. Inside a Databricks
 job or cluster, `/Volumes/...` is already a mounted path, so use the built-in `local` destination

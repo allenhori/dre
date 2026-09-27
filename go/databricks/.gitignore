@@ -1,0 +1,4 @@
+# Local builds of the adapter (go build writes one here).
+/databricks
+/source-databricks
+/dre-*
