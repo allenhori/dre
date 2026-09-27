@@ -133,7 +133,7 @@ fn gcs_uploads_through_the_emulator() {
 /// Create an Azurite container with a Shared Key–signed request.
 fn azurite_container(endpoint: &str, container: &str) {
     use base64::Engine;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let date = httpdate::fmt_http_date(std::time::SystemTime::now());
     let version = "2021-08-06";
     let to_sign = format!(

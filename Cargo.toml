@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "plugins/*"]
 
 [workspace.package]
-version = "0.0.1-alpha"
+version = "0.0.1-alpha-2"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/allenhori/dre"
@@ -19,10 +19,13 @@ clap = { version = "4", features = ["derive"] }
 minijinja = { version = "2", features = ["loader"] }
 regex = "1"
 chrono = "0.4"
+chrono-tz = "0.10"
 walkdir = "2"
 semver = { version = "1", features = ["serde"] }
 tempfile = "3"
 assert_cmd = "2"
+# Held at 58: the newest `duckdb` crate (1.10505) is built on arrow 58, and the DuckDB source
+# passes record batches straight between the two. Bump together when duckdb moves.
 arrow = "58"
 parquet = "58"
 duckdb = { version = "1.10505", features = ["bundled"] }
