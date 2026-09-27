@@ -67,9 +67,9 @@ enum Command {
 
 #[derive(Args)]
 struct RunArgs {
-    /// What to run: a report name, `tag:<tag>`, a folder name or a dotted folder path.
-    /// Runs every report when omitted.
-    selector: Option<String>,
+    /// What to run: report names, `tag:<tag>`, folder names or dotted folder paths
+    /// (`dre run a b` runs both). Runs every report when omitted.
+    selector: Vec<String>,
     /// What to select (dbt's `--select`): report names, `tag:<tag>`, folder names or dotted
     /// folder paths. Several match any of them: `-s a b`, `-s a,b`, `-s a -s b` (or `"a;b"`).
     #[arg(short = 's', long = "select", value_name = "SELECTOR", num_args = 1.., action = clap::ArgAction::Append, conflicts_with = "selector")]
@@ -164,7 +164,8 @@ struct ProjectArgs {
     /// Project directory (default: the current directory).
     #[arg(long, default_value = ".")]
     project_dir: PathBuf,
-    /// Directory holding profiles.yml (default: $DRE_PROFILES_DIR, then ~/.dre).
+    /// Directory holding profiles.yml (default: $DRE_PROFILES_DIR, then the project directory
+    /// if it has a profiles.yml, then ~/.dre).
     #[arg(long)]
     profiles_dir: Option<PathBuf>,
     /// Fail instead of installing declared plugins that are missing.
@@ -210,7 +211,9 @@ fn parse_var(s: &str) -> Result<(String, String), String> {
 struct ValidateArgs {
     /// Which reports to compile and check (same selectors as `dre run`; default: all). With a
     /// selector, validate also shows where each selected Binding's output would go.
-    selector: Option<String>,
+    /// Reports whose templates query the database (`run_query()`, `columns()`) connect, and
+    /// may sign in, to compile.
+    selector: Vec<String>,
     /// What to select (dbt's `--select`): report names, `tag:<tag>`, folder names or dotted
     /// folder paths. Several match any of them: `-s a b`, `-s a,b`, `-s a -s b` (or `"a;b"`).
     #[arg(short = 's', long = "select", value_name = "SELECTOR", num_args = 1.., action = clap::ArgAction::Append, conflicts_with = "selector")]
@@ -231,9 +234,9 @@ struct ValidateArgs {
 
 #[derive(Args)]
 struct CompileArgs {
-    /// What to compile: a report name, `tag:<tag>`, a folder name or a dotted folder path.
+    /// What to compile: report names, `tag:<tag>`, folder names or dotted folder paths.
     /// Compiles every report when omitted.
-    selector: Option<String>,
+    selector: Vec<String>,
     /// What to select (dbt's `--select`): report names, `tag:<tag>`, folder names or dotted
     /// folder paths. Several match any of them: `-s a b`, `-s a,b`, `-s a -s b` (or `"a;b"`).
     #[arg(short = 's', long = "select", value_name = "SELECTOR", num_args = 1.., action = clap::ArgAction::Append, conflicts_with = "selector")]
@@ -304,6 +307,11 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     if a.json {
         let out = serde_json::json!({
             "ok": ok,
+            "profiles": project.as_ref().map(|p| serde_json::json!({
+                "path": p.profiles.path,
+                "exists": p.profiles.exists(),
+                "found_by": p.profiles.found_by,
+            })),
             "errors": diags.error_count(),
             "warnings": diags.warning_count(),
             "diagnostics": diags.sorted(),
@@ -328,6 +336,9 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
                 plans.len(),
                 plural(plans.len())
             );
+        }
+        if let Some(p) = &project {
+            printer.line(output::Tone::Note, "Profiles", &profiles_line(&p.profiles));
         }
         let (e, w) = (diags.error_count(), diags.warning_count());
         let verdict = if ok { "passed" } else { "failed" };
@@ -398,6 +409,21 @@ fn compile_for_validate(
         .filter(|o| o.status == dre_core::run::Status::Error)
     {
         let set = o.set.as_ref().map(|s| format!(", Set `{s}`")).unwrap_or_default();
+        let err = o.error.clone().unwrap_or_default();
+        // A template that queries what an earlier query makes (a temp table) can't render
+        // without running that query; validate runs nothing, so that's for `dre run` to check.
+        if err.contains("run_query() failed:") || (err.contains("`columns('") && err.contains("')` failed:")) {
+            diags.warning(
+                "compile-needs-run",
+                None,
+                None,
+                format!(
+                    "report `{}`{set} queries the database while rendering and can only be checked by `dre run`: {err}",
+                    o.report
+                ),
+            );
+            continue;
+        }
         diags.error(
             "compile-failed",
             None,
@@ -479,12 +505,9 @@ fn validate_live(
 }
 
 /// `-s` values (joined: space means union) or the positional selector.
-fn selection(select: &[String], positional: &Option<String>) -> Option<String> {
-    if select.is_empty() {
-        positional.clone()
-    } else {
-        Some(select.join(" "))
-    }
+fn selection(select: &[String], positional: &[String]) -> Option<String> {
+    let all = if select.is_empty() { positional } else { select };
+    (!all.is_empty()).then(|| all.join(" "))
 }
 
 fn plural(n: usize) -> &'static str {
@@ -544,14 +567,22 @@ fn plugin_list() -> ExitCode {
 }
 
 /// Load and validate the project; print problems. `None` when it can't run.
+/// Which profiles.yml a project uses, and why.
+fn profiles_line(p: &dre_core::profiles::Profiles) -> String {
+    let missing = if p.exists() { "" } else { ", not found" };
+    format!("{} (from {}{missing})", p.path.display(), p.found_by)
+}
+
 fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::project::Project> {
     let (project, diags) = project::load(&p.project_dir, &p.load_options());
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
+        printer.detail(output::Tone::Note, "Profiles", &profiles_line(&p.profiles));
     }
     for d in diags.sorted() {
-        // Unmanaged reports warn again when they run.
-        if d.severity == dre_core::Severity::Warning && d.code == "unmanaged-report" {
+        // Unmanaged reports warn again when they run, and a selected Binding whose profile
+        // lacks the `--target` fails with its own error; the rest aren't this run's concern.
+        if d.severity == dre_core::Severity::Warning && matches!(d.code, "unmanaged-report" | "missing-target") {
             continue;
         }
         println!("{}", printer.diagnostic(d));

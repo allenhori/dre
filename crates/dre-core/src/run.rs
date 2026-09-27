@@ -979,7 +979,10 @@ impl<'a> BindingRun<'a> {
                 };
             }
         }
-        let ext = extension(&self.b.output.format);
+        let ext = match &self.b.output.extension {
+            Some(e) => e.as_str(),
+            None => extension(&self.b.output.format),
+        };
         let from_remote = self
             .dests
             .iter()
@@ -991,7 +994,10 @@ impl<'a> BindingRun<'a> {
             .output_name
             .clone()
             .or(from_remote)
-            .unwrap_or_else(|| format!("{}.{ext}", self.report.name))
+            .unwrap_or_else(|| match ext {
+                "" => self.report.name.clone(),
+                ext => format!("{}.{ext}", self.report.name),
+            })
     }
 
     fn format(&mut self, filename: &str) -> Result<(), Fail> {

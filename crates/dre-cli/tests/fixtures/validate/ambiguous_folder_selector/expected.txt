@@ -2,4 +2,5 @@ exit: 1
 error[ambiguous-selector]: schedules.yml:1: "monthly" matches more than one location — use the dotted form to disambiguate:
   finance.monthly   (reports/finance/monthly/)
   ops.monthly       (reports/ops/monthly/)
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 1 error, 0 warnings

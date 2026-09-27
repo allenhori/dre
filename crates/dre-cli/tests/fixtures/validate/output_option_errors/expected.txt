@@ -14,4 +14,5 @@ error[invalid-output-option]: reports/ops/d/d.yml: report `d`: column 2 has no `
 error[invalid-output-option]: reports/ops/d/d.yml: report `d`: column 2 `pad` must be a single character
 error[invalid-output-option]: reports/ops/d/d.yml: report `d`: column 2 `truncate` must be true or false
 error[invalid-cell]: reports/ops/e/e.yml:2: report `e`: `anchor` of `qe` must be a cell reference like `A1`
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 15 errors, 0 warnings

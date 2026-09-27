@@ -1,3 +1,4 @@
 exit: 0
 Compiled 2 Bindings into target/compiled/
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation passed: 0 errors, 0 warnings

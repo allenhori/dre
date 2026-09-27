@@ -140,6 +140,11 @@ impl Printer {
         self.inner.lock().unwrap().line(tone, verb, text, Level::Info);
     }
 
+    /// Like [`Printer::line`], shown only with `-v`.
+    pub fn detail(&self, tone: Tone, verb: &str, text: &str) {
+        self.inner.lock().unwrap().line(tone, verb, text, Level::Debug);
+    }
+
     pub fn error(&self, msg: &str) {
         let mut i = self.inner.lock().unwrap();
         i.file_log("ERROR", msg);

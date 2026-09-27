@@ -1,3 +1,4 @@
 exit: 1
 error[unknown-query]: reports/ops/daily/daily.yml:3: report `daily`: query `sumary_typo` doesn't match any .sql file under reports/
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 1 error, 0 warnings

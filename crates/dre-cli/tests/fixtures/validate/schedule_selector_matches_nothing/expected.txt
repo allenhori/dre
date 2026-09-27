@@ -3,4 +3,5 @@ error[selector-matches-nothing]: schedules.yml:1: selector `tag:quarterly` match
 error[selector-matches-nothing]: schedules.yml:4: selector `nothing_here` matches no report name, tag or folder
 error[selector-matches-nothing]: schedules.yml:7: report `fin_monthly` has no Set `client_b`
 error[selector-matches-nothing]: schedules.yml:11: report `no_such_report` doesn't exist
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 4 errors, 0 warnings

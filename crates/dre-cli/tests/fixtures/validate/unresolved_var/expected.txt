@@ -3,4 +3,5 @@ error[unresolved-var]: reports/ops/daily/daily.yml:5: `var('bucket')` has no val
 error[unresolved-var]: reports/ops/daily/daily.yml:5: `var('bucket')` has no value for report `daily`, Set `client_b` (checked --var, Set, report, folder and project vars) and no default
 error[unresolved-var]: reports/ops/daily/summary.sql:3: `var('fund_id')` has no value for report `daily`, Set `client_a` (checked --var, Set, report, folder and project vars) and no default
 error[unresolved-var]: reports/ops/daily/summary.sql:3: `var('fund_id')` has no value for report `daily`, Set `client_b` (checked --var, Set, report, folder and project vars) and no default
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 4 errors, 0 warnings

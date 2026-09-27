@@ -1,4 +1,5 @@
 exit: 1
 error[invalid-output-option]: reports/ops/daily/daily.yml: report `daily`, Set `client_a`: `delimiter` must be a single character
 error[unknown-profile]: reports/ops/daily/daily.yml: destination profile `client_a_inbox` isn't defined under `destinations:` in $CASE/profiles/profiles.yml
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 2 errors, 0 warnings

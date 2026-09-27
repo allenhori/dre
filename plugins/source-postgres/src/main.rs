@@ -332,6 +332,18 @@ impl Builders {
     }
 }
 
+/// `host:port/database`, for connection errors.
+fn server(c: &Map<String, Value>) -> String {
+    let host = conn_str(c, "host").unwrap_or("localhost");
+    let port = match c.get("port") {
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::String(s)) => s.clone(),
+        _ => "5432".into(),
+    };
+    let db = conn_str(c, "database").or_else(|| conn_str(c, "dbname")).unwrap_or_default();
+    format!("{host}:{port}/{db}")
+}
+
 fn config(c: &Map<String, Value>) -> Result<(Config, Option<native_tls::TlsConnector>)> {
     let mut cfg = Config::new();
     cfg.host(conn_str(c, "host").unwrap_or("localhost"));
@@ -429,7 +441,7 @@ impl Source for Postgres {
             Some(t) => cfg.connect(postgres_native_tls::MakeTlsConnector::new(t)),
             None => cfg.connect(NoTls),
         }
-        .map_err(|e| format!("can't connect to Postgres: {}", describe(&e)))?;
+        .map_err(|e| format!("can't connect to Postgres at {}: {}", server(c), describe(&e)))?;
         if let Some(role) = conn_str(c, "role") {
             client.batch_execute(&format!("set role {}", quote_ident(role)))?;
         }
