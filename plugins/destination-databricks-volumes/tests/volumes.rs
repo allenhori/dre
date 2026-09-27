@@ -6,8 +6,8 @@ use std::net::TcpListener;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use dre_protocol::conformance;
 use dre_protocol::host::{LogSink, PluginProcess};
+use dre_protocol::{MAX_VERSION, MIN_VERSION, conformance};
 use serde_json::{Value, json};
 
 fn bin() -> &'static Path {
@@ -72,11 +72,17 @@ fn fake() -> (u16, Log) {
 }
 
 fn deliver(remote: &str, conn: Value, bytes: &[u8]) -> Result<String, String> {
+    deliver_env(remote, conn, bytes, &[])
+}
+
+fn deliver_env(remote: &str, conn: Value, bytes: &[u8], env: &[(&str, &str)]) -> Result<String, String> {
     let dir = tempfile::tempdir().unwrap();
     let local = dir.path().join("report.csv");
     std::fs::write(&local, bytes).unwrap();
     let log: LogSink = Arc::new(|_, _| {});
-    let mut p = PluginProcess::start(bin(), log).unwrap();
+    let mut p = PluginProcess::spawn_env(bin(), log, env).unwrap();
+    p.handshake((MIN_VERSION, MAX_VERSION), std::time::Duration::from_secs(30))
+        .unwrap();
     let Value::Object(c) = conn else { panic!() };
     p.deliver(local.to_str().unwrap(), Some(remote), c)
         .map_err(|e| e.to_string())
@@ -135,6 +141,35 @@ fn paths_outside_a_volume_and_bad_tokens_are_clear_errors() {
         err.contains("HTTP 401") && err.contains("still in target/"),
         "{err}"
     );
+}
+
+#[test]
+fn oauth_uses_the_session_the_source_saved_for_the_workspace() {
+    let (port, log) = fake();
+    let home = tempfile::tempdir().unwrap();
+    // What the Databricks source leaves after a browser sign-in to this workspace.
+    std::fs::create_dir_all(home.path().join(".dre")).unwrap();
+    std::fs::write(
+        home.path().join(".dre/oauth_sessions.json"),
+        json!({
+            format!("databricks/127.0.0.1:{port}/databricks-cli"):
+                {"access_token": "good", "refresh_token": "r", "expires_at": 4_000_000_000u64},
+            "databricks/other-workspace/databricks-cli":
+                {"access_token": "bad", "expires_at": 4_000_000_000u64}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let h = home.path().to_str().unwrap();
+    let conn = json!({"host": format!("http://127.0.0.1:{port}"), "auth_type": "oauth"});
+    deliver_env(
+        "/Volumes/c/s/v/x.csv",
+        conn,
+        b"x",
+        &[("HOME", h), ("USERPROFILE", h), ("DRE_NO_BROWSER", "1")],
+    )
+    .unwrap();
+    assert_eq!(log.lock().unwrap().len(), 1);
 }
 
 #[test]

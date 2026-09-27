@@ -731,12 +731,8 @@ fn oauth_browser_sign_in_is_cached_and_refreshed() {
     assert_eq!(fake.grants(), ["authorization_code"]);
 
     // The cached token is used as is: no browser, no token request.
-    let cache = std::fs::read_dir(home.path().join(".dre/oauth"))
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
+    let cache = home.path().join(".dre/oauth_sessions.json");
+    let key = format!("databricks/127.0.0.1:{}/databricks-cli", fake.port);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -750,7 +746,8 @@ fn oauth_browser_sign_in_is_cached_and_refreshed() {
 
     // An expired access token is renewed with the refresh token, still without a browser.
     let mut cached: Value = serde_json::from_str(&std::fs::read_to_string(&cache).unwrap()).unwrap();
-    cached["expires_at"] = json!(0);
+    assert_eq!(cached[&key]["refresh_token"], "refresh-1");
+    cached[&key]["expires_at"] = json!(0);
     std::fs::write(&cache, cached.to_string()).unwrap();
     let (mut p, _log) = start_isolated(home.path());
     p.open(conn, false).unwrap();

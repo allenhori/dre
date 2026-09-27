@@ -66,11 +66,20 @@ sources:
         client_secret: "{{ env_var('DATABRICKS_CLIENT_SECRET') }}"
 ```
 
-Browser sign-in opens your browser the first time and caches the tokens in
-`~/.dre/oauth/` (readable only by you). After that the refresh token renews them, and the
-browser only opens again once the refresh token stops working. Set `DRE_NO_BROWSER=1` to only
-print the sign-in URL. Service principal tokens stay in memory. With either kind, the access token
-is renewed before it expires, so a long run keeps its session.
+DRE signs in only when a report actually uses the profile: a source when its first query runs,
+a destination when it delivers.
+
+Browser sign-in opens your browser the first time and saves the session in
+`~/.dre/oauth_sessions.json`, which only you can read. The file has one entry per workspace and
+OAuth client, so a report can read from one workspace and deliver to another, and the `databricks`
+source and `databricks_volumes` destination share one sign-in per workspace. After that the
+refresh token renews the session, and the browser only opens again once the refresh token stops
+working. Delete the file (or its entry) to sign out. Set `DRE_NO_BROWSER=1` to only print the
+sign-in URL.
+
+Service principal tokens stay in memory. With either kind, the access token is renewed before it
+expires, so a long run keeps its session. Passwords, tokens and client secrets are never saved:
+put them in environment variables and use `env_var()`.
 
 Capabilities: `sessions`, `check` (via `EXPLAIN`). The plugin holds a real warehouse session,
 so temp views and `SET`s last for the whole Binding. The session runs in UTC. Warehouses have no
@@ -159,8 +168,8 @@ refused unless `accept_unknown_host: true`. Missing directories are created.
 
 ### `databricks_volumes`
 
-`host` and `token`, the same fields as the `databricks` source, so one set of credentials can
-serve both. Paths are `/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API.
+`host` and the same sign-in fields as the `databricks` source (`auth_type`, `token`, `client_id`,
+`client_secret`), so one set of credentials, and one OAuth session per workspace, can serve both. Paths are `/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API.
 
 **When to use it**: runs outside Databricks, such as a laptop, Airflow or CI. Inside a Databricks
 job or cluster, `/Volumes/...` is already a mounted path, so use the built-in `local` destination

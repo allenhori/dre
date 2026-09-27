@@ -1,20 +1,23 @@
-//! How the plugin authenticates to the workspace: a static token, or OAuth.
+//! How DRE's Databricks plugins authenticate to a workspace: a static token, or OAuth.
 //!
 //! `auth_type: oauth` without a `client_secret` signs a person in through the browser
-//! (authorization code with PKCE, redirected to a listener on localhost). The tokens are cached
-//! under `~/.dre/oauth/`, and the refresh token renews them, so the browser only opens when there
-//! is no usable refresh token. With a `client_secret` it signs in as a service principal
+//! (authorization code with PKCE, redirected to a listener on localhost). The session is saved
+//! in `~/.dre/oauth_sessions.json` (see [`dre_protocol::sessions`]) under
+//! `databricks/<host>/<client_id>`, so the source and destination plugins share one sign-in per
+//! workspace. The refresh token renews it, so the browser only opens when there is no usable
+//! refresh token. With a `client_secret` it signs in as a service principal
 //! (client credentials); those tokens are only kept in memory. Either way the access token is
 //! renewed shortly before it expires, so a long session keeps working.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use dre_protocol::msg::ConnectionField;
 use dre_protocol::plugin::{Result, conn_required, conn_str};
+use dre_protocol::sessions;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -39,8 +42,8 @@ pub struct OAuth {
     client_secret: Option<String>,
     scopes: String,
     redirect_port: u16,
-    /// Where a user sign-in's tokens are kept; `None` for a service principal.
-    cache: Option<PathBuf>,
+    /// The user sign-in's key in the sessions file; `None` for a service principal.
+    session_key: Option<String>,
     tokens: Option<Tokens>,
 }
 
@@ -82,14 +85,14 @@ impl Auth {
                         .and_then(|p| u16::try_from(p).ok())
                         .ok_or("`redirect_port` must be a port number")?,
                 };
-                let cache = (!m2m).then(|| cache_path(base, &client_id));
+                let session_key = (!m2m).then(|| session_key(base, &client_id));
                 Ok(Auth::OAuth(OAuth {
                     base: base.to_string(),
                     client_id,
                     client_secret,
                     scopes,
                     redirect_port,
-                    cache,
+                    session_key,
                     tokens: None,
                 }))
             }
@@ -109,7 +112,7 @@ impl Auth {
 impl OAuth {
     fn bearer(&mut self, agent: &ureq::Agent) -> Result<String> {
         if self.tokens.is_none() {
-            self.tokens = self.load_cache();
+            self.tokens = self.load_session();
         }
         if let Some(t) = &self.tokens
             && t.expires_at > now() + RENEW_BEFORE
@@ -131,7 +134,7 @@ impl OAuth {
         };
         let access = fresh.access.clone();
         self.tokens = Some(fresh);
-        self.save_cache();
+        self.save_session();
         Ok(access)
     }
 
@@ -256,9 +259,8 @@ impl OAuth {
         })
     }
 
-    fn load_cache(&self) -> Option<Tokens> {
-        let text = std::fs::read_to_string(self.cache.as_ref()?).ok()?;
-        let v: Value = serde_json::from_str(&text).ok()?;
+    fn load_session(&self) -> Option<Tokens> {
+        let v = sessions::load(self.session_key.as_ref()?)?;
         Some(Tokens {
             access: v["access_token"].as_str()?.to_string(),
             refresh: v["refresh_token"].as_str().map(str::to_string),
@@ -266,59 +268,60 @@ impl OAuth {
         })
     }
 
-    /// Best effort: a cache that can't be written only means signing in again next time.
-    fn save_cache(&self) {
-        let (Some(path), Some(t)) = (&self.cache, &self.tokens) else {
+    /// Best effort: a session that can't be saved only means signing in again next time.
+    fn save_session(&self) {
+        let (Some(key), Some(t)) = (&self.session_key, &self.tokens) else {
             return;
         };
-        let body = json!({
-            "host": self.base,
-            "client_id": self.client_id,
+        let session = json!({
             "access_token": t.access,
             "refresh_token": t.refresh,
             "expires_at": t.expires_at,
         });
-        if let Err(e) = write_private(path, &serde_json::to_vec_pretty(&body).unwrap_or_default()) {
-            eprintln!("couldn't cache the Databricks sign-in at {}: {e}", path.display());
+        if let Err(e) = sessions::store(key, Some(session)) {
+            eprintln!(
+                "couldn't save the Databricks session in {}: {e}",
+                sessions::path().display()
+            );
         }
     }
 }
 
-/// `~/.dre/oauth/databricks-<host>-<client_id>.json`.
-fn cache_path(base: &str, client_id: &str) -> PathBuf {
+/// `databricks/<host>/<client_id>`.
+fn session_key(base: &str, client_id: &str) -> String {
     let host = base.split("://").nth(1).unwrap_or(base);
-    let name: String = format!("databricks-{host}-{client_id}")
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    std::env::home_dir()
-        .unwrap_or_default()
-        .join(".dre")
-        .join("oauth")
-        .join(format!("{name}.json"))
+    format!("databricks/{host}/{client_id}")
 }
 
-/// Write a file only the current user can read (the tokens grant access to the workspace).
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
+/// `https://<host>` for a bare host; a URL with a scheme is kept (tests use `http://`).
+pub fn base_url(host: &str) -> String {
+    let host = host.trim_end_matches('/');
+    if host.starts_with("http://") || host.starts_with("https://") {
+        host.to_string()
+    } else {
+        format!("https://{host}")
     }
-    let tmp = path.with_extension("json.tmp");
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    opts.open(&tmp)?.write_all(bytes)?;
-    std::fs::rename(&tmp, path)
+}
+
+/// The profile fields for signing in, shared by the source and destination plugins. `dre init`
+/// offers a destination the values entered for a Databricks source.
+pub fn connection_fields() -> Vec<ConnectionField> {
+    [
+        ConnectionField::new(
+            "auth_type",
+            "pat (a token) or oauth (browser sign-in; with client_id and client_secret, a service principal)",
+        )
+        .default("pat"),
+        ConnectionField::new("token", "personal access token, for auth_type pat").secret(),
+        ConnectionField::new(
+            "client_id",
+            "OAuth client; a service principal's application ID (browser sign-in defaults to databricks-cli)",
+        ),
+        ConnectionField::new("client_secret", "service principal OAuth secret").secret(),
+    ]
+    .into_iter()
+    .map(|f| f.same_as_source("databricks"))
+    .collect()
 }
 
 /// Accept connections on the redirect listener until one carries the code (or an error).
@@ -506,10 +509,9 @@ mod tests {
         };
         assert_eq!(u2m.client_id, DEFAULT_CLIENT_ID);
         assert_eq!(u2m.scopes, "all-apis offline_access");
-        assert!(
-            u2m.cache
-                .unwrap()
-                .ends_with("databricks-dbc-1.cloud.databricks.com-databricks-cli.json")
+        assert_eq!(
+            u2m.session_key.unwrap(),
+            "databricks/dbc-1.cloud.databricks.com/databricks-cli"
         );
         let Auth::OAuth(m2m) = Auth::from_conn(
             &conn(json!({"auth_type": "oauth", "client_id": "sp", "client_secret": "s"})),
@@ -518,7 +520,7 @@ mod tests {
         .unwrap() else {
             panic!()
         };
-        assert!(m2m.cache.is_none() && m2m.scopes == "all-apis");
+        assert!(m2m.session_key.is_none() && m2m.scopes == "all-apis");
         let err = Auth::from_conn(&conn(json!({"auth_type": "oauth", "client_secret": "s"})), base)
             .err()
             .unwrap()

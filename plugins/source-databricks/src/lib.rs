@@ -6,7 +6,7 @@
 //! session per Binding, so temp views and `SET`s persist and the plugin advertises `sessions`.
 //!
 //! Profile target fields: `host`, `http_path`, `auth_type` (`pat`, the default, or `oauth`; see
-//! [`auth`]), `token` for `pat`, `client_id`/`client_secret`/`scopes`/`redirect_port` for
+//! `dre_databricks_auth`), `token` for `pat`, `client_id`/`client_secret`/`scopes`/`redirect_port` for
 //! `oauth`, optional `catalog`, `schema`, and `retry_timeout` (seconds to keep retrying while a
 //! stopped warehouse starts; default 900).
 //!
@@ -14,8 +14,9 @@
 //! structs) and intervals arrive as text. Warehouses have no read-only session mode, so the
 //! plugin doesn't advertise `read_only`. `check` uses `EXPLAIN`.
 
-pub mod auth;
 pub mod thrift;
+
+pub use dre_databricks_auth as auth;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -26,7 +27,7 @@ use arrow::array::{
     TimestampMicrosecondBuilder,
 };
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
-use auth::Auth;
+use dre_databricks_auth::{Auth, base_url};
 use dre_protocol::msg::ConnectionField;
 use dre_protocol::plugin::{
     About, Loaded, Result, ResultSet, ResultSink, Source, conn_required, conn_str, serve_source,
@@ -62,16 +63,6 @@ pub struct Col {
     pub type_id: i32,
     pub precision: u8,
     pub scale: i8,
-}
-
-/// `https://<host>` for a bare host; a URL with a scheme is kept (tests use `http://`).
-pub fn base_url(host: &str) -> String {
-    let host = host.trim_end_matches('/');
-    if host.starts_with("http://") || host.starts_with("https://") {
-        host.to_string()
-    } else {
-        format!("https://{host}")
-    }
 }
 
 impl Hs2 {
@@ -525,27 +516,18 @@ impl Databricks {
 
 impl Source for Databricks {
     fn connection_fields(&self) -> Vec<ConnectionField> {
-        vec![
+        let mut fields = vec![
             ConnectionField::new("host", "workspace host, e.g. adb-123.4.azuredatabricks.net").required(),
             ConnectionField::new(
                 "http_path",
                 "the SQL warehouse's HTTP path, e.g. /sql/1.0/warehouses/abc",
             )
             .required(),
-            ConnectionField::new(
-                "auth_type",
-                "pat (a token) or oauth (browser sign-in; with client_id and client_secret, a service principal)",
-            )
-            .default("pat"),
-            ConnectionField::new("token", "personal access token, for auth_type pat").secret(),
-            ConnectionField::new(
-                "client_id",
-                "OAuth client; a service principal's application ID (browser sign-in defaults to databricks-cli)",
-            ),
-            ConnectionField::new("client_secret", "service principal OAuth secret").secret(),
-            ConnectionField::new("catalog", "default catalog"),
-            ConnectionField::new("schema", "default schema"),
-        ]
+        ];
+        fields.extend(dre_databricks_auth::connection_fields());
+        fields.push(ConnectionField::new("catalog", "default catalog"));
+        fields.push(ConnectionField::new("schema", "default schema"));
+        fields
     }
 
     fn open(&mut self, c: &Map<String, Value>, _read_only: bool) -> Result<()> {
