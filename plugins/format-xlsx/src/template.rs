@@ -12,11 +12,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::LazyLock;
 
-use arrow::array::{Array, AsArray, RecordBatch};
-use arrow::datatypes::{
-    DataType, Date32Type, Float64Type, Int64Type, TimeUnit, TimestampMicrosecondType, UInt64Type,
-};
-use arrow::util::display::{ArrayFormatter, FormatOptions};
+use arrow::array::{Array, RecordBatch};
 use dre_protocol::plugin::{Result, ResultSets, WriteRequest};
 use regex::Regex;
 use serde::Deserialize;
@@ -24,7 +20,7 @@ use serde_json::Value;
 use umya_spreadsheet::{Workbook as Spreadsheet, Worksheet};
 
 use crate::EXCEL_MAX_ROWS;
-use crate::cells::{normalize, parse_cell};
+use crate::cells::{Excel, excel_value, normalize, parse_cell};
 
 #[derive(Debug, Deserialize)]
 struct Binding {
@@ -57,7 +53,6 @@ struct Collected {
     batch: RecordBatch,
 }
 
-const EPOCH_OFFSET: f64 = 25_569.0;
 
 pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
     let payload: Payload = serde_json::from_value(req.template.clone().unwrap_or(Value::Null))
@@ -130,7 +125,7 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
                     .into());
                 }
             }
-            write_value(ws, coord, res.batch.column(ci).as_ref(), 0);
+            write_value(ws, coord, res.batch.column(ci).as_ref(), 0, col);
         }
     }
 
@@ -182,6 +177,7 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
                         (c as u32 + 1, first + k as u32),
                         res.batch.column(c).as_ref(),
                         row,
+                        &res.names[c],
                     );
                 }
             }
@@ -274,6 +270,7 @@ fn fill_block(book: &mut Spreadsheet, b: &Binding, r0: u32, c0: u16, res: &Colle
                     (u32::from(c0) + 1 + k as u32, first + row as u32),
                     res.batch.column(ci).as_ref(),
                     row,
+                    &res.names[ci],
                 );
             }
         }
@@ -332,48 +329,38 @@ fn extend_formulas(book: &mut Spreadsheet, block_sheet: &str, reserved: u32, las
     }
 }
 
-fn write_value(ws: &mut Worksheet, coord: (u32, u32), a: &dyn Array, i: usize) {
+fn write_value(ws: &mut Worksheet, coord: (u32, u32), a: &dyn Array, i: usize, column: &str) {
     let cell = ws.cell_mut(coord);
-    if a.is_null(i) {
-        cell.set_value(String::new());
-        return;
-    }
     let date_fmt = |cell: &mut umya_spreadsheet::Cell, fmt: &str| {
         let nf = cell.style_mut().number_format_mut();
         if nf.format_code() == "General" {
             nf.set_format_code(fmt);
         }
     };
-    match a.data_type() {
-        DataType::Float64 => {
-            cell.set_value_number(a.as_primitive::<Float64Type>().value(i));
+    match excel_value(a, i, column) {
+        None => {
+            cell.set_value(String::new());
         }
-        DataType::Int64 => {
-            cell.set_value_number(a.as_primitive::<Int64Type>().value(i) as f64);
+        Some(Excel::Number(n)) => {
+            cell.set_value_number(n);
         }
-        DataType::UInt64 => {
-            cell.set_value_number(a.as_primitive::<UInt64Type>().value(i) as f64);
+        Some(Excel::Bool(b)) => {
+            cell.set_value_bool(b);
         }
-        DataType::Boolean => {
-            cell.set_value_bool(a.as_boolean().value(i));
-        }
-        DataType::Date32 => {
-            cell.set_value_number(a.as_primitive::<Date32Type>().value(i) as f64 + EPOCH_OFFSET);
+        Some(Excel::Date(n)) => {
+            cell.set_value_number(n);
             date_fmt(cell, "yyyy-mm-dd");
         }
-        DataType::Timestamp(TimeUnit::Microsecond, _) => {
-            let us = a.as_primitive::<TimestampMicrosecondType>().value(i) as f64;
-            cell.set_value_number(us / 86_400_000_000.0 + EPOCH_OFFSET);
+        Some(Excel::DateTime(n)) => {
+            cell.set_value_number(n);
             date_fmt(cell, "yyyy-mm-dd hh:mm:ss");
         }
-        DataType::Utf8 => {
-            cell.set_value(a.as_string::<i32>().value(i).to_string());
+        Some(Excel::Time(n)) => {
+            cell.set_value_number(n);
+            date_fmt(cell, "hh:mm:ss");
         }
-        _ => {
-            let v = ArrayFormatter::try_new(a, &FormatOptions::default())
-                .map(|f| f.value(i).to_string())
-                .unwrap_or_default();
-            cell.set_value(v);
+        Some(Excel::Text(t)) => {
+            cell.set_value(t);
         }
     }
 }

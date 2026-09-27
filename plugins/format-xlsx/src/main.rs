@@ -4,6 +4,10 @@
 //! Options: `header` (default true), `max_rows_per_sheet` (default 1,000,000). Per result set:
 //! `anchor` (default `A1`) and `header`. A result set longer than `max_rows_per_sheet` continues
 //! on `Name (2)`, `Name (3)`, ... with the header repeated.
+//!
+//! Values Excel can't hold exactly are written as text, with one warning per column: numbers
+//! with more than 15 significant digits (int64 beyond that, wide decimals), numbers beyond
+//! Excel's range, and dates or timestamps before 1900-03-01 or after 9999-12-31 (as ISO text).
 
 mod cells;
 mod template;
@@ -22,7 +26,11 @@ struct Xlsx;
 impl Format for Xlsx {
     fn write(&mut self, req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
         if req.template.is_some() {
-            return template::fill(req, sets);
+            let files = template::fill(req, sets)?;
+            for w in cells::take_warnings() {
+                sets.warn(w);
+            }
+            return Ok(files);
         }
         let header_default = req.options.get("header").and_then(Value::as_bool).unwrap_or(true);
         let max_rows = req
@@ -88,6 +96,9 @@ impl Format for Xlsx {
         }
         wb.save(&req.path)
             .map_err(|e| format!("can't save {}: {e}", req.path))?;
+        for w in cells::take_warnings() {
+            sets.warn(w);
+        }
         Ok(vec![req.path.clone()])
     }
 }

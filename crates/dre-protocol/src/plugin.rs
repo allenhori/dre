@@ -136,9 +136,15 @@ pub struct WriteRequest {
 pub struct ResultSets<'a> {
     metas: std::vec::IntoIter<ResultSetMeta>,
     input: &'a mut Input,
+    warnings: Vec<String>,
 }
 
 impl ResultSets<'_> {
+    /// Tell the person something about the output, shown as a warning by core.
+    pub fn warn(&mut self, message: impl Into<String>) {
+        self.warnings.push(message.into());
+    }
+
     /// The next result set, or `None` after the last. Each must be read (or is drained) before
     /// the next is requested.
     pub fn next_set(&mut self) -> Result<Option<ResultSet<'_>>> {
@@ -486,6 +492,7 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
             let mut sets = ResultSets {
                 metas: result_sets.into_iter(),
                 input,
+                warnings: Vec::new(),
             };
             let written = f.write(&req, &mut sets);
             // A failed write is reported at once, so core can stop streaming; this is the
@@ -506,7 +513,10 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
                 }
             }
             if let Ok(files) = written {
-                out.send(&Response::Written { files });
+                out.send(&Response::Written {
+                    files,
+                    warnings: sets.warnings,
+                });
             }
         }
         (

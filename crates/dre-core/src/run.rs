@@ -1072,9 +1072,12 @@ impl<'a> BindingRun<'a> {
                 p.send(&dre_protocol::msg::Request::ResultSetEnd {})
                     .map_err(|e| format!("{} format: {e}", out.format))?;
             }
-            let files = p
-                .write_finish()
+            let (files, warnings) = p
+                .write_finish_with_warnings()
                 .map_err(|e| format!("{} format: {e}", out.format))?;
+            for w in warnings {
+                self.ui.warn(&format!("  {} format: {w}", out.format));
+            }
             for f in files {
                 let f = PathBuf::from(f);
                 let size = std::fs::metadata(&f).map(|m| m.len()).unwrap_or(0);

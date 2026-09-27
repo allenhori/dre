@@ -637,9 +637,14 @@ impl PluginProcess {
     }
 
     pub fn write_finish(&mut self) -> Result<Vec<String>> {
+        Ok(self.write_finish_with_warnings()?.0)
+    }
+
+    /// `write_finish`, also returning the format's warnings.
+    pub fn write_finish_with_warnings(&mut self) -> Result<(Vec<String>, Vec<String>)> {
         self.send(&Request::Finish {})?;
         match self.recv_json("a written reply")? {
-            Response::Written { files } => Ok(files),
+            Response::Written { files, warnings } => Ok((files, warnings)),
             other => Err(self.unexpected("a written reply", &Incoming::Json(other))),
         }
     }

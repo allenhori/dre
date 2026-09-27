@@ -102,6 +102,9 @@ pub enum Response {
     },
     Written {
         files: Vec<String>,
+        /// Things the person should know about the files (a value written as text, say).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        warnings: Vec<String>,
     },
     Delivered {
         location: String,
