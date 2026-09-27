@@ -81,6 +81,7 @@ jobs:
           bin="target/${{ matrix.target }}/release"
           cp "$RUNNER_TEMP/dre-source-databricks" "$bin/dre-source-databricks$ext"
           cp "$RUNNER_TEMP/dre-source-databricks" "$bin/dre-destination-databricks_volumes$ext"
+          cp "$RUNNER_TEMP/dre-source-databricks" "$bin/dre-destination-databricks_workspace$ext"
           mkdir dist
           suffix="$VERSION-${{ matrix.platform }}"
           if [[ -n "$ext" ]]; then

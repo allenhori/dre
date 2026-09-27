@@ -2,9 +2,10 @@
 // names, that serves as
 //
 //   - dre-source-databricks: the source for Databricks SQL warehouses, and
-//   - dre-destination-databricks_volumes: the destination for Unity Catalog Volumes.
+//   - dre-destination-databricks_volumes: the destination for Unity Catalog Volumes, and
+//   - dre-destination-databricks_workspace: the destination for workspace files (/Workspace/...).
 //
-// It picks its role from the name it was started as. Both roles share one sign-in (PAT or
+// It picks its role from the name it was started as. Every role shares one sign-in (PAT or
 // OAuth) and one OAuth session per workspace in ~/.dre/oauth_sessions.json.
 //
 // It is written in Go so the source can use Databricks' official Go connector
@@ -52,13 +53,18 @@ type role struct {
 var (
 	sourceRole      = role{kind: "source", name: "databricks", capabilities: []string{"sessions", "check", "load"}}
 	destinationRole = role{kind: "destination", name: "databricks_volumes", capabilities: []string{}}
+	workspaceRole   = role{kind: "destination", name: "databricks_workspace", capabilities: []string{}}
 )
 
-// roleOf picks the role from the executable's name: dre-destination-databricks_volumes serves the
-// destination, anything else (dre-source-databricks) the source.
+// roleOf picks the role from the executable's name: dre-destination-databricks_workspace and
+// dre-destination-databricks_volumes serve those destinations, anything else
+// (dre-source-databricks) the source.
 func roleOf(exe string) role {
 	base := strings.ToLower(filepath.Base(exe))
-	if strings.HasPrefix(base, "dre-destination-") {
+	switch {
+	case strings.HasPrefix(base, "dre-destination-databricks_workspace"):
+		return workspaceRole
+	case strings.HasPrefix(base, "dre-destination-"):
 		return destinationRole
 	}
 	return sourceRole
@@ -313,7 +319,11 @@ func (s *server) handleDestination(t string, req map[string]json.RawMessage) err
 		default:
 			return fmt.Errorf("`deliver` needs exactly one of `local_path` or `files`")
 		}
-		loc, err := deliverToVolume(local, remote, r.Connection)
+		deliver := deliverToVolume
+		if s.role.name == workspaceRole.name {
+			deliver = deliverToWorkspace
+		}
+		loc, err := deliver(local, remote, r.Connection)
 		if err != nil {
 			return err
 		}

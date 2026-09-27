@@ -86,7 +86,8 @@ a destination when it delivers.
 Browser sign-in opens your browser the first time and saves the session in
 `~/.dre/oauth_sessions.json`, which only you can read. The file has one entry per workspace and
 OAuth client, so a report can read from one workspace and deliver to another, and the `databricks`
-source and `databricks_volumes` destination share one sign-in per workspace. After that the
+source and the `databricks_volumes` and `databricks_workspace` destinations share one sign-in per
+workspace. After that the
 refresh token renews the session, and the browser only opens again once the refresh token stops
 working. Delete the file (or its entry) to sign out. Set `DRE_NO_BROWSER=1` to only print the
 sign-in URL.
@@ -101,8 +102,9 @@ have no read-only mode.
 
 The Databricks adapter is written in Go, on Databricks' official Go connector
 (`databricks-sql-go`): SQL warehouses only hold sessions for Databricks' own clients, and the
-connector identifies itself with `dre` appended. One program serves as both this source and the
-`databricks_volumes` destination; it's installed under both plugin names. Set
+connector identifies itself with `dre` appended. One program serves as this source and the
+`databricks_volumes` and `databricks_workspace` destinations; it's installed under each plugin
+name. Set
 `DATABRICKS_LOG_LEVEL=debug` to see the connector's own log.
 
 ## Formats
@@ -197,6 +199,19 @@ no sign-in, with the job's own access. The same report works in both places.
 
 **When to use it**: anywhere. Outside Databricks (a laptop, Airflow, CI) it uploads; inside a
 Databricks job or cluster it writes to the mounted volume.
+
+### `databricks_workspace`
+
+Workspace files: `/Workspace/Users/<user>/...`, `/Workspace/Shared/...` or
+`/Workspace/Repos/...` (the `/Workspace` prefix is optional). `host` and the same sign-in fields as
+the `databricks` source and `databricks_volumes`. Missing folders are created, the file replaces
+one already at the path, and it's always a plain file: a `.sql` or `.py` output isn't turned into
+a notebook. On Databricks compute, where `/Workspace` is mounted, the file is copied there
+directly with the job's own access.
+
+**When to use it**: outputs people open from the workspace browser, next to notebooks and
+dashboards. Workspace files are meant for small files (the import API takes up to about 10 MB);
+use a Volume for large outputs.
 
 ### `email`
 

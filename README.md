@@ -201,13 +201,14 @@ cargo build --release
 ```
 
 The first-party plugins are built from the same workspace (`target/release/dre-*`), except the
-Databricks adapter in `go/databricks`, which is one Go program installed under both of its plugin
+Databricks adapter in `go/databricks`, which is one Go program installed under each of its plugin
 names:
 
 ```bash
 cd go/databricks
 go build -o ../../target/release/dre-source-databricks .
 cp ../../target/release/dre-source-databricks ../../target/release/dre-destination-databricks_volumes
+cp ../../target/release/dre-source-databricks ../../target/release/dre-destination-databricks_workspace
 ```
 
 Put them in a project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them

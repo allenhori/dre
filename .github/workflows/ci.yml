@@ -138,6 +138,7 @@ jobs:
           mkdir -p "$dir"
           (cd go/databricks && go build -o "$dir/dre-source-databricks$ext" .)
           cp "$dir/dre-source-databricks$ext" "$dir/dre-destination-databricks_volumes$ext"
+          cp "$dir/dre-source-databricks$ext" "$dir/dre-destination-databricks_workspace$ext"
           echo "DRE_TEST_GO_PLUGINS=$dir" >> "$GITHUB_ENV"
       - run: cargo build --workspace --bins
       # Run every test binary even after a failure, so one failure can't hide others.
