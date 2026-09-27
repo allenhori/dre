@@ -114,6 +114,29 @@ fn json_log_format_is_one_object_per_line() {
 }
 
 #[test]
+fn json_log_format_reports_diagnostics_as_events() {
+    let p = project();
+    p.write(
+        "reports/ops/daily/daily.yml",
+        "queries:\n  - {query: setup, tab: false}\n  - summary\noutput: {format: csv, delimeter: \"|\"}\n",
+    );
+    let r = p.dre("run", &["--log-format", "json"]);
+    assert_ne!(r.code, 0);
+    let events: Vec<serde_json::Value> = r
+        .stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{l}: {e}")))
+        .collect();
+    let d = events
+        .iter()
+        .find(|e| e["event"] == "diagnostic")
+        .expect("a diagnostic event");
+    assert_eq!(d["severity"], "error");
+    assert_eq!(d["code"], "invalid-output-option");
+    assert!(d["message"].as_str().unwrap().contains("`delimeter`"), "{d}");
+}
+
+#[test]
 fn colour_is_off_unless_asked_for_when_not_a_terminal() {
     let p = project();
     assert!(!p.dre("run", &["daily"]).stdout.contains('\u{1b}'));

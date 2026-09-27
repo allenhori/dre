@@ -331,7 +331,7 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
         );
     } else {
         for d in diags.sorted() {
-            println!("{}", printer.diagnostic(d));
+            printer.diag(d);
         }
         if selector.is_some() {
             for p in &plans {
@@ -597,7 +597,7 @@ fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::
         {
             continue;
         }
-        println!("{}", printer.diagnostic(d));
+        printer.diag(d);
     }
     if diags.has_errors() {
         printer.error(&format!(
@@ -630,7 +630,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     let mut diags = dre_core::Diagnostics::default();
     dre_core::options::check(&project, a.project.target.as_deref(), false, &mut diags);
     for d in diags.sorted() {
-        println!("{}", printer.diagnostic(d));
+        printer.diag(d);
     }
     if diags.has_errors() {
         printer.error(&format!(
@@ -709,7 +709,7 @@ fn deps(a: DepsArgs, printer: &output::Printer) -> ExitCode {
     let (project, diags) = project::load(&a.project_dir, &opts);
     let Some(project) = project else {
         for d in diags.sorted() {
-            println!("{}", printer.diagnostic(d));
+            printer.diag(d);
         }
         return ExitCode::FAILURE;
     };
