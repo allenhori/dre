@@ -36,6 +36,11 @@ Core looks in the project's `dre_deps/plugins` (or `DRE_PLUGINS_DIR`), in two la
 
 A plugin must never write anything but frames to stdout.
 
+Core sets `DRE_INTERACTIVE` in every plugin's environment: `1` when a person is at core's
+terminal, `0` otherwise (a scheduler, CI). A plugin that needs a person, such as for a browser
+sign-in, must fail with an explanation instead of waiting when it isn't `1`. A value already in
+core's environment is passed through unchanged.
+
 ## Frames
 
 A frame is a 4-byte **big-endian** unsigned length `N`, then `N` bytes of body. `N` is between 1

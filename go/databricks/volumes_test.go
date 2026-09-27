@@ -103,6 +103,27 @@ func TestOAuthUsesTheSessionTheSourceSavedForTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestOnDatabricksComputeAMountedVolumeIsWrittenDirectly(t *testing.T) {
+	isolatedHome(t)
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "Volumes", "main", "fin", "out"), 0o755)
+	t.Setenv("DATABRICKS_RUNTIME_VERSION", "16.4")
+	t.Setenv("DRE_VOLUMES_ROOT", root)
+	// No host and no login: none are needed on the mount.
+	loc, err := deliverToVolume(localFile(t, "a,b\r\n"), "/Volumes/main/fin/out/2026/daily.csv", map[string]any{})
+	if err != nil || loc != "/Volumes/main/fin/out/2026/daily.csv" {
+		t.Fatalf("%q %v", loc, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "Volumes", "main", "fin", "out", "2026", "daily.csv")); string(b) != "a,b\r\n" {
+		t.Fatalf("%q", b)
+	}
+	// A volume that isn't mounted here goes through the Files API as usual.
+	srv, calls := fakeFiles(t)
+	if _, err := deliverToVolume(localFile(t, "x"), "/Volumes/other/s/v/x.csv", map[string]any{"host": srv.URL, "token": "good"}); err != nil || len(calls()) != 1 {
+		t.Fatalf("%v %v", err, calls())
+	}
+}
+
 func TestRESTErrorsShowTheCodeAndMessage(t *testing.T) {
 	body := []byte("{\n  \"error_code\" : \"NOT_FOUND\",\n  \"message\" : \"Volume 'w.s.v' does not exist.\",\n  \"details\" : [ ]\n}")
 	if got := apiError(body); got != "NOT_FOUND: Volume 'w.s.v' does not exist." {

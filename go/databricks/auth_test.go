@@ -31,6 +31,11 @@ type fakeIdP struct {
 }
 
 func (f *fakeIdP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/oidc/v1/token" {
+		// Databricks' SDK also looks for discovery documents; there are none here.
+		http.NotFound(w, r)
+		return
+	}
 	r.ParseForm()
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -67,10 +72,22 @@ func (f *fakeIdP) seen() []string {
 	return append([]string(nil), f.grants...)
 }
 
+// isolatedHome gives the test an empty home and no Databricks login from the machine running it.
+func TestMain(m *testing.M) {
+	quietLibraries()
+	os.Exit(m.Run())
+}
+
 func isolatedHome(t *testing.T) string {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	for _, e := range os.Environ() {
+		if k, _, _ := strings.Cut(e, "="); strings.HasPrefix(k, "DATABRICKS_") || k == "DRE_INTERACTIVE" {
+			t.Setenv(k, "")
+			os.Unsetenv(k)
+		}
+	}
 	return home
 }
 
@@ -86,6 +103,7 @@ func freePort(t *testing.T) int {
 // playBrowser replaces announce: record the PKCE challenge, then follow the redirect with query
 // (`{state}` filled in). The page the listener answers with goes to pages.
 func playBrowser(t *testing.T, idp *fakeIdP, query string, pages chan<- string) {
+	t.Setenv("DRE_INTERACTIVE", "1")
 	old := announce
 	t.Cleanup(func() { announce = old })
 	announce = func(authURL string) {
@@ -124,7 +142,8 @@ func TestBrowserSignInIsSavedReusedAndRefreshed(t *testing.T) {
 	idp := &fakeIdP{expiresIn: 3600}
 	srv := httptest.NewServer(idp)
 	defer srv.Close()
-	conn := map[string]any{"auth_type": "oauth", "redirect_port": float64(freePort(t))}
+	// auth_type auto finds no other login here, so it falls back to the browser sign-in.
+	conn := map[string]any{"redirect_port": float64(freePort(t))}
 	pages := make(chan string, 1)
 	playBrowser(t, idp, "code=the-code&state={state}", pages)
 
@@ -218,16 +237,33 @@ func TestAServicePrincipalRenewsExpiringTokensAndSavesNothing(t *testing.T) {
 }
 
 func TestAuthTypePicksTheFlow(t *testing.T) {
+	isolatedHome(t)
 	base := "https://dbc-1.cloud.databricks.com"
 	if a, err := authFromConn(map[string]any{"token": "t"}, base); err != nil || a.token != "t" {
 		t.Fatal(err)
 	}
-	if _, err := authFromConn(map[string]any{}, base); err == nil || !strings.Contains(err.Error(), "`token`") {
+	if _, err := authFromConn(map[string]any{"auth_type": "pat"}, base); err == nil || !strings.Contains(err.Error(), "`token`") {
 		t.Fatalf("%v", err)
 	}
-	a, _ := authFromConn(map[string]any{"auth_type": "oauth"}, base)
-	if a.oauth.clientID != "databricks-cli" || a.oauth.sessionKey != "databricks/dbc-1.cloud.databricks.com/databricks-cli" || a.oauth.redirectPort != 8020 {
-		t.Fatalf("%+v", a.oauth)
+	// auto with nothing to find: DRE's own sign-in, which explains every option when no one
+	// is at the terminal instead of waiting for a browser.
+	a, _ := authFromConn(map[string]any{}, base)
+	if a.oauth == nil || !a.oauth.auto || a.oauth.clientID != "databricks-cli" || a.oauth.redirectPort != 8020 ||
+		a.oauth.sessionKey != "databricks/dbc-1.cloud.databricks.com/databricks-cli" {
+		t.Fatalf("%+v", a)
+	}
+	_, err := a.bearer()
+	for _, want := range []string{"no Databricks login found for dbc-1.cloud.databricks.com", "DATABRICKS_TOKEN", "databricks auth login --host dbc-1.cloud.databricks.com", "~/.databrickscfg"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing %q in %v", want, err)
+		}
+	}
+	// On Databricks compute a browser is never tried, even with a person's terminal flag set.
+	t.Setenv("DRE_INTERACTIVE", "1")
+	t.Setenv("DATABRICKS_RUNTIME_VERSION", "16.4")
+	a, _ = authFromConn(map[string]any{"auth_type": "oauth"}, base)
+	if _, err := a.bearer(); err == nil || !strings.Contains(err.Error(), "needs a browser") {
+		t.Fatalf("%v", err)
 	}
 	if _, err := authFromConn(map[string]any{"auth_type": "oauth", "client_secret": "s"}, base); err == nil || !strings.Contains(err.Error(), "client_id") {
 		t.Fatalf("%v", err)
@@ -237,6 +273,36 @@ func TestAuthTypePicksTheFlow(t *testing.T) {
 	}
 	if _, err := authFromConn(map[string]any{"auth_type": "oauth", "redirect_port": "x"}, base); err == nil {
 		t.Fatal("bad port accepted")
+	}
+}
+
+// With no DRE auth fields, Databricks' own credentials are used: here DATABRICKS_TOKEN, and a
+// ~/.databrickscfg profile named in the DRE profile.
+func TestAutoUsesDatabricksOwnCredentials(t *testing.T) {
+	home := isolatedHome(t)
+	srv := httptest.NewServer(http.NotFoundHandler())
+	defer srv.Close()
+	t.Setenv("DATABRICKS_TOKEN", "from-env")
+	a, err := authFromConn(map[string]any{}, srv.URL)
+	if err != nil || a.sdk == nil {
+		t.Fatalf("%v %+v", err, a)
+	}
+	if tok, err := a.bearer(); err != nil || tok != "from-env" {
+		t.Fatalf("%q %v", tok, err)
+	}
+	os.Unsetenv("DATABRICKS_TOKEN")
+	cfg := "[reports]\nhost = " + srv.URL + "\ntoken = from-profile\n"
+	os.WriteFile(filepath.Join(home, ".databrickscfg"), []byte(cfg), 0o600)
+	a, err = authFromConn(map[string]any{"profile": "reports"}, srv.URL)
+	if err != nil || a.sdk == nil {
+		t.Fatalf("%v %+v", err, a)
+	}
+	if tok, err := a.bearer(); err != nil || tok != "from-profile" {
+		t.Fatalf("%q %v", tok, err)
+	}
+	// A token in the DRE profile still wins.
+	if a, _ := authFromConn(map[string]any{"token": "mine", "profile": "reports"}, srv.URL); a.token != "mine" {
+		t.Fatal("profile token ignored")
 	}
 }
 
