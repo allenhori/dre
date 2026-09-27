@@ -102,9 +102,9 @@ pub fn validate(format: &str, options: &Map<String, Value>) -> Vec<String> {
                 }
             }
             if let Some(v) = get("quoting")
-                && !matches!(v.as_str(), Some("minimal" | "all" | "none"))
+                && !matches!(v.as_str(), Some("minimal" | "all" | "strings" | "none"))
             {
-                errs.push("`quoting` must be one of `minimal`, `all`, `none`".to_string());
+                errs.push("`quoting` must be one of `minimal`, `all`, `strings`, `none`".to_string());
             }
             bool_opt("header", &mut errs);
             bool_opt("byte_order_mark", &mut errs);

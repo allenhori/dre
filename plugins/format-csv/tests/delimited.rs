@@ -114,6 +114,26 @@ fn byte_order_mark_is_opt_in() {
 }
 
 #[test]
+fn quoting_strings_quotes_text_columns_and_leaves_numbers_booleans_and_nulls_bare() {
+    assert_eq!(
+        text(csv(), json!({"quoting": "strings", "line_ending": "\n"})),
+        "\"id\",\"name\",\"amount\",\"active\",\"opened\"\n\
+         1,\"plain\",1.5,true,\"2026-01-25\"\n\
+         2,\"has, comma\",,false,\"1970-01-01\"\n\
+         ,\"say \"\"hi\"\"\",-2.0,,\n"
+    );
+}
+
+#[test]
+fn quoting_strings_still_quotes_a_number_that_contains_the_delimiter() {
+    let out = text(
+        csv(),
+        json!({"quoting": "strings", "delimiter": ".", "header": false, "line_ending": "\n"}),
+    );
+    assert!(out.starts_with("1.\"plain\".\"1.5\".true."), "{out}");
+}
+
+#[test]
 fn quoting_none_refuses_values_it_cant_represent() {
     let err = write(csv(), json!({"quoting": "none"}), vec![batch()]).unwrap_err();
     assert!(err.contains("row 2, column `name`"), "{err}");
