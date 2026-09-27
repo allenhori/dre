@@ -178,6 +178,30 @@ fn deps_without_a_lockfile_pins_an_installed_newest_version_without_reinstalling
 }
 
 #[test]
+fn deps_without_a_lockfile_reinstalls_an_installed_file_that_differs_from_the_registry() {
+    let e = Env::new(DECLARED);
+    e.dre(&["deps"]).ok();
+    let before = e.lock();
+    // The same version rebuilt locally: not the registry's artifact any more.
+    let exe = e
+        .p("plugins/source/fixture/1.1.0")
+        .join(format!("dre-source-fixture{}", std::env::consts::EXE_SUFFIX));
+    let original = std::fs::read(&exe).unwrap();
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"rebuilt");
+    std::fs::remove_file(&exe).unwrap();
+    std::fs::write(&exe, &changed).unwrap();
+    std::fs::remove_file(e.p("project/dre.lock")).unwrap();
+    e.dre(&["deps"]).ok().says("source plugin `fixture` 1.1.0");
+    assert_eq!(
+        std::fs::read(&exe).unwrap(),
+        original,
+        "the registry's file is back"
+    );
+    assert_eq!(e.lock(), before);
+}
+
+#[test]
 fn a_checksum_mismatch_aborts_the_install() {
     let e = Env::new(DECLARED);
     std::fs::write(e.p("registry/fixture-1.1.0"), b"tampered").unwrap();

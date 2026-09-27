@@ -327,7 +327,8 @@ pub fn sync(
 }
 
 /// Install the pinned version, or the best match when unpinned. The flag is false when that
-/// version was already in `dir` and only needed its lock entry.
+/// exact version was already in `dir`, identical to the registry's, and only needed its lock
+/// entry.
 fn install_one(
     dir: &Path,
     index: &Index,
@@ -356,9 +357,15 @@ fn install_one(
             )
         })?,
     };
+    // Reuse the installed file only when it is byte for byte the registry's artifact: a rebuild
+    // published under the same version must be installed again, not pinned to a checksum the
+    // installed file doesn't have. (An archived artifact's checksum can't be compared with the
+    // extracted executable, so those are always reinstalled.)
+    let installed = install_path(dir, req.kind, &req.name, &v.version);
     if pin.is_none()
-        && install_path(dir, req.kind, &req.name, &v.version).is_file()
         && let Some(art) = v.artifacts.get(&platform())
+        && !(art.url.ends_with(".tar.gz") || art.url.ends_with(".tgz"))
+        && std::fs::read(&installed).is_ok_and(|b| hex(&Sha256::digest(&b)).eq_ignore_ascii_case(&art.sha256))
     {
         let locked = Locked {
             version: v.version.clone(),
