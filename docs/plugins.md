@@ -126,6 +126,22 @@ escaped quote: `'O''Brien'` is two literals, `'O'` and `'Brien'`, which Databric
 
 ## Formats
 
+Each format plugin declares and checks its own options: `dre validate` and `dre run` send every
+report's `output:` keys to the plugin before anything runs, and report each problem with the
+report it came from. A format that isn't declared or isn't installed is an error. For one that
+isn't declared, `dre validate` and `dre run` look the name up in DRE's plugin registry: when it's
+there, add it under `formats:` in `dependencies.yml` and run `dre deps`.
+
+Project-wide defaults for a format go in `dre_project.yml` under `format_options`, keyed by
+format. They apply under every output of that format, whatever folder or report chose it, and a
+report's own keys win:
+
+```yaml
+format_options:
+  delimited: {delimiter: "|", quoting: strings}
+  csv: {quoting: all}
+```
+
 | Format | Options |
 |---|---|
 | `csv`, `delimited` | `delimiter`, `quote`, `quoting`, `header`, `line_ending`, `encoding`, `null`, `byte_order_mark` |
@@ -162,6 +178,10 @@ Every format but xlsx also takes `extension`: the output file's extension (`aba`
 
 The built-in `local` destination copies the file to a path, relative to the project. It needs no
 plugin and no declaration.
+
+A destination entry's keys other than `profile` and `path` are the plugin's options, and the
+plugin checks them the same way formats do, against the destination profile's output for the
+active target (`--target`). A value holding Jinja is checked once it's rendered, at delivery.
 
 ### Several destinations
 

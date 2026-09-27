@@ -18,6 +18,7 @@ use serde_json::{Map, Value};
 
 use crate::frame::{self, Frame, FrameError};
 use crate::msg::{ConnectionField, DeliveryFile, Request, Response, ResultSetMeta};
+use crate::options::OptionField;
 use crate::{Kind, MAX_VERSION, MIN_VERSION};
 
 /// Receives each stderr line a plugin writes.
@@ -500,10 +501,27 @@ impl PluginProcess {
     }
 
     pub fn describe(&mut self) -> Result<Vec<ConnectionField>> {
+        Ok(self.describe_all()?.0)
+    }
+
+    /// The connection fields and the options the plugin declares.
+    pub fn describe_all(&mut self) -> Result<(Vec<ConnectionField>, Vec<OptionField>)> {
         self.send(&Request::Describe {})?;
         match self.recv_json("a describe reply")? {
-            Response::Describe { connection_fields } => Ok(connection_fields),
+            Response::Describe {
+                connection_fields,
+                option_fields,
+            } => Ok((connection_fields, option_fields)),
             other => Err(self.unexpected("a describe reply", &Incoming::Json(other))),
+        }
+    }
+
+    /// Check a config block of options (needs `validate`); returns every problem found.
+    pub fn validate(&mut self, options: Map<String, Value>) -> Result<Vec<String>> {
+        self.send(&Request::Validate { options })?;
+        match self.recv_json("a validate reply")? {
+            Response::Validated { errors } => Ok(errors),
+            other => Err(self.unexpected("a validate reply", &Incoming::Json(other))),
         }
     }
 

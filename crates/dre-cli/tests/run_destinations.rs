@@ -242,16 +242,18 @@ fn a_misspelt_key_on_a_destination_without_options_is_an_error_not_ignored() {
         "queries: [q]\noutput:\n  destination: {profile: inbox, pth: out/daily.csv}\n",
         &[Q],
     );
+    // Refused before anything runs.
     p.dre("run", &["daily"])
         .failed()
-        .says("the local destination takes no options, but `inbox` has `pth`");
-    let r = results(&p);
-    assert_eq!(r["deliveries"][0]["status"], "failed");
+        .says("destination `inbox`: the local destination takes no options, but got `pth`")
+        .says("fix them before running");
+    assert!(!p.dir.path().join("target/run").exists());
+    p.dre("validate", &[]).failed().says("but got `pth`");
 }
 
 #[test]
 fn a_plugin_without_options_refuses_them() {
-    // The SFTP plugin uses the SDK's default, which rejects options before connecting.
+    // The SFTP plugin declares no options, so the SDK refuses any before connecting.
     let (p, _rec) = project(
         "queries: [q]\noutput:\n  destination: {profile: box, path: /in/daily.csv, pasth: x}\n",
         &[Q],
@@ -265,7 +267,7 @@ fn a_plugin_without_options_refuses_them() {
     );
     p.dre("run", &["daily"])
         .failed()
-        .says("this destination takes no options, but the destination entry has `pasth`");
+        .says("destination `box`: the `sftp` destination takes no options, but got `pasth`");
 }
 
 #[test]

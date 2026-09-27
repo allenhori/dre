@@ -12,6 +12,7 @@
 mod cells;
 mod template;
 
+use dre_protocol::options::{OptionField, OptionType};
 use dre_protocol::plugin::{About, Format, Result, ResultSets, WriteRequest, serve_format};
 use rust_xlsxwriter::{Format as XFormat, Workbook};
 use serde_json::Value;
@@ -24,6 +25,24 @@ const DEFAULT_MAX_ROWS: u64 = 1_000_000;
 struct Xlsx;
 
 impl Format for Xlsx {
+    fn options(&self) -> Vec<OptionField> {
+        vec![
+            OptionField::new(
+                "header",
+                OptionType::Boolean,
+                "write column names above each result set",
+            )
+            .default(true),
+            OptionField::new(
+                "max_rows_per_sheet",
+                OptionType::Integer,
+                "rows per sheet before continuing on `Name (2)`; Excel's limit less a header",
+            )
+            .range(Some(1.0), Some((EXCEL_MAX_ROWS - 1) as f64))
+            .default(DEFAULT_MAX_ROWS),
+        ]
+    }
+
     fn write(&mut self, req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
         if req.template.is_some() {
             let files = template::fill(req, sets)?;

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::Kind;
+pub use crate::options::OptionField;
 
 /// Core → plugin.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -15,8 +16,14 @@ pub enum Request {
         max_version: u32,
         core_version: String,
     },
-    /// Describe the connection fields a profile output for this plugin takes (used by `dre init`).
+    /// Describe the connection fields a profile output for this plugin takes (used by `dre init`)
+    /// and the options a report's config block for it takes.
     Describe {},
+    /// Check one config block of options (a format's `output:` keys, a destination entry's keys)
+    /// without doing anything. Replies `validated`.
+    Validate {
+        options: Map<String, Value>,
+    },
     /// Source: open a session. All later `execute`/`check` requests run on it.
     Open {
         connection: Map<String, Value>,
@@ -87,6 +94,12 @@ pub enum Response {
     },
     Describe {
         connection_fields: Vec<ConnectionField>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        option_fields: Vec<OptionField>,
+    },
+    /// Every problem with the options, each a sentence naming the key; empty when they're fine.
+    Validated {
+        errors: Vec<String>,
     },
     Ok {},
     /// A result set follows as Arrow frames, ended by `result_end`.

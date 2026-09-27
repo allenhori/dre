@@ -99,6 +99,29 @@ pub fn run_with_env(path: &Path, env: &[(&str, &str)]) -> Vec<Check> {
     );
 
     check(
+        "validate is advertised, answered, and refuses an option the plugin doesn't declare",
+        (|| {
+            let mut p = start(path).map_err(|e| e.to_string())?;
+            if !p.has(crate::CAP_VALIDATE) {
+                return Err("the plugin doesn't advertise `validate`".into());
+            }
+            let (_, fields) = p.describe_all().map_err(|e| e.to_string())?;
+            p.validate(Map::new()).map_err(|e| e.to_string())?;
+            let key = "dre_conformance_unknown_option";
+            if fields.iter().any(|f| f.name == key) {
+                return Err(format!("the plugin declares `{key}`"));
+            }
+            let errors = p
+                .validate(json!({key: true}).as_object().unwrap().clone())
+                .map_err(|e| e.to_string())?;
+            if !errors.iter().any(|e| e.contains(key)) {
+                return Err(format!("an unknown option was accepted: {errors:?}"));
+            }
+            p.close().map_err(|e| e.to_string())
+        })(),
+    );
+
+    check(
         "an unknown request gets an error reply and the plugin keeps serving",
         (|| {
             let mut p = start(path).map_err(|e| e.to_string())?;

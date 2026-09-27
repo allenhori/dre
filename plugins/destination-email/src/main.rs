@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use dre_protocol::CAP_MULTI_FILE;
 use dre_protocol::msg::ConnectionField;
+use dre_protocol::options::{OptionField, OptionType, is_template};
 use dre_protocol::plugin::{
     About, Delivery, Destination, Result, conn_bool, conn_required, conn_str, serve_destination,
 };
@@ -22,7 +23,6 @@ use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{Message, SmtpTransport, Transport};
 use serde_json::{Map, Value};
 
-const OPTIONS: &[&str] = &["to", "cc", "bcc", "subject", "body", "attachment_name"];
 const DEFAULT_MAX_MB: f64 = 20.0;
 
 struct Email;
@@ -46,6 +46,45 @@ impl Destination for Email {
             )
             .default(false),
         ]
+    }
+
+    fn options(&self) -> Vec<OptionField> {
+        use OptionType::*;
+        vec![
+            OptionField::new(
+                "to",
+                Strings,
+                "recipients: an address, a comma-separated string or a list",
+            ),
+            OptionField::new("cc", Strings, "cc recipients"),
+            OptionField::new("bcc", Strings, "bcc recipients"),
+            OptionField::new("subject", String, "the subject line"),
+            OptionField::new("body", String, "the message text"),
+            OptionField::new(
+                "attachment_name",
+                String,
+                "the attachment's file name (single-file outputs)",
+            ),
+        ]
+    }
+
+    /// Recipient addresses are checked unless they hold Jinja, which core renders later.
+    fn validate(&self, o: &Map<String, Value>) -> Vec<std::string::String> {
+        ["to", "cc", "bcc"]
+            .into_iter()
+            .filter_map(|k| {
+                let v = o.get(k)?;
+                let templated = match v {
+                    Value::String(s) => is_template(s),
+                    Value::Array(a) => a.iter().any(|x| x.as_str().is_some_and(is_template)),
+                    _ => false,
+                };
+                if templated {
+                    return None;
+                }
+                addresses(v, k).err().map(|e| e.to_string())
+            })
+            .collect()
     }
 
     fn deliver_files(&mut self, d: &Delivery) -> Result<String> {
@@ -79,13 +118,6 @@ struct Plan {
 
 impl Plan {
     fn new(d: &Delivery) -> Result<Plan> {
-        if let Some(k) = d.options.keys().find(|k| !OPTIONS.contains(&k.as_str())) {
-            return Err(format!(
-                "unknown email option `{k}`; expected one of {}",
-                OPTIONS.join(", ")
-            )
-            .into());
-        }
         let c = &d.connection;
         let o = &d.options;
         let from = parse_mailbox(conn_required(c, "from")?, "from")?;

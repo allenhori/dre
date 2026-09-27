@@ -53,6 +53,32 @@ pub struct Artifact {
     pub sha256_url: Option<String>,
 }
 
+/// Check each `undeclared-plugin` error's plugin against DRE's registry, so a name the registry
+/// doesn't have isn't answered with "declare it and run `dre deps`". The registry is fetched
+/// now, so a newly published plugin is known without a new `dre`. Unreachable: unchanged.
+pub fn explain_undeclared(diags: &mut crate::Diagnostics) {
+    if !diags.iter_mut().any(|d| d.plugin.is_some()) {
+        return;
+    }
+    let Ok(index) = Index::load() else { return };
+    for d in diags.iter_mut() {
+        let Some((kind, name)) = &d.plugin else { continue };
+        if index.plugin(*kind, name).is_some() {
+            continue;
+        }
+        let what = d.message.split(" — ").next().unwrap_or_default().to_string();
+        let others: Vec<&str> = index.by_name(name).iter().map(|p| p.kind.as_str()).collect();
+        d.message = if others.is_empty() {
+            format!("{what} — DRE's plugin registry has no {kind} plugin called `{name}`; check the spelling")
+        } else {
+            format!(
+                "{what} — `{name}` in DRE's plugin registry is a {} plugin, not a {kind}",
+                others.join(" and ")
+            )
+        };
+    }
+}
+
 /// This machine's platform key in the index: `<os>-<arch>`, e.g. `macos-aarch64`.
 pub fn platform() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)

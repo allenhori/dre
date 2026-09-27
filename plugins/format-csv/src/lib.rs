@@ -10,6 +10,7 @@ use std::io::{BufWriter, Write};
 use arrow::array::{Array, RecordBatch};
 use arrow::datatypes::DataType;
 use arrow::util::display::{ArrayFormatter, FormatOptions};
+use dre_protocol::options::{OptionField, OptionType};
 use dre_protocol::plugin::{About, Format, Result, ResultSets, WriteRequest, serve_format};
 use serde_json::{Map, Value};
 
@@ -37,17 +38,14 @@ impl Options {
     fn parse(o: &Map<String, Value>) -> Result<Options> {
         let s = |k: &str, d: &str| o.get(k).and_then(Value::as_str).unwrap_or(d).to_string();
         let b = |k: &str, d: bool| o.get(k).and_then(Value::as_bool).unwrap_or(d);
+        // The SDK has checked the options against `Delimited::options` and `validate`.
         let quoting = match s("quoting", "minimal").as_str() {
-            "minimal" => Quoting::Minimal,
             "all" => Quoting::All,
             "strings" => Quoting::Strings,
             "none" => Quoting::None,
-            q => return Err(format!("unknown `quoting` `{q}`").into()),
+            _ => Quoting::Minimal,
         };
-        let label = s("encoding", "utf-8");
-        let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
-            .filter(|e| e.output_encoding() == *e)
-            .ok_or_else(|| format!("unsupported `encoding` `{label}`"))?;
+        let encoding = encoding(&s("encoding", "utf-8")).unwrap_or(encoding_rs::UTF_8);
         Ok(Options {
             delimiter: s("delimiter", ","),
             quote: s("quote", "\""),
@@ -85,9 +83,53 @@ impl Options {
     }
 }
 
+/// A text encoding this format can write (`encoding_rs` decodes UTF-16 but can't encode it).
+fn encoding(label: &str) -> Option<&'static encoding_rs::Encoding> {
+    encoding_rs::Encoding::for_label(label.as_bytes()).filter(|e| e.output_encoding() == *e)
+}
+
 struct Delimited;
 
 impl Format for Delimited {
+    fn options(&self) -> Vec<OptionField> {
+        use OptionType::*;
+        vec![
+            OptionField::new("delimiter", Char, "separates fields").default(","),
+            OptionField::new("quote", Char, "wraps quoted fields; doubled inside them").default("\""),
+            OptionField::new(
+                "quoting",
+                String,
+                "which fields are quoted: only where needed, all, text columns, or none",
+            )
+            .choices(&["minimal", "all", "strings", "none"])
+            .default("minimal"),
+            OptionField::new("header", Boolean, "write the column names first").default(true),
+            OptionField::new("line_ending", String, "ends each line")
+                .choices(&["\n", "\r\n"])
+                .default("\r\n"),
+            OptionField::new(
+                "encoding",
+                String,
+                "text encoding, e.g. utf-8, latin1, windows-1252",
+            )
+            .default("utf-8"),
+            OptionField::new("null", String, "written for a null value").default(""),
+            OptionField::new(
+                "byte_order_mark",
+                Boolean,
+                "start a UTF-8 file with a byte order mark",
+            )
+            .default(false),
+        ]
+    }
+
+    fn validate(&self, o: &Map<String, Value>) -> Vec<String> {
+        match o.get("encoding").and_then(Value::as_str) {
+            Some(e) if encoding(e).is_none() => vec![format!("unknown or unsupported `encoding` \"{e}\"")],
+            _ => Vec::new(),
+        }
+    }
+
     fn write(&mut self, req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
         if req.result_sets.len() != 1 {
             return Err(format!(

@@ -19,29 +19,38 @@ use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
 
+mod common;
+
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/validate")
 }
 
-/// Stand-in executables for the plugins fixtures commonly declare, so `--no-auto-install`
-/// doesn't warn in every golden. Validation never starts them.
+/// The plugins fixtures commonly declare, so `--no-auto-install` doesn't warn in every golden.
+/// Formats and destinations are the real plugins, which check their options; sources are empty
+/// stand-ins, which validation never starts.
 fn stand_in_plugins() -> PathBuf {
     static DIR: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
         let d = tempfile::tempdir().unwrap();
-        let names = [
+        let real = [
+            "dre-format-csv",
+            "dre-format-delimited",
+            "dre-format-xlsx",
+            "dre-format-parquet",
+            "dre-format-fixed_width",
+            "dre-destination-sftp",
+            "dre-destination-fixture",
+        ];
+        common::build_bins(&real);
+        for b in real {
+            common::place_plugin(d.path(), b);
+        }
+        for n in [
             "source-duckdb",
             "source-postgres",
             "source-fixture",
-            "format-csv",
-            "format-delimited",
-            "format-xlsx",
-            "format-parquet",
-            "format-fixed_width",
-            "destination-sftp",
             "destination-s3",
-        ];
-        for n in names {
+        ] {
             let p = d.path().join(format!("dre-{n}{}", std::env::consts::EXE_SUFFIX));
             std::fs::write(&p, "").unwrap();
             #[cfg(unix)]

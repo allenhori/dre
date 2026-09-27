@@ -21,6 +21,10 @@ pub struct Diagnostic {
     /// Path relative to the project root, or absolute for files outside it (profiles.yml).
     pub file: Option<PathBuf>,
     pub line: Option<usize>,
+    /// The plugin an `undeclared-plugin` error is about, so the CLI can look it up in DRE's
+    /// registry.
+    #[serde(skip)]
+    pub plugin: Option<(crate::project::PluginKind, String)>,
 }
 
 impl fmt::Display for Diagnostic {
@@ -64,6 +68,7 @@ impl Diagnostics {
             message: message.into(),
             file,
             line,
+            plugin: None,
         });
     }
 
@@ -80,6 +85,7 @@ impl Diagnostics {
             message: message.into(),
             file,
             line,
+            plugin: None,
         });
     }
 
@@ -91,6 +97,10 @@ impl Diagnostics {
 
     pub fn iter(&self) -> impl Iterator<Item = &Diagnostic> {
         self.0.iter()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Diagnostic> {
+        self.0.iter_mut()
     }
 
     pub fn error_count(&self) -> usize {

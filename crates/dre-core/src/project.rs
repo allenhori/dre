@@ -13,7 +13,7 @@ use serde_json::{Map as JsonMap, Value as Json};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::dates::{WeekNumbering, WeekStart};
-use crate::diag::Diagnostics;
+use crate::diag::{Diagnostic, Diagnostics, Severity};
 use crate::lookups::{self, DEFAULT_INLINE_MAX_ROWS, LOOKUPS_DIR, Lookup};
 use crate::packages::{self, DispatchOrder, Package};
 
@@ -68,6 +68,7 @@ const PROJECT_KEYS: &[&str] = &[
     "name",
     "default_profile",
     "default_output",
+    "format_options",
     "default_set",
     "vars",
     "run_query_max_rows",
@@ -108,6 +109,9 @@ pub struct Project {
     pub default_set: Option<String>,
     pub vars: JsonMap<String, Json>,
     pub run_query_max_rows: u64,
+    /// `format_options:`: per format, defaults under every output of that format.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub format_options: BTreeMap<String, JsonMap<String, Json>>,
     pub reports: Vec<Report>,
     pub sets: BTreeMap<String, SetDef>,
     pub plugins: Vec<PluginRequirement>,
@@ -388,6 +392,7 @@ pub fn load(root: &Path, opts: &LoadOptions) -> (Option<Project>, Diagnostics) {
         root: root.to_path_buf(),
         opts: opts.clone(),
         diags: Diagnostics::default(),
+        format_options: Mapping::new(),
     };
     let project = l.run();
     (project, l.diags)
@@ -397,6 +402,8 @@ struct Loader {
     root: PathBuf,
     opts: LoadOptions,
     diags: Diagnostics,
+    /// `format_options:` from the project file: per format, defaults under every output of it.
+    format_options: Mapping,
 }
 
 /// One report YAML fragment, before merging.
@@ -653,6 +660,16 @@ impl Loader {
             },
         };
         let dispatch = self.parse_dispatch(yf, m.get("dispatch"));
+        match m.get("format_options") {
+            None | Some(Value::Null) => {}
+            Some(Value::Mapping(f)) if f.values().all(|v| v.is_mapping()) => self.format_options = f.clone(),
+            Some(_) => self.diags.error(
+                "invalid-field",
+                file.clone(),
+                yf.line_of("format_options", None),
+                "`format_options` must map format names to their options, e.g. `delimited: {delimiter: \"|\"}`",
+            ),
+        }
         let mask_secrets = match m.get("mask_secrets") {
             None => true,
             Some(Value::Bool(b)) => *b,
@@ -730,6 +747,11 @@ impl Loader {
             sql: BTreeMap::new(),
             lookups: BTreeMap::new(),
             lookup_inline_max_rows,
+            format_options: self
+                .format_options
+                .iter()
+                .filter_map(|(k, v)| Some((k.as_str()?.to_string(), yaml_map_to_json(v.as_mapping()?))))
+                .collect(),
             folders: Vec::new(),
             profiles: Profiles::default(),
         })
@@ -2083,9 +2105,15 @@ impl Loader {
                 opts.insert(k.to_string(), yaml_to_json(v));
             }
         }
-        for e in options::validate(&format, &opts) {
-            self.diags
-                .error("invalid-output-option", file.clone(), None, format!("{ctx}: {e}"));
+        // The project's defaults for this format sit under whatever the layers set.
+        if let Some(Value::Mapping(d)) = self.format_options.get(format.as_str()) {
+            for (k, v) in d {
+                if let Some(k) = k.as_str()
+                    && !OUTPUT_SHARED_KEYS.contains(&k)
+                {
+                    opts.entry(k.to_string()).or_insert_with(|| yaml_to_json(v));
+                }
+            }
         }
         let destinations = match m.get("destination") {
             None | Some(Value::Null) => Vec::new(),
@@ -3124,13 +3152,13 @@ impl Loader {
                         continue;
                     }
                     if !declared(kind, &out_.kind) {
-                        self.diags.error(
-                            "undeclared-plugin",
+                        self.undeclared(
+                            kind,
+                            &out_.kind,
                             profiles.file.as_ref().map(|f| f.display.clone()),
                             profiles.line_of(role, name),
                             format!(
-                                "`type: {t}` used by {role_name} profile `{name}`, but `{t}` isn't declared as a required {role_name} plugin anywhere in the project — add it under `{}:`",
-                                kind.block(),
+                                "`type: {t}` used by {role_name} profile `{name}`, but `{t}` isn't declared as a required {role_name} plugin anywhere in the project",
                                 t = out_.kind
                             ),
                         );
@@ -3145,15 +3173,40 @@ impl Loader {
                 } else {
                     ""
                 };
-                self.diags.error(
-                    "undeclared-plugin",
+                self.undeclared(
+                    PluginKind::Format,
+                    fmt,
                     Some(file.clone()),
                     None,
-                    format!("format `{fmt}` is used by {ctx}{note}, but isn't declared anywhere in the project — add it under `formats:`"),
+                    format!(
+                        "format `{fmt}` is used by {ctx}{note}, but isn't declared anywhere in the project"
+                    ),
                 );
             }
         }
         out
+    }
+
+    /// An `undeclared-plugin` error: `what`, then how to declare and install the plugin.
+    fn undeclared(
+        &mut self,
+        kind: PluginKind,
+        name: &str,
+        file: Option<PathBuf>,
+        line: Option<usize>,
+        what: String,
+    ) {
+        self.diags.push(Diagnostic {
+            severity: Severity::Error,
+            code: "undeclared-plugin",
+            message: format!(
+                "{what} — add `{name}` under `{}:` in dependencies.yml, then run `dre deps`",
+                kind.block()
+            ),
+            file,
+            line,
+            plugin: Some((kind, name.to_string())),
+        });
     }
 
     // -- Jinja pre-flight ---------------------------------------------------------------------
