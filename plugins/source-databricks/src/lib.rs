@@ -126,7 +126,15 @@ impl Hs2 {
                 wait = (wait * 2).min(Duration::from_secs(30));
                 continue;
             }
-            let text = resp.body_mut().read_to_string().unwrap_or_default();
+            // Databricks puts the reason in a header; the body is then a binary Thrift reply.
+            let text = match resp
+                .headers()
+                .get("x-thriftserver-error-message")
+                .and_then(|v| v.to_str().ok())
+            {
+                Some(m) => m.to_string(),
+                None => resp.body_mut().read_to_string().unwrap_or_default(),
+            };
             let hint = match status {
                 401 | 403 => match self.auth {
                     Auth::Token(_) => " (check the token and that it can use this warehouse)",

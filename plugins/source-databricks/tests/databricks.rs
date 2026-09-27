@@ -419,6 +419,17 @@ fn serve_conn(mut stream: TcpStream, state: Arc<Mutex<State>>, requests: Arc<Ato
             reply(&mut stream, "401 Unauthorized", "", b"invalid token");
             continue;
         }
+        if line.contains("/warehouses/rejects-clients") {
+            // How a warehouse refuses a request: the reason is in a header, the body is binary
+            // Thrift.
+            reply(
+                &mut stream,
+                "400 Bad Request",
+                "x-thriftserver-error-message: MALFORMED_REQUEST: Client rejected-client is not supported\r\n",
+                b"\x80\x01\x00\x03",
+            );
+            continue;
+        }
         {
             let mut st = state.lock().unwrap();
             if st.unavailable_left > 0 {
@@ -810,6 +821,20 @@ fn a_bad_client_secret_is_a_clear_error() {
     let err = p.open(conn, false).unwrap_err().to_string();
     assert!(
         err.contains("HTTP 400") && err.contains("client_secret") && err.contains("invalid_client"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_refusal_reports_the_reason_databricks_puts_in_a_header() {
+    let fake = Fake::start(0);
+    let log: LogSink = Arc::new(|_, _| {});
+    let mut p = PluginProcess::start(bin(), log).unwrap();
+    let mut conn = fake.conn("good-token");
+    conn.insert("http_path".into(), json!("/sql/1.0/warehouses/rejects-clients"));
+    let err = p.open(conn, false).unwrap_err().to_string();
+    assert!(
+        err.contains("HTTP 400") && err.contains("Client rejected-client is not supported"),
         "{err}"
     );
 }
