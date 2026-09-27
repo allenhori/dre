@@ -3,7 +3,7 @@ error[invalid-output-option]: reports/ops/a/a.yml: report `a`: unknown option `d
 error[invalid-output-option]: reports/ops/a/a.yml: report `a`: `header` must be true or false
 error[invalid-output-option]: reports/ops/a/a.yml: report `a`: `max_rows_per_sheet` must be a whole number from 1 to 1048575 (Excel's limit)
 error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `delimiter` must be a single character
-error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `quoting` must be one of `minimal`, `all`, `none`
+error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `quoting` must be one of `minimal`, `all`, `strings`, `none`
 error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `byte_order_mark` must be true or false
 error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `line_ending` must be "\n" or "\r\n"
 error[invalid-output-option]: reports/ops/b/b.yml: report `b`: unknown or unsupported `encoding` "klingon"

@@ -1,6 +1,6 @@
 //! DRE format plugins `csv` and `delimited`: one table per file.
 //!
-//! Options (defaults): `delimiter` (`,`), `quote` (`"`), `quoting` (`minimal`|`all`|`none`),
+//! Options (defaults): `delimiter` (`,`), `quote` (`"`), `quoting` (`minimal`|`all`|`strings`|`none`),
 //! `header` (true), `line_ending` (`"\r\n"`), `encoding` (`utf-8`), `null` (`""`),
 //! `byte_order_mark` (false).
 
@@ -17,6 +17,8 @@ use serde_json::{Map, Value};
 enum Quoting {
     Minimal,
     All,
+    /// Quote every value of a column that isn't a number or boolean; nulls stay bare.
+    Strings,
     None,
 }
 
@@ -38,6 +40,7 @@ impl Options {
         let quoting = match s("quoting", "minimal").as_str() {
             "minimal" => Quoting::Minimal,
             "all" => Quoting::All,
+            "strings" => Quoting::Strings,
             "none" => Quoting::None,
             q => return Err(format!("unknown `quoting` `{q}`").into()),
         };
@@ -57,12 +60,14 @@ impl Options {
         })
     }
 
-    fn field(&self, v: &str, row: u64, col: &str) -> Result<String> {
+    /// `text` is whether the value comes from a column `quoting: strings` quotes.
+    fn field(&self, v: &str, text: bool, row: u64, col: &str) -> Result<String> {
         let needs =
             v.contains(&self.delimiter) || v.contains(&self.quote) || v.contains('\n') || v.contains('\r');
         let quote = match self.quoting {
             Quoting::All => true,
             Quoting::Minimal => needs,
+            Quoting::Strings => needs || text,
             Quoting::None if needs => {
                 return Err(format!(
                     "row {row}, column `{col}`: the value contains the delimiter, quote or a line break, which `quoting: none` can't represent"
@@ -106,7 +111,10 @@ impl Format for Delimited {
         }
         let names: Vec<String> = rs.schema.fields().iter().map(|f| f.name().clone()).collect();
         if o.header {
-            let cells: Vec<String> = names.iter().map(|n| o.field(n, 0, n)).collect::<Result<_>>()?;
+            let cells: Vec<String> = names
+                .iter()
+                .map(|n| o.field(n, true, 0, n))
+                .collect::<Result<_>>()?;
             out.line(&cells.join(&o.delimiter))?;
         }
         let fmt = FormatOptions::default()
@@ -135,6 +143,7 @@ fn write_batch(
         .iter()
         .map(|c| ArrayFormatter::try_new(c.as_ref(), fmt))
         .collect::<std::result::Result<_, _>>()?;
+    let text: Vec<bool> = batch.columns().iter().map(|c| is_text(c.data_type())).collect();
     for i in 0..batch.num_rows() {
         *row += 1;
         let mut cells = Vec::with_capacity(names.len());
@@ -150,11 +159,16 @@ fn write_batch(
             } else {
                 v
             };
-            cells.push(o.field(&v, *row, &names[c])?);
+            cells.push(o.field(&v, text[c], *row, &names[c])?);
         }
         out.line(&cells.join(&o.delimiter))?;
     }
     Ok(())
+}
+
+/// Everything but numbers and booleans: strings, dates, times, binary, ...
+fn is_text(t: &DataType) -> bool {
+    !(t.is_numeric() || matches!(t, DataType::Boolean | DataType::Null))
 }
 
 struct Encoder<'a> {

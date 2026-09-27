@@ -136,6 +136,16 @@ escaped quote: `'O''Brien'` is two literals, `'O'` and `'Brien'`, which Databric
 Every format but xlsx also takes `extension`: the output file's extension (`aba`, `dat`, ...), or
 `""` for none. The file is written the same way; only its name changes.
 
+- `quoting` (csv, delimited) picks which fields are wrapped in `quote`:
+  - `minimal` (the default): only fields holding the delimiter, the quote or a line break;
+  - `all`: every field but nulls;
+  - `strings`: every value of a text, date, time or timestamp column, and the header; numbers,
+    booleans and nulls stay bare unless they hold the delimiter;
+  - `none`: no field. A value that can't be written without quotes fails the run, naming the row
+    and column.
+
+  A doubled quote escapes a quote inside a quoted field. For tab- or pipe-separated text, use
+  `delimited` with `delimiter: "\t"` and, say, `extension: tsv`.
 - `null: "NULL"` (csv, delimited) writes that marker for nulls instead of an empty field. It can be
   written unquoted as above: DRE reads a YAML `null:` key as the option `null`.
 - Timestamps with a timezone are written in their zone with the offset,
