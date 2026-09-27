@@ -238,6 +238,81 @@ fn no_auto_install_makes_a_missing_plugin_a_hard_failure_for_run() {
 }
 
 #[test]
+fn an_undeclared_plugin_is_looked_up_in_the_registry() {
+    // In the registry: declare it and run `dre deps`.
+    let e = Env::new("formats:\n  - csv\n");
+    e.dre(&["validate"])
+        .failed()
+        .says("add `fixture` under `sources:` in dependencies.yml, then run `dre deps`");
+    // Not in the registry at all, or there as another kind.
+    std::fs::write(
+        e.p("project/reports/ops/f/f.yml"),
+        "queries: [fq]\noutput: {format: fixture}\n",
+    )
+    .unwrap();
+    std::fs::write(e.p("project/dependencies.yml"), DECLARED).unwrap();
+    e.dre(&["validate"])
+        .failed()
+        .says("`fixture` in DRE's plugin registry is a source plugin, not a format");
+    std::fs::write(
+        e.p("project/reports/ops/f/f.yml"),
+        "queries: [fq]\noutput: {format: xslx}\n",
+    )
+    .unwrap();
+    e.dre(&["validate"])
+        .failed()
+        .says("DRE's plugin registry has no format plugin called `xslx`; check the spelling");
+    // Offline, the registry isn't asked.
+    e.dre(&["validate", "--no-auto-install"])
+        .failed()
+        .says("add `xslx` under `formats:` in dependencies.yml, then run `dre deps`");
+}
+
+#[test]
+fn format_options_are_checked_by_the_plugin_and_apply_under_every_output_of_that_format() {
+    let e = Env::new(DECLARED);
+    std::fs::write(
+        e.p("project/dre_project.yml"),
+        "name: acme_reports\ndefault_profile: fx\nformat_options:\n  csv: {delimiter: \"|\", quoting: all}\n",
+    )
+    .unwrap();
+    e.dre(&["run", "f"]).ok();
+    assert_eq!(
+        std::fs::read_to_string(e.p("project/target/run/f/default/f.csv")).unwrap(),
+        "\"n\"\r\n\"0\"\r\n\"1\"\r\n\"2\"\r\n"
+    );
+    // A report's own keys win.
+    std::fs::write(
+        e.p("project/reports/ops/f/f.yml"),
+        "queries: [fq]\noutput: {quoting: none}\n",
+    )
+    .unwrap();
+    e.dre(&["run", "f"]).ok();
+    assert_eq!(
+        std::fs::read_to_string(e.p("project/target/run/f/default/f.csv")).unwrap(),
+        "n\r\n0\r\n1\r\n2\r\n"
+    );
+    // The plugin checks the project-wide block too, and a run refuses to start.
+    std::fs::write(
+        e.p("project/dre_project.yml"),
+        "name: acme_reports\ndefault_profile: fx\nformat_options:\n  csv: {delimiter: \"||\", encoding: klingon}\n",
+    )
+    .unwrap();
+    e.dre(&["validate"])
+        .failed()
+        .says("dre_project.yml: `format_options.csv`: `delimiter` must be a single character");
+    e.dre(&["run", "f"]).failed().says("fix them before running");
+    std::fs::write(
+        e.p("project/dre_project.yml"),
+        "name: acme_reports\ndefault_profile: fx\nformat_options:\n  csv: {encoding: klingon}\n",
+    )
+    .unwrap();
+    e.dre(&["validate"])
+        .failed()
+        .says("unknown or unsupported `encoding` \"klingon\"");
+}
+
+#[test]
 fn install_update_and_remove_keep_dre_lock_in_step() {
     let e = Env::new(DECLARED);
     e.dre(&["plugin", "install", "fixture@=1.0.0"])

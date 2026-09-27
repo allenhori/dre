@@ -1,13 +1,19 @@
-//! Output format options, validated offline against the documented set.
+//! Plugin options: a format's `output:` keys and a destination entry's keys. Core owns only the
+//! keys every output shares (`format`, `destination`, `template`, `extension`, `profile`,
+//! `path`); everything else belongs to the plugin, which checks it (the protocol's `validate`).
+//! A new format or destination therefore needs no change to core.
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use dre_protocol::host::{LogSink, PluginProcess};
 use serde_json::{Map, Value};
 
-/// Excel's row limit minus a header row.
-pub const XLSX_MAX_ROWS: u64 = 1_048_575;
-pub const XLSX_DEFAULT_ROWS_PER_SHEET: u64 = 1_000_000;
-
-/// Formats whose options core knows. Anything else (a format pack) defines its own options.
-pub const KNOWN_FORMATS: &[&str] = &["csv", "delimited", "fixed_width", "parquet", "xlsx"];
+use crate::Diagnostics;
+use crate::profiles::{LOCAL_TYPE, Role};
+use crate::project::{PluginKind, Project};
+use crate::run::find_plugin;
 
 /// Parse `B12` into zero-based `(row, col)`.
 pub use dre_protocol::util::parse_cell;
@@ -16,164 +22,175 @@ pub fn is_cell(s: &str) -> bool {
     parse_cell(s).is_some()
 }
 
-fn allowed(format: &str) -> &'static [&'static str] {
-    match format {
-        "xlsx" => &["header", "max_rows_per_sheet"],
-        "csv" | "delimited" => &[
-            "delimiter",
-            "quote",
-            "quoting",
-            "header",
-            "line_ending",
-            "encoding",
-            "null",
-            "byte_order_mark",
-        ],
-        "fixed_width" => &["columns", "line_ending", "encoding", "line_breaks"],
-        _ => &[],
-    }
+/// Where a config block is used: the report (and Set), its file, and for a destination, the
+/// profile it names.
+struct Use {
+    ctx: String,
+    file: PathBuf,
+    profile: Option<String>,
 }
 
-fn single_char(v: &Value) -> bool {
-    v.as_str().is_some_and(|s| s.chars().count() == 1)
-}
+/// One plugin's distinct option blocks (keyed by their JSON), each with where it's used.
+type Blocks = BTreeMap<String, (Map<String, Value>, Vec<Use>)>;
 
-/// A text encoding DRE can write.
-pub fn encoding_supported(label: &str) -> bool {
-    match encoding_rs::Encoding::for_label(label.as_bytes()) {
-        // encoding_rs can decode UTF-16 but not encode it.
-        Some(e) => e.output_encoding() == e,
-        None => false,
+/// Ask each format and destination plugin to check every config block the project gives it,
+/// found by kind and name alone: core knows nothing of any plugin's options. `target` picks each
+/// destination profile's output, as `--target` does for a run. A declared plugin that can't be
+/// found is an error, or a warning with `offline` (`dre validate --no-auto-install`, which
+/// doesn't install plugins).
+pub fn check(project: &Project, target: Option<&str>, offline: bool, diags: &mut Diagnostics) {
+    // (kind, plugin) -> distinct option blocks -> where each is used.
+    let mut blocks: BTreeMap<(PluginKind, String), Blocks> = BTreeMap::new();
+    let mut add = |kind, name: &str, options: &Map<String, Value>, u: Use| {
+        let key = serde_json::to_string(options).unwrap_or_default();
+        blocks
+            .entry((kind, name.to_string()))
+            .or_default()
+            .entry(key)
+            .or_insert_with(|| (options.clone(), Vec::new()))
+            .1
+            .push(u);
+    };
+    for (format, options) in &project.format_options {
+        let u = Use {
+            ctx: format!("`format_options.{format}`"),
+            file: PathBuf::from(crate::project::PROJECT_FILE),
+            profile: None,
+        };
+        add(PluginKind::Format, format, options, u);
     }
-}
+    for r in &project.reports {
+        for b in &r.bindings {
+            let ctx = match &b.set {
+                Some(s) => format!("report `{}`, Set `{s}`", r.name),
+                None => format!("report `{}`", r.name),
+            };
+            let at = |profile: Option<&str>| Use {
+                ctx: ctx.clone(),
+                file: r.file.clone(),
+                profile: profile.map(str::to_string),
+            };
+            add(PluginKind::Format, &b.output.format, &b.output.options, at(None));
+            for d in &b.output.destinations {
+                let kind = if project.profiles.is_builtin_local(&d.profile) {
+                    LOCAL_TYPE
+                } else {
+                    match project.profiles.target(Role::Destination, &d.profile, target) {
+                        Some((_, t)) => t.kind.as_str(),
+                        // A missing profile or target is reported elsewhere.
+                        None => continue,
+                    }
+                };
+                add(PluginKind::Destination, kind, &d.options, at(Some(&d.profile)));
+            }
+        }
+    }
 
-/// Problems with a format's options (`options` excludes `format`, `destination`, `template`).
-pub fn validate(format: &str, options: &Map<String, Value>) -> Vec<String> {
-    let mut errs = Vec::new();
-    if !KNOWN_FORMATS.contains(&format) {
-        return errs;
-    }
-    for k in options.keys() {
-        if !allowed(format).contains(&k.as_str()) {
-            errs.push(format!("unknown option `{k}` for format `{format}`"));
+    let log: LogSink = Arc::new(|_, _| {});
+    for ((kind, name), blocks) in blocks {
+        let report = |diags: &mut Diagnostics, u: &Use, e: &str| {
+            let (code, msg) = match &u.profile {
+                Some(p) => (
+                    "invalid-destination-option",
+                    format!("{}: destination `{p}`: {e}", u.ctx),
+                ),
+                None => ("invalid-output-option", format!("{}: {e}", u.ctx)),
+            };
+            diags.error(code, Some(u.file.clone()), None, msg);
+        };
+        // An undeclared plugin is already an error (`undeclared-plugin`).
+        let local = kind == PluginKind::Destination && name == LOCAL_TYPE;
+        if !local && !project.plugins.iter().any(|r| r.kind == kind && r.name == name) {
+            continue;
         }
-    }
-    let get = |k: &str| options.get(k);
-    let bool_opt = |k: &str, errs: &mut Vec<String>| {
-        if let Some(v) = get(k)
-            && !v.is_boolean()
-        {
-            errs.push(format!("`{k}` must be true or false"));
-        }
-    };
-    let line_ending = |errs: &mut Vec<String>| {
-        if let Some(v) = get("line_ending")
-            && !matches!(v.as_str(), Some("\n") | Some("\r\n"))
-        {
-            errs.push(r#"`line_ending` must be "\n" or "\r\n""#.to_string());
-        }
-    };
-    let encoding = |errs: &mut Vec<String>| {
-        if let Some(v) = get("encoding") {
-            match v.as_str() {
-                Some(s) if encoding_supported(s) => {}
-                _ => errs.push(format!("unknown or unsupported `encoding` {v}")),
-            }
-        }
-    };
-    match format {
-        "xlsx" => {
-            bool_opt("header", &mut errs);
-            if let Some(v) = get("max_rows_per_sheet") {
-                match v.as_u64() {
-                    Some(n) if (1..=XLSX_MAX_ROWS).contains(&n) => {}
-                    _ => errs.push(format!(
-                        "`max_rows_per_sheet` must be a whole number from 1 to {XLSX_MAX_ROWS} (Excel's limit)"
-                    )),
-                }
-            }
-        }
-        "csv" | "delimited" => {
-            for k in ["delimiter", "quote"] {
-                if let Some(v) = get(k)
-                    && !single_char(v)
-                {
-                    errs.push(format!("`{k}` must be a single character"));
-                }
-            }
-            if let Some(v) = get("quoting")
-                && !matches!(v.as_str(), Some("minimal" | "all" | "strings" | "none"))
-            {
-                errs.push("`quoting` must be one of `minimal`, `all`, `strings`, `none`".to_string());
-            }
-            bool_opt("header", &mut errs);
-            bool_opt("byte_order_mark", &mut errs);
-            if let Some(v) = get("null")
-                && !v.is_string()
-            {
-                errs.push("`null` must be a string".to_string());
-            }
-            line_ending(&mut errs);
-            encoding(&mut errs);
-        }
-        "fixed_width" => {
-            if let Some(v) = get("line_breaks")
-                && !matches!(v.as_str(), Some("error" | "replace"))
-            {
-                errs.push("`line_breaks` must be `error` or `replace`".to_string());
-            }
-            line_ending(&mut errs);
-            encoding(&mut errs);
-            match get("columns").and_then(Value::as_array) {
-                None => errs.push("fixed_width output needs a `columns:` list".to_string()),
-                Some(cols) if cols.is_empty() => errs.push("`columns:` must not be empty".to_string()),
-                Some(cols) => {
-                    for (i, c) in cols.iter().enumerate() {
-                        errs.extend(fixed_width_column(i + 1, c));
+        // Core's own destination.
+        if kind == PluginKind::Destination && name == LOCAL_TYPE {
+            for (options, uses) in blocks.values() {
+                if let Some(k) = options.keys().next() {
+                    for u in uses {
+                        report(
+                            diags,
+                            u,
+                            &format!(
+                                "the local destination takes no options, but got `{k}`; check the key's spelling"
+                            ),
+                        );
                     }
                 }
             }
+            continue;
         }
-        _ => {}
-    }
-    errs
-}
-
-fn fixed_width_column(n: usize, c: &Value) -> Vec<String> {
-    let mut errs = Vec::new();
-    let Some(m) = c.as_object() else {
-        return vec![format!("column {n} must be a map with `name` and `width`")];
-    };
-    let label = match m.get("name").and_then(Value::as_str) {
-        Some(s) => format!("column `{s}`"),
-        None => {
-            errs.push(format!("column {n} has no `name`"));
-            format!("column {n}")
+        let path = match find_plugin(project, kind, &name) {
+            Ok(p) => p,
+            Err(e) => {
+                let first = blocks.values().flat_map(|(_, u)| u).next();
+                let file = first.map(|u| u.file.clone());
+                let at = first.map(|u| format!("{}: ", u.ctx)).unwrap_or_default();
+                if offline {
+                    diags.warning(
+                        "options-unchecked",
+                        file,
+                        None,
+                        format!("{at}{kind} `{name}`'s options weren't checked: {e}"),
+                    );
+                } else {
+                    diags.error(
+                        "plugin-not-found",
+                        file,
+                        None,
+                        format!("{at}{kind} `{name}` has no plugin to check it against: {e}"),
+                    );
+                }
+                continue;
+            }
+        };
+        let mut p = match PluginProcess::start_in(&path, log.clone(), Some(&project.root)) {
+            Ok(p) => p,
+            Err(e) => {
+                diags.warning(
+                    "options-unchecked",
+                    None,
+                    None,
+                    format!("can't check the options of {kind} `{name}`: {e}"),
+                );
+                continue;
+            }
+        };
+        if !p.has(dre_protocol::CAP_VALIDATE) {
+            if blocks.values().any(|(o, _)| !o.is_empty()) {
+                diags.warning(
+                    "options-unchecked",
+                    None,
+                    None,
+                    format!(
+                        "{kind} `{name}` {} predates option checks, so its options weren't checked; run `dre plugin update {kind}/{name}`",
+                        p.info().version
+                    ),
+                );
+            }
+            let _ = p.close();
+            continue;
         }
-    };
-    for k in m.keys() {
-        if !["name", "width", "align", "pad", "truncate"].contains(&k.as_str()) {
-            errs.push(format!("{label} has unknown key `{k}`"));
+        for (options, uses) in blocks.into_values() {
+            match p.validate(options) {
+                Ok(errors) => {
+                    for u in &uses {
+                        for e in &errors {
+                            report(diags, u, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    diags.warning(
+                        "options-unchecked",
+                        None,
+                        None,
+                        format!("{kind} `{name}` failed to check its options: {e}"),
+                    );
+                    break;
+                }
+            }
         }
+        let _ = p.close();
     }
-    match m.get("width").and_then(Value::as_u64) {
-        Some(w) if w > 0 => {}
-        _ => errs.push(format!("{label} needs a positive whole-number `width`")),
-    }
-    if let Some(a) = m.get("align")
-        && !matches!(a.as_str(), Some("left" | "right"))
-    {
-        errs.push(format!("{label} `align` must be `left` or `right`"));
-    }
-    if let Some(p) = m.get("pad")
-        && !single_char(p)
-    {
-        errs.push(format!("{label} `pad` must be a single character"));
-    }
-    if let Some(t) = m.get("truncate")
-        && !t.is_boolean()
-    {
-        errs.push(format!("{label} `truncate` must be true or false"));
-    }
-    errs
 }

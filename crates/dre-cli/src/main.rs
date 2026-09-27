@@ -294,9 +294,16 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     }
     let selector = selection(&a.select, &a.selector);
     let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
+    if !a.project.no_auto_install {
+        dre_core::manager::explain_undeclared(&mut diags);
+    }
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
+        // Plugins aren't installed when the project already has errors, so a missing one is then
+        // only a warning; the option checks run either way, so every problem shows in one pass.
+        let offline = a.project.no_auto_install || diags.has_errors();
         plugins::check_for_validate(p, !a.project.no_auto_install, &mut diags, printer);
+        dre_core::options::check(p, a.project.target.as_deref(), offline, &mut diags);
     }
     // Only a project that checks out gets compiled.
     let plans = match &project {
@@ -575,7 +582,10 @@ fn profiles_line(p: &dre_core::profiles::Profiles) -> String {
 }
 
 fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::project::Project> {
-    let (project, diags) = project::load(&p.project_dir, &p.load_options());
+    let (project, mut diags) = project::load(&p.project_dir, &p.load_options());
+    if !p.no_auto_install {
+        dre_core::manager::explain_undeclared(&mut diags);
+    }
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
     }
@@ -615,6 +625,18 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     };
     printer.log_to(&project.root);
     if !plugins::ensure(&project, !a.project.no_auto_install, false, &printer) {
+        return ExitCode::FAILURE;
+    }
+    let mut diags = dre_core::Diagnostics::default();
+    dre_core::options::check(&project, a.project.target.as_deref(), false, &mut diags);
+    for d in diags.sorted() {
+        println!("{}", printer.diagnostic(d));
+    }
+    if diags.has_errors() {
+        printer.error(&format!(
+            "the project has {} error(s); fix them before running (see `dre validate`)",
+            diags.error_count()
+        ));
         return ExitCode::FAILURE;
     }
     let opts = dre_core::run::RunOptions {

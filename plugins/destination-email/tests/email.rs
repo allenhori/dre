@@ -275,7 +275,10 @@ fn unknown_options_and_bad_addresses_are_clear_errors() {
         json!({"to": "x@example.com", "subjet": "typo"}),
     )
     .unwrap_err();
-    assert!(err.contains("unknown email option `subjet`"), "{err}");
+    assert!(
+        err.contains("unknown option `subjet` for destination `email`"),
+        "{err}"
+    );
     let err = send(
         &[f.file("a.csv", b"1")],
         local(dead_port()),

@@ -51,9 +51,9 @@ type role struct {
 }
 
 var (
-	sourceRole      = role{kind: "source", name: "databricks", capabilities: []string{"sessions", "check", "load"}}
-	destinationRole = role{kind: "destination", name: "databricks_volumes", capabilities: []string{}}
-	workspaceRole   = role{kind: "destination", name: "databricks_workspace", capabilities: []string{}}
+	sourceRole      = role{kind: "source", name: "databricks", capabilities: []string{"sessions", "check", "load", "validate"}}
+	destinationRole = role{kind: "destination", name: "databricks_volumes", capabilities: []string{"validate"}}
+	workspaceRole   = role{kind: "destination", name: "databricks_workspace", capabilities: []string{"validate"}}
 )
 
 // roleOf picks the role from the executable's name: dre-destination-databricks_workspace and
@@ -212,7 +212,32 @@ func (s *server) hello(req map[string]json.RawMessage) {
 	})
 }
 
+// optionErrors checks a config block of options. No role of this program takes options, so
+// every key is refused and a misspelt one is an error, not silently dropped.
+func (s *server) optionErrors(opts map[string]any) []string {
+	keys := make([]string, 0, len(opts))
+	for k := range opts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	errs := []string{}
+	for _, k := range keys {
+		errs = append(errs, fmt.Sprintf("the `%s` %s takes no options, but got `%s`; check the key's spelling", s.role.name, s.role.kind, k))
+	}
+	return errs
+}
+
 func (s *server) handle(t string, req map[string]json.RawMessage) error {
+	if t == "validate" {
+		var r struct {
+			Options map[string]any `json:"options"`
+		}
+		if json.Unmarshal(mustObject(req), &r) != nil {
+			return fmt.Errorf("unsupported request `validate`")
+		}
+		s.send(map[string]any{"type": "validated", "errors": s.optionErrors(r.Options)})
+		return nil
+	}
 	if s.role.kind == "destination" {
 		return s.handleDestination(t, req)
 	}
@@ -293,14 +318,8 @@ func (s *server) handleDestination(t string, req map[string]json.RawMessage) err
 		if json.Unmarshal(mustObject(req), &r) != nil || r.Connection == nil {
 			return fmt.Errorf("unsupported request `deliver`")
 		}
-		// This destination takes no options, so a misspelt key is an error, not silently dropped.
-		if len(r.Options) > 0 {
-			keys := make([]string, 0, len(r.Options))
-			for k := range r.Options {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			return fmt.Errorf("this destination takes no options, but the destination entry has `%s`; check the key's spelling", keys[0])
+		if errs := s.optionErrors(r.Options); len(errs) > 0 {
+			return fmt.Errorf("%s", strings.Join(errs, "; "))
 		}
 		var local, remote string
 		switch {

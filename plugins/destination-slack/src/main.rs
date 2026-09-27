@@ -12,12 +12,12 @@ use std::time::Duration;
 
 use dre_protocol::CAP_MULTI_FILE;
 use dre_protocol::msg::ConnectionField;
+use dre_protocol::options::{OptionField, OptionType};
 use dre_protocol::plugin::{
     About, Delivery, Destination, Result, conn_required, conn_str, serve_destination,
 };
 use serde_json::{Map, Value, json};
 
-const OPTIONS: &[&str] = &["channel", "user", "message"];
 const DEFAULT_API: &str = "https://slack.com/api";
 /// Longest `Retry-After` honoured before giving up on a rate-limited call.
 const MAX_RETRY_WAIT: u64 = 60;
@@ -34,14 +34,32 @@ impl Destination for Slack {
         ]
     }
 
-    fn deliver_files(&mut self, d: &Delivery) -> Result<String> {
-        if let Some(k) = d.options.keys().find(|k| !OPTIONS.contains(&k.as_str())) {
-            return Err(format!(
-                "unknown slack option `{k}`; expected one of {}",
-                OPTIONS.join(", ")
-            )
-            .into());
+    fn options(&self) -> Vec<OptionField> {
+        vec![
+            OptionField::new("channel", OptionType::String, "a channel ID (C0123) or #name"),
+            OptionField::new(
+                "user",
+                OptionType::String,
+                "a user ID (U0123), for a direct message",
+            ),
+            OptionField::new("message", OptionType::String, "the text posted with the files"),
+        ]
+    }
+
+    fn validate(&self, o: &Map<String, Value>) -> Vec<String> {
+        let set = |k: &str| {
+            o.get(k)
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        };
+        if set("channel") && set("user") {
+            vec!["give the slack destination either `channel` or `user`, not both".into()]
+        } else {
+            Vec::new()
         }
+    }
+
+    fn deliver_files(&mut self, d: &Delivery) -> Result<String> {
         let target = Target::from(&d.options, &d.connection)?;
         let message = match d.options.get("message") {
             None | Some(Value::Null) => None,

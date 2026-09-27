@@ -8,6 +8,7 @@
 //! - [`msg`]: every control message.
 //! - [`host`]: the core side: spawning a plugin, the handshake, requests.
 //! - [`plugin`]: the SDK plugin authors use to serve requests.
+//! - [`options`]: the options a plugin declares, and how they're checked.
 //! - [`conformance`]: checks any plugin binary against the protocol.
 //! - [`sessions`]: OAuth sessions plugins keep in `~/.dre/oauth_sessions.json`.
 
@@ -15,6 +16,7 @@ pub mod conformance;
 pub mod frame;
 pub mod host;
 pub mod msg;
+pub mod options;
 pub mod plugin;
 pub mod sessions;
 pub mod util;
@@ -33,6 +35,8 @@ pub const CAP_CHECK: &str = "check";
 pub const CAP_MULTI_FILE: &str = "multi_file";
 /// Source: loads rows into a temporary table on the session (`load`), for large lookups.
 pub const CAP_LOAD: &str = "load";
+/// Answers `validate` (checks a config block of options). The Rust SDK always advertises it.
+pub const CAP_VALIDATE: &str = "validate";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]

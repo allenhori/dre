@@ -323,7 +323,10 @@ fn target_mistakes_fail_before_any_api_call() {
         json!({"chanel": "C1"}),
     )
     .unwrap_err();
-    assert!(err.contains("unknown slack option `chanel`"), "{err}");
+    assert!(
+        err.contains("unknown option `chanel` for destination `slack`"),
+        "{err}"
+    );
     assert!(calls.lock().unwrap().is_empty());
 }
 

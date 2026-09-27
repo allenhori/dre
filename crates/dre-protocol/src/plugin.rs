@@ -1,6 +1,10 @@
 //! The plugin SDK: implement one of [`Source`], [`Format`] or [`Destination`] and call the
 //! matching `serve_*` function from `main`. The SDK owns stdin/stdout, the handshake, framing,
 //! error replies and panics; plugins log with `eprintln!`.
+//!
+//! Formats and destinations declare their options (`options()`) and add any rule a declaration
+//! can't express (`validate()`). The SDK checks a config block against both on `validate` and
+//! before every `write` and `deliver`, so plugin code only sees options that passed.
 
 use std::io::{BufReader, BufWriter, Read, Stdout};
 use std::path::{Path, PathBuf};
@@ -11,7 +15,8 @@ use serde_json::{Map, Value};
 
 use crate::frame::{self, Frame, FrameError};
 use crate::msg::{ConnectionField, Request, Response, ResultSetMeta};
-use crate::{Kind, MAX_VERSION, MIN_VERSION};
+use crate::options::{self, OptionField};
+use crate::{CAP_VALIDATE, Kind, MAX_VERSION, MIN_VERSION};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -173,6 +178,16 @@ impl ResultSets<'_> {
 }
 
 pub trait Format {
+    /// The options this format takes: every key of a report's `output:` block except `format`,
+    /// `destination`, `template` and `extension`, which core owns.
+    fn options(&self) -> Vec<OptionField> {
+        Vec::new()
+    }
+    /// Problems the declared [`Format::options`] can't catch, each a sentence naming the key.
+    /// Only called on options whose declared types already passed.
+    fn validate(&self, _options: &Map<String, Value>) -> Vec<String> {
+        Vec::new()
+    }
     /// Write every result set to `req.path` (and siblings, if the format needs several files);
     /// return the files written.
     fn write(&mut self, req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>>;
@@ -197,6 +212,17 @@ pub trait Destination {
     fn connection_fields(&self) -> Vec<ConnectionField> {
         Vec::new()
     }
+    /// The options a report's destination entry takes: every key but `profile` and `path`.
+    /// String values may still hold Jinja when checked (see [`options::is_template`]); core
+    /// renders it before `deliver`.
+    fn options(&self) -> Vec<OptionField> {
+        Vec::new()
+    }
+    /// Problems the declared [`Destination::options`] can't catch, each a sentence naming the key.
+    /// Only called on options whose declared types already passed.
+    fn validate(&self, _options: &Map<String, Value>) -> Vec<String> {
+        Vec::new()
+    }
     /// Deliver `local` to `remote` (rendered by core); return where it landed. Enough for a
     /// destination that takes no options; others implement [`Destination::deliver_files`].
     fn deliver(
@@ -207,16 +233,9 @@ pub trait Destination {
     ) -> Result<String> {
         Err("this destination doesn't implement `deliver`".into())
     }
-    /// The whole request, options included. The default refuses options (so a misspelt key in
-    /// the report is an error, not silently dropped) and hands a single file to
-    /// [`Destination::deliver`]; several files arrive only with `multi_file` advertised.
+    /// The whole request, options included (already checked). The default hands a single file
+    /// to [`Destination::deliver`]; several files arrive only with `multi_file` advertised.
     fn deliver_files(&mut self, d: &Delivery) -> Result<String> {
-        if let Some(k) = d.options.keys().next() {
-            return Err(format!(
-                "this destination takes no options, but the destination entry has `{k}`; check the key's spelling"
-            )
-            .into());
-        }
         match d.files.as_slice() {
             [f] => self.deliver(&f.local, f.remote.as_deref(), &d.connection),
             _ => Err("this destination takes one file per delivery".into()),
@@ -269,6 +288,38 @@ impl Handler<'_> {
             Handler::Source(_) => Kind::Source,
             Handler::Format(_) => Kind::Format,
             Handler::Destination(_) => Kind::Destination,
+        }
+    }
+
+    fn option_fields(&self) -> Vec<OptionField> {
+        match self {
+            Handler::Source(_) => Vec::new(),
+            Handler::Format(f) => f.options(),
+            Handler::Destination(d) => d.options(),
+        }
+    }
+
+    /// Every problem with a config block: the declared checks, then the plugin's own once the
+    /// declared ones pass.
+    fn check(&self, name: &str, o: &Map<String, Value>) -> Vec<String> {
+        let errs = options::check(self.kind(), name, &self.option_fields(), o);
+        if !errs.is_empty() {
+            return errs;
+        }
+        match self {
+            Handler::Source(_) => Vec::new(),
+            Handler::Format(f) => f.validate(o),
+            Handler::Destination(d) => d.validate(o),
+        }
+    }
+
+    /// The config block's problems as one error, for `write` and `deliver`.
+    fn checked(&self, name: &str, o: &Map<String, Value>) -> Result<()> {
+        let errs = self.check(name, o);
+        if errs.is_empty() {
+            Ok(())
+        } else {
+            Err(errs.join("; ").into())
         }
     }
 }
@@ -347,7 +398,12 @@ fn serve(about: About, mut h: Handler<'_>) -> ! {
                 kind: h.kind(),
                 name: about.name.to_string(),
                 version: about.version.to_string(),
-                capabilities: about.capabilities.iter().map(|c| c.to_string()).collect(),
+                capabilities: about
+                    .capabilities
+                    .iter()
+                    .chain(std::iter::once(&CAP_VALIDATE))
+                    .map(|c| c.to_string())
+                    .collect(),
             });
             continue;
         }
@@ -365,7 +421,7 @@ fn serve(about: About, mut h: Handler<'_>) -> ! {
             std::process::exit(0);
         }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            handle(&mut h, req, &mut input, &mut out)
+            handle(&mut h, about.name, req, &mut input, &mut out)
         }));
         match result {
             Ok(Ok(())) => {}
@@ -387,23 +443,30 @@ fn serve(about: About, mut h: Handler<'_>) -> ! {
     }
 }
 
-fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output) -> Result<()> {
+fn handle(h: &mut Handler<'_>, name: &str, req: Request, input: &mut Input, out: &mut Output) -> Result<()> {
+    if let Request::Describe {} = req {
+        let connection_fields = match h {
+            Handler::Source(s) => s.connection_fields(),
+            Handler::Destination(d) => d.connection_fields(),
+            Handler::Format(_) => Vec::new(),
+        };
+        out.send(&Response::Describe {
+            connection_fields,
+            option_fields: h.option_fields(),
+        });
+        return Ok(());
+    }
+    if let Request::Validate { options } = req {
+        out.send(&Response::Validated {
+            errors: h.check(name, &options),
+        });
+        return Ok(());
+    }
+    let checked = match &req {
+        Request::Write { options, .. } | Request::Deliver { options, .. } => h.checked(name, options),
+        _ => Ok(()),
+    };
     match (h, req) {
-        (Handler::Source(s), Request::Describe {}) => {
-            out.send(&Response::Describe {
-                connection_fields: s.connection_fields(),
-            });
-        }
-        (Handler::Destination(d), Request::Describe {}) => {
-            out.send(&Response::Describe {
-                connection_fields: d.connection_fields(),
-            });
-        }
-        (Handler::Format(_), Request::Describe {}) => {
-            out.send(&Response::Describe {
-                connection_fields: Vec::new(),
-            });
-        }
         (
             Handler::Source(s),
             Request::Open {
@@ -494,7 +557,7 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
                 input,
                 warnings: Vec::new(),
             };
-            let written = f.write(&req, &mut sets);
+            let written = checked.and_then(|()| f.write(&req, &mut sets));
             // A failed write is reported at once, so core can stop streaming; this is the
             // request's one reply.
             if let Err(e) = &written {
@@ -529,6 +592,7 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
                 options,
             },
         ) => {
+            checked?;
             let files = match (local_path, files.is_empty()) {
                 (Some(local), true) => vec![DeliveryFile {
                     local: PathBuf::from(local),

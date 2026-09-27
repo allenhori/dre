@@ -6,11 +6,13 @@
 //!
 //! - It advertises `multi_file` unless `DRE_FIXTURE_SINGLE_FILE` is set.
 //! - A connection with `fail: true` makes every delivery fail.
+//! - Its options are `to`, `subject` and `message`, recorded as given.
 
 use std::io::Write;
 
 use dre_protocol::CAP_MULTI_FILE;
 use dre_protocol::msg::ConnectionField;
+use dre_protocol::options::{OptionField, OptionType};
 use dre_protocol::plugin::{
     About, Delivery, Destination, Result, conn_bool, conn_required, serve_destination,
 };
@@ -21,6 +23,14 @@ struct Fixture;
 impl Destination for Fixture {
     fn connection_fields(&self) -> Vec<ConnectionField> {
         vec![ConnectionField::new("dir", "where deliveries are recorded").required()]
+    }
+
+    fn options(&self) -> Vec<OptionField> {
+        vec![
+            OptionField::new("to", OptionType::Strings, "recorded"),
+            OptionField::new("subject", OptionType::String, "recorded"),
+            OptionField::new("message", OptionType::String, "recorded"),
+        ]
     }
 
     fn deliver_files(&mut self, d: &Delivery) -> Result<String> {

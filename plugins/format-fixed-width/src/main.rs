@@ -12,8 +12,9 @@ use std::io::{BufWriter, Write};
 
 use arrow::array::Array;
 use arrow::util::display::{ArrayFormatter, FormatOptions};
+use dre_protocol::options::{OptionField, OptionType};
 use dre_protocol::plugin::{About, Format, Result, ResultSets, WriteRequest, serve_format};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 struct Column {
     name: String,
@@ -88,9 +89,91 @@ impl Column {
     }
 }
 
+/// Problems with the `n`th (1-based) entry of `columns:`.
+fn column_errors(n: usize, c: &Value) -> Vec<String> {
+    let mut errs = Vec::new();
+    let Some(m) = c.as_object() else {
+        return vec![format!("column {n} must be a map with `name` and `width`")];
+    };
+    let label = match m.get("name").and_then(Value::as_str) {
+        Some(s) => format!("column `{s}`"),
+        None => {
+            errs.push(format!("column {n} has no `name`"));
+            format!("column {n}")
+        }
+    };
+    for k in m.keys() {
+        if !["name", "width", "align", "pad", "truncate"].contains(&k.as_str()) {
+            errs.push(format!("{label} has unknown key `{k}`"));
+        }
+    }
+    match m.get("width").and_then(Value::as_u64) {
+        Some(w) if w > 0 => {}
+        _ => errs.push(format!("{label} needs a positive whole-number `width`")),
+    }
+    if let Some(a) = m.get("align")
+        && !matches!(a.as_str(), Some("left" | "right"))
+    {
+        errs.push(format!("{label} `align` must be `left` or `right`"));
+    }
+    if let Some(p) = m.get("pad")
+        && !p.as_str().is_some_and(|s| s.chars().count() == 1)
+    {
+        errs.push(format!("{label} `pad` must be a single character"));
+    }
+    if let Some(t) = m.get("truncate")
+        && !t.is_boolean()
+    {
+        errs.push(format!("{label} `truncate` must be true or false"));
+    }
+    errs
+}
+
 struct FixedWidth;
 
 impl Format for FixedWidth {
+    fn options(&self) -> Vec<OptionField> {
+        use OptionType::*;
+        vec![
+            OptionField::new(
+                "columns",
+                List,
+                "the record layout, in order: {name, width, align (left|right), pad, truncate}",
+            )
+            .required(),
+            OptionField::new("line_ending", String, "ends each record")
+                .choices(&["\n", "\r\n"])
+                .default("\r\n"),
+            OptionField::new("encoding", String, "text encoding, e.g. utf-8, latin1").default("utf-8"),
+            OptionField::new(
+                "line_breaks",
+                String,
+                "a value with a line break: fail, or write a space",
+            )
+            .choices(&["error", "replace"])
+            .default("error"),
+        ]
+    }
+
+    fn validate(&self, o: &Map<String, Value>) -> Vec<String> {
+        let mut errs = Vec::new();
+        if let Some(e) = o.get("encoding").and_then(Value::as_str)
+            && encoding_rs::Encoding::for_label(e.as_bytes()).is_none_or(|x| x.output_encoding() != x)
+        {
+            errs.push(format!("unknown or unsupported `encoding` \"{e}\""));
+        }
+        match o.get("columns").and_then(Value::as_array) {
+            Some(cols) if cols.is_empty() => errs.push("`columns` must not be empty".to_string()),
+            Some(cols) => {
+                for (i, c) in cols.iter().enumerate() {
+                    errs.extend(column_errors(i + 1, c));
+                }
+            }
+            None => {}
+        }
+        errs
+    }
+
     fn write(&mut self, req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
         if req.result_sets.len() != 1 {
             return Err(format!(

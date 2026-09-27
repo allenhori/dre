@@ -152,7 +152,15 @@ func TestTheDestinationRoleSpeaksTheProtocol(t *testing.T) {
 		t.Fatalf("%v", names)
 	}
 	c.send(map[string]any{"type": "deliver", "local_path": "/x", "remote_path": "/Volumes/c/s/v/x", "connection": map[string]any{}, "options": map[string]any{"to": "x"}})
-	expectError(t, c.reply(), "takes no options, but the destination entry has `to`")
+	expectError(t, c.reply(), "the `databricks_volumes` destination takes no options, but got `to`")
+	c.send(map[string]any{"type": "validate", "options": map[string]any{"to": "x"}})
+	if r := c.reply(); r["type"] != "validated" || len(r["errors"].([]any)) != 1 {
+		t.Fatalf("%v", r)
+	}
+	c.send(map[string]any{"type": "validate", "options": map[string]any{}})
+	if r := c.reply(); r["type"] != "validated" || len(r["errors"].([]any)) != 0 {
+		t.Fatalf("%v", r)
+	}
 	c.send(map[string]any{"type": "execute", "sql": "select 1"})
 	expectError(t, c.reply(), "a destination plugin doesn't handle execute requests")
 	srv, _ := fakeFiles(t)
