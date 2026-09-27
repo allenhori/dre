@@ -135,7 +135,10 @@ optional; when present, the plugin returns at most that many rows. The reply is 
   one carries the schema, even for zero rows), followed by `{"type":"result_end","rows":42}`.
   An `error` may replace `result_end` if the stream fails part-way through.
 
-A statement produces a sheet or file in the output only if its reply is `result`.
+The report's YAML, not the reply, decides what goes in the output: each query entry makes one
+tab (a sheet, or a file for single-table formats) from its file's last statement unless it has
+`tab: false`. Core only checks the reply against that: a tab statement must reply `result` (zero
+rows still gives a tab with its column names), and results of other statements are discarded.
 
 `run_query()` in templates, `--preview` (with `row_limit`) and `dre validate --live` all use this
 same request.
@@ -175,6 +178,8 @@ built from one `VALUES` statement, with a warning. Only sent to plugins advertis
                   "anchor": "A1", "header": true}],
  "template": {…}}
 ```
+
+`result_index` is always 1: each query contributes at most one result set.
 
 After `write`, core streams each result set in the order listed. Each one is sent as one or more
 data frames (the first carries the schema), then `{"type":"result_set_end"}`. After the last

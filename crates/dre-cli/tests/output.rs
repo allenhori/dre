@@ -19,7 +19,10 @@ fn project() -> TestProject {
                 "name: acme_reports\ndefault_profile: warehouse\n",
             ),
             ("dependencies.yml", PLUGINS_YML),
-            ("reports/ops/daily/daily.yml", "queries: [setup, summary]\n"),
+            (
+                "reports/ops/daily/daily.yml",
+                "queries:\n  - {query: setup, tab: false}\n  - summary\n",
+            ),
             (
                 "reports/ops/daily/setup.sql",
                 "create temp table t as select 1 as n union all select 2\n",

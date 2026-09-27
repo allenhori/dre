@@ -148,7 +148,10 @@ fn run_query_feeds_rendering_on_the_bindings_own_session_even_in_dry_run() {
              {%- for row in res.rows -%}sum(case when region = '{{ row.region }}' then amount end) as {{ row[0] }}{{ ', ' if not loop.last }}{%- endfor -%}\
              {% endmacro %}\n",
         ),
-        ("reports/ops/pivot/pivot.yml", "queries: [setup, pq]\n"),
+        (
+            "reports/ops/pivot/pivot.yml",
+            "queries:\n  - {query: setup, tab: false}\n  - pq\n",
+        ),
         // A temp table created earlier in the same Binding is visible to run_query().
         (
             "reports/ops/pivot/setup.sql",

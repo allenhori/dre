@@ -150,9 +150,12 @@ fn a_destination_without_the_active_target_is_skipped_per_entry() {
 #[test]
 fn a_multi_file_destination_gets_every_file_in_one_delivery() {
     let (p, rec) = project(
-        "queries:\n  - {query: q, tab_name: [Orders, Refunds]}\noutput:\n  destination:\n\
+        "queries:\n  - {query: orders, tab_name: Orders}\n  - {query: refunds, tab_name: Refunds}\noutput:\n  destination:\n\
          \x20   - {profile: rec, path: out/daily.csv}\n",
-        &[("reports/ops/daily/q.sql", "select 1 as n; select 2 as m")],
+        &[
+            ("reports/ops/daily/orders.sql", "select 1 as n"),
+            ("reports/ops/daily/refunds.sql", "select 2 as m"),
+        ],
     );
     p.dre("run", &["daily"]).ok();
     let d = deliveries(&rec);
@@ -169,9 +172,12 @@ fn a_multi_file_destination_gets_every_file_in_one_delivery() {
 #[test]
 fn without_multi_file_each_file_is_its_own_delivery() {
     let (p, rec) = project(
-        "queries:\n  - {query: q, tab_name: [Orders, Refunds]}\noutput:\n  destination:\n\
+        "queries:\n  - {query: orders, tab_name: Orders}\n  - {query: refunds, tab_name: Refunds}\noutput:\n  destination:\n\
          \x20   - {profile: rec, path: out/daily.csv}\n",
-        &[("reports/ops/daily/q.sql", "select 1 as n; select 2 as m")],
+        &[
+            ("reports/ops/daily/orders.sql", "select 1 as n"),
+            ("reports/ops/daily/refunds.sql", "select 2 as m"),
+        ],
     );
     p.dre_env("run", &["daily"], &[("DRE_FIXTURE_SINGLE_FILE", "1")])
         .ok();

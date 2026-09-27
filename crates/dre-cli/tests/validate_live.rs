@@ -36,7 +36,10 @@ fn project(files: &[(&str, &str)]) -> TestProject {
 #[test]
 fn a_valid_report_passes_and_nothing_is_executed() {
     let p = project(&[
-        ("reports/ops/ok/ok.yml", "queries: [setup, q]\n"),
+        (
+            "reports/ops/ok/ok.yml",
+            "queries:\n  - {query: setup, tab: false}\n  - q\n",
+        ),
         // The temp table is actually created, so the query after it can be checked.
         (
             "reports/ops/ok/setup.sql",
@@ -61,7 +64,11 @@ fn a_valid_report_passes_and_nothing_is_executed() {
 #[test]
 fn failures_are_reported_per_statement_with_file_and_line() {
     let p = project(&[
-        ("reports/ops/bad/bad.yml", "queries: [q]\n"),
+        // `tab: false`: three SELECTs in one file are only allowed when none of them is a tab.
+        (
+            "reports/ops/bad/bad.yml",
+            "queries:\n  - {query: q, tab: false}\n",
+        ),
         (
             "reports/ops/bad/q.sql",
             "select id from accounts;\n\nselect missing_col from accounts;\nselect * from no_such_table;",

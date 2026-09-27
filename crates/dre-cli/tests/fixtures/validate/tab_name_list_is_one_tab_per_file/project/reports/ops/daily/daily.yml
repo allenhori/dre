@@ -1,0 +1,4 @@
+queries:
+  - {query: setup, tab: false, tab_name: Setup}
+  - {query: summary, tab: maybe}
+  - {query: multi, tab_name: [Summary, Detail]}

@@ -63,49 +63,101 @@ fn cells(p: &TestProject, rel: &str, sheet: &str) -> Vec<Vec<String>> {
 }
 
 #[test]
-fn statements_run_in_order_on_one_session_and_only_results_become_sheets() {
+fn statements_run_in_yaml_order_on_one_session_and_the_yaml_decides_the_tabs() {
     let p = project(&[
         (
             "reports/fin/monthly/monthly.yml",
-            "queries:\n  - setup\n  - {query: multi, tab_name: [Summary, Detail]}\n  - {query: plain, anchor: B2, header: false}\n  - two\noutput: {format: xlsx}\n",
+            // Tab order is YAML order, not alphabetical: zeta before alpha.
+            "queries:\n  - {query: setup, tab: false}\n  - {query: zeta, tab_name: Summary}\n  - {query: alpha, tab_name: Detail}\n  - {query: plain, anchor: B2, header: false}\n  - staged\n  - {query: discarded, tab: false}\noutput: {format: xlsx}\n",
         ),
-        // Setup: temp table + a SET, no result sets.
+        // Setup: temp table + a SET, no tab.
         (
             "reports/fin/monthly/setup.sql",
             "create temp table small as select * from accounts where id < 3;\nset threads = 1;\n",
         ),
         (
-            "reports/fin/monthly/multi.sql",
-            "select count(*) as n from small;\nselect id, name from small order by id;\n",
+            "reports/fin/monthly/zeta.sql",
+            "select count(*) as n from small;\n",
+        ),
+        (
+            "reports/fin/monthly/alpha.sql",
+            "select id, name from small order by id;\n",
         ),
         ("reports/fin/monthly/plain.sql", "select 'x' as a;\n"),
-        ("reports/fin/monthly/two.sql", "select 1 as one; select 2 as two;"),
+        // Earlier statements prepare; the last one is the tab.
+        (
+            "reports/fin/monthly/staged.sql",
+            "create temp table t2 as select id * 10 as id from small;\nselect * from t2 order by id;",
+        ),
+        // Returns rows, but `tab: false` says no tab.
+        ("reports/fin/monthly/discarded.sql", "select 42 as ignored;"),
     ]);
     p.dre("run", &["monthly"]).ok();
     let f = "target/run/monthly/default/monthly.xlsx";
-    assert_eq!(sheets(&p, f), ["Summary", "Detail", "plain", "two_1", "two_2"]);
+    assert_eq!(sheets(&p, f), ["Summary", "Detail", "plain", "staged"]);
     assert_eq!(cells(&p, f, "Summary"), [["n"], ["3"]]);
     assert_eq!(cells(&p, f, "Detail")[3], ["2", "acct 2"]);
+    assert_eq!(cells(&p, f, "staged")[1], ["0"]);
     // Anchored at B2 with no header: the only cell is B2.
     assert_eq!(cells(&p, f, "plain"), [["x"]]);
     let mut wb: Xlsx<_> = open_workbook(p.path(f)).unwrap();
     assert_eq!(wb.worksheet_range("plain").unwrap().start(), Some((1, 1)));
     let r = p.json("target/run/monthly/default/run_results.json");
-    assert_eq!(r["result_sets"].as_array().unwrap().len(), 5);
+    assert_eq!(r["result_sets"].as_array().unwrap().len(), 4);
 }
 
 #[test]
-fn a_tab_name_list_must_match_the_number_of_result_sets() {
+fn a_tab_with_no_rows_still_gets_its_column_names() {
     let p = project(&[
         (
             "reports/fin/r/r.yml",
-            "queries:\n  - {query: rq, tab_name: [OnlyOne]}\noutput: {format: xlsx}\n",
+            "queries:\n  - {query: none, tab_name: Nothing yet}\noutput: {format: xlsx}\n",
         ),
-        ("reports/fin/r/rq.sql", "select 1 as a; select 2 as b;"),
+        (
+            "reports/fin/r/none.sql",
+            "select id, name from accounts where 1 = 0",
+        ),
+    ]);
+    p.dre("run", &["r"]).ok();
+    let f = "target/run/r/default/r.xlsx";
+    assert_eq!(sheets(&p, f), ["Nothing yet"]);
+    assert_eq!(cells(&p, f, "Nothing yet"), [["id", "name"]]);
+}
+
+#[test]
+fn a_tab_query_whose_last_statement_returns_nothing_is_an_error() {
+    let p = project(&[
+        (
+            "reports/fin/r/r.yml",
+            "queries: [prep, rq]\noutput: {format: xlsx}\n",
+        ),
+        ("reports/fin/r/prep.sql", "create temp table x as select 1 as a"),
+        ("reports/fin/r/rq.sql", "select * from x"),
     ]);
     p.dre("run", &["r"])
         .failed()
-        .says("`rq` has 1 tab names but returned 2 result sets");
+        .says("`prep` makes a tab, but its last statement returned no result set")
+        .says("add `tab: false`");
+    assert!(!p.path("target/run/r/default/r.xlsx").exists());
+}
+
+#[test]
+fn two_selects_in_one_tab_file_are_an_error_before_anything_runs() {
+    let p = project(&[
+        ("reports/fin/r/r.yml", "queries: [rq]\noutput: {format: xlsx}\n"),
+        ("reports/fin/r/rq.sql", "select 1 as a;\nselect 2 as b;"),
+    ]);
+    p.dre("run", &["r"])
+        .failed()
+        .says("reports/fin/r/rq.sql:1")
+        .says("one .sql file makes one tab");
+    p.write(
+        "reports/fin/r/r.yml",
+        "queries:\n  - {query: rq, tab_name: [A, B]}\noutput: {format: xlsx}\n",
+    );
+    p.dre("validate", &[])
+        .failed()
+        .says("`tab_name` of `rq` is a list, but one .sql file makes one tab");
 }
 
 #[test]
@@ -156,9 +208,10 @@ fn single_table_formats_write_one_file_per_result_set_and_deliver_each() {
     let p = project(&[
         (
             "reports/fin/split/split.yml",
-            "queries:\n  - {query: sq, tab_name: [Summary, Detail]}\noutput:\n  destination: {profile: inbox, path: out/split.csv}\n",
+            "queries:\n  - {query: sq1, tab_name: Summary}\n  - {query: sq2, tab_name: Detail}\noutput:\n  destination: {profile: inbox, path: out/split.csv}\n",
         ),
-        ("reports/fin/split/sq.sql", "select 1 as a; select 2 as b;"),
+        ("reports/fin/split/sq1.sql", "select 1 as a;"),
+        ("reports/fin/split/sq2.sql", "select 2 as b;"),
     ]);
     p.dre("run", &["split"]).ok();
     assert_eq!(p.read("out/split_Summary.csv"), "a\r\n1\r\n");

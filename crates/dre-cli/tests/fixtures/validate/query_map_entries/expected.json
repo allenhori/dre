@@ -40,7 +40,8 @@ exit: 0
         "queries": [
           {
             "query": "setup",
-            "path": "reports/ops/daily/setup.sql"
+            "path": "reports/ops/daily/setup.sql",
+            "tab": false
           },
           {
             "query": "summary",
@@ -50,10 +51,7 @@ exit: 0
           {
             "query": "multi",
             "path": "reports/ops/daily/multi.sql",
-            "tab_name": [
-              "Summary",
-              "Detail"
-            ],
+            "tab_name": "Detail",
             "anchor": "B3",
             "header": false
           }
@@ -67,7 +65,8 @@ exit: 0
             "queries": [
               {
                 "query": "setup",
-                "path": "reports/ops/daily/setup.sql"
+                "path": "reports/ops/daily/setup.sql",
+                "tab": false
               },
               {
                 "query": "summary",
@@ -77,10 +76,7 @@ exit: 0
               {
                 "query": "multi",
                 "path": "reports/ops/daily/multi.sql",
-                "tab_name": [
-                  "Summary",
-                  "Detail"
-                ],
+                "tab_name": "Detail",
                 "anchor": "B3",
                 "header": false
               }
