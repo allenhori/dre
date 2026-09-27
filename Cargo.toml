@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "plugins/*"]
 
 [workspace.package]
-version = "0.0.1-alpha-2"
+version = "0.0.1-alpha-3"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/allenhori/dre"

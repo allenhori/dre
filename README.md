@@ -28,7 +28,7 @@ This puts `dre` in `~/.local/bin`, after checking the download against the relea
 newest, pre-releases included):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha-2 DRE_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha-3 DRE_INSTALL_DIR=/usr/local/bin sh
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
@@ -37,6 +37,22 @@ container build. On Windows, download `dre-<version>-windows-x86_64.zip` from
 
 Only `dre` itself is installed. Plugins come from the same releases, on demand: `dre init` and
 `dre deps` download the ones a project uses (see [the registry docs](docs/registry.md)).
+
+### With pip
+
+The `dre-cli` package holds `dre` and every first-party plugin, so a project runs without
+downloading anything (Linux x86_64 and aarch64, macOS, Windows; Python 3.8+):
+
+```bash
+pip install dre-cli          # or: uv tool install dre-cli
+dre --version
+```
+
+Each release attaches the wheels (`dre_cli-*.whl`), which install the same way with
+`pip install <wheel URL>` before the version reaches PyPI. From Python, `dre_cli.run(["run",
+"-s", "daily"])` runs `dre` and returns the finished process. In a Databricks job (serverless
+included), add `dre-cli` to the job's environment dependencies and run `dre` from a script or
+notebook. The bundled plugins are used unless `DRE_PLUGINS_DIR` is set.
 
 ## Concepts
 

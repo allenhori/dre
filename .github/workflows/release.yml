@@ -8,7 +8,13 @@ name: Release
 # Assets, per platform (`<os>-<arch>` as in the index: macos-aarch64, linux-x86_64, ...):
 #   dre-<version>-<platform>.tar.gz (.zip on Windows)    the dre CLI, for install.sh
 #   dre-<kind>-<name>-<version>-<platform>.tar.gz        one plugin, for the registry
+#   dre_cli-<pep440 version>-py3-none-<tag>.whl         the `dre-cli` wheels for PyPI
 # plus SHA256SUMS and install.sh.
+#
+# PyPI: the `pypi` job builds the wheels from the same binaries and attaches them to the release.
+# It uploads them to TestPyPI and then PyPI only when the repository variable PYPI_PUBLISH is
+# `true`, through trusted publishing (no token): register this workflow (`release.yml`) as a
+# trusted publisher for `dre-cli` on both indexes, with the environments `testpypi` and `pypi`.
 
 on:
   push:
@@ -149,3 +155,73 @@ jobs:
           python3 .github/scripts/registry_index.py registry/index.json dist "$version" \
             "https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME" > index.json
           gh release upload registry index.json --clobber
+
+  pypi:
+    name: PyPI wheels
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Build the wheels
+        run: python3 .github/scripts/build_wheels.py --dist dist --version "${GITHUB_REF_NAME#v}" --out wheels
+
+      - name: Smoke test the Linux wheel
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q wheels/*manylinux*_x86_64.whl
+          /tmp/venv/bin/dre --version
+          /tmp/venv/bin/python -m dre_cli plugin list
+
+      - name: Attach the wheels to the release
+        run: gh release upload "$GITHUB_REF_NAME" wheels/*.whl
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels
+          path: wheels/*.whl
+
+  testpypi:
+    name: Upload to TestPyPI
+    needs: pypi
+    if: vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels
+          path: wheels
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: wheels
+
+  pypi-upload:
+    name: Upload to PyPI
+    needs: testpypi
+    if: vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: wheels
+          path: wheels
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheels
