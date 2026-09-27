@@ -1,4 +1,4 @@
 queries:
-  - setup
+  - {query: setup, tab: false}
   - {query: summary, tab_name: "Account Summary"}
-  - {query: multi, tab_name: [Summary, Detail], anchor: B3, header: false}
+  - {query: multi, tab_name: Detail, anchor: B3, header: false}

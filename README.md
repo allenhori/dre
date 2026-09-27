@@ -65,7 +65,7 @@ A report is a YAML file next to its `.sql` files:
 ```yaml
 # reports/finance/monthly/monthly.yml
 queries:
-  - setup_temp_accounts            # CREATE TEMP TABLE: runs first, produces no sheet
+  - {query: setup_temp_accounts, tab: false}   # CREATE TEMP TABLE: runs first, no tab
   - {query: summary, tab_name: Summary}
   - detail
 output:
@@ -76,6 +76,18 @@ output:
 sets: [client_a, client_b]
 default_set: client_a
 ```
+
+Queries run one after another in the order listed, on one database session, so a temp table
+made by one is there for the next. Each `.sql` file makes one tab (a sheet in xlsx, or one file
+for csv, parquet and the other single-table formats), named by `tab_name` or else the file's
+name, in the same order. The YAML decides the tabs, not the data:
+
+- A file can hold several statements; the last one is the tab and the earlier ones prepare data.
+  A second `SELECT` in a tab file is an error: give each tab its own `.sql` file.
+- `tab: false` runs a file only for what it does (temp tables, `SET`s) and discards any result.
+- A tab whose query returns no rows still appears, with its column names.
+- A tab file whose last statement returns no result set at all is an error that points at
+  `tab: false`.
 
 Connections live in `~/.dre/profiles.yml`, outside the project. Database connections go under
 `sources:` and delivery targets under `destinations:`. Each profile picks a default `target`

@@ -65,7 +65,7 @@ const SET_ENTRY_KEYS: &[&str] = &[
     "output",
     "schedule",
 ];
-const QUERY_ENTRY_KEYS: &[&str] = &["query", "tab_name", "anchor", "header"];
+const QUERY_ENTRY_KEYS: &[&str] = &["query", "tab", "tab_name", "anchor", "header"];
 const OUTPUT_SHARED_KEYS: &[&str] = &["format", "destination", "template"];
 
 // ---------------------------------------------------------------------------------------------
@@ -149,19 +149,28 @@ pub struct QueryEntry {
     pub query: String,
     /// The `.sql` file, relative to the root.
     pub path: PathBuf,
+    /// Whether this query's result becomes a tab (a sheet, or a file for single-table formats).
+    /// One .sql file makes at most one tab: its last statement's result. `tab: false` runs the
+    /// file only for its effects (temp views, `SET`s) and discards any result.
+    #[serde(skip_serializing_if = "is_true")]
+    pub tab: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tab_name: Option<TabName>,
+    pub tab_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<bool>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum TabName {
-    One(String),
-    Many(Vec<String>),
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+/// The message for a `tab_name` list: one .sql file makes one tab.
+fn one_tab_per_file(name: &str) -> String {
+    format!(
+        "`tab_name` of `{name}` is a list, but one .sql file makes one tab; put each tab's query in its own .sql file and list each in `queries:`"
+    )
 }
 
 /// A Report paired with a Set (or the report's single default Binding): everything a run needs.
@@ -1289,6 +1298,7 @@ impl Loader {
         let mut e = QueryEntry {
             query: name.clone(),
             path: PathBuf::new(),
+            tab: true,
             tab_name: None,
             anchor: None,
             header: None,
@@ -1306,20 +1316,44 @@ impl Loader {
             }
             e.tab_name = match m.get("tab_name") {
                 None => None,
-                Some(Value::String(s)) => Some(TabName::One(s.clone())),
-                Some(v) => match string_list(v) {
-                    Some(l) if !l.is_empty() => Some(TabName::Many(l)),
-                    _ => {
-                        self.diags.error(
-                            "invalid-field",
-                            file.clone(),
-                            line,
-                            format!("report `{report}`: `tab_name` of `{name}` must be a string or a list of strings"),
-                        );
-                        None
-                    }
-                },
+                Some(Value::String(s)) => Some(s.clone()),
+                Some(Value::Sequence(_)) => {
+                    self.diags.error(
+                        "invalid-field",
+                        file.clone(),
+                        line,
+                        format!("report `{report}`: {}", one_tab_per_file(&name)),
+                    );
+                    None
+                }
+                Some(_) => {
+                    self.diags.error(
+                        "invalid-field",
+                        file.clone(),
+                        line,
+                        format!("report `{report}`: `tab_name` of `{name}` must be a string"),
+                    );
+                    None
+                }
             };
+            match m.get("tab").map(Value::as_bool) {
+                None => {}
+                Some(Some(b)) => e.tab = b,
+                Some(None) => self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    line,
+                    format!("report `{report}`: `tab` of `{name}` must be true or false"),
+                ),
+            }
+            if !e.tab && e.tab_name.is_some() {
+                self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    line,
+                    format!("report `{report}`: `{name}` has `tab: false`, so its `tab_name` would never be used; remove one of them"),
+                );
+            }
             if let Some(a) = m.get("anchor") {
                 match a.as_str() {
                     Some(s) if options::is_cell(s) => e.anchor = Some(s.to_string()),
@@ -1736,11 +1770,18 @@ impl Loader {
                                 match queries.iter().find(|q| q.query == qn) {
                                     Some(q) => {
                                         let mut q = q.clone();
-                                        if let Some(tn) = it.get("tab_name") {
-                                            q.tab_name = match tn {
-                                                Value::String(s) => Some(TabName::One(s.clone())),
-                                                v => string_list(v).map(TabName::Many),
-                                            };
+                                        match it.get("tab_name") {
+                                            None => {}
+                                            Some(Value::String(s)) => q.tab_name = Some(s.clone()),
+                                            Some(_) => self.diags.error(
+                                                "invalid-field",
+                                                file.clone(),
+                                                line,
+                                                format!("{ctx}: {}", one_tab_per_file(&qn)),
+                                            ),
+                                        }
+                                        if let Some(b) = it.get("tab").and_then(Value::as_bool) {
+                                            q.tab = b;
                                         }
                                         sub.push(q);
                                     }
@@ -1833,12 +1874,15 @@ impl Loader {
             for (k, v) in t {
                 let Some(q) = k.as_str() else { continue };
                 match queries.iter_mut().find(|e| e.query == q) {
-                    Some(e) => {
-                        e.tab_name = match v {
-                            Value::String(s) => Some(TabName::One(s.clone())),
-                            v => string_list(v).map(TabName::Many),
-                        }
-                    }
+                    Some(e) => match v {
+                        Value::String(s) => e.tab_name = Some(s.clone()),
+                        _ => self.diags.error(
+                            "invalid-field",
+                            Some(file.clone()),
+                            None,
+                            format!("{ctx}: {}", one_tab_per_file(q)),
+                        ),
+                    },
                     None => self.diags.error(
                         "unknown-query",
                         Some(file.clone()),
@@ -2203,6 +2247,7 @@ impl Loader {
         let query = QueryEntry {
             query: name.to_string(),
             path: path.to_path_buf(),
+            tab: true,
             tab_name: None,
             anchor: None,
             header: None,

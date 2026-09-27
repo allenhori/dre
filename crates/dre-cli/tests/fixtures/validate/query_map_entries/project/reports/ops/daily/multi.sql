@@ -1,2 +1,2 @@
-select 1 as a;
-select 2 as b;
+create temp table m as select 2 as b;
+select * from m;

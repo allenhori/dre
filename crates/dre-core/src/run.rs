@@ -22,7 +22,7 @@ use serde_json::{Map as JsonMap, Value as Json, json};
 
 use crate::lookups::Table;
 use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Role};
-use crate::project::{Binding, PluginKind, Project, QueryEntry, Report, TARGET_DIR, TabName};
+use crate::project::{Binding, PluginKind, Project, QueryEntry, Report, TARGET_DIR};
 use crate::render::{QueryRows, QueryRunner, RenderError, Renderer, RendererConfig, RunContext};
 use crate::sqlsplit::{self, StatementKind};
 use crate::{lock, selector};
@@ -334,11 +334,9 @@ fn ad_hoc(project: &Project, report: &Report, name: &str) -> Binding {
     b
 }
 
-/// A result set produced by one statement, spooled to disk.
+/// The tab one query produced: its last statement's result set, spooled to disk.
 struct Produced {
     query: String,
-    /// 1-based among its query's result sets.
-    index: usize,
     schema: SchemaRef,
     rows: u64,
     spool: PathBuf,
@@ -353,6 +351,9 @@ struct Statement {
     line: usize,
     text: String,
     kind: StatementKind,
+    /// Whether this statement's result is its query's tab: the file's last statement, when the
+    /// query has `tab: true`.
+    tab: bool,
 }
 
 struct BindingRun<'a> {
@@ -555,6 +556,8 @@ impl<'a> BindingRun<'a> {
         .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.compiled_dir).map_err(|e| e.to_string())?;
         let mut statements = Vec::new();
+        // Reported after the unmanaged-report check, which matters more.
+        let mut two_tabs: Option<String> = None;
         for q in &self.b.queries {
             let src = std::fs::read_to_string(self.project.root.join(&q.path))
                 .map_err(|e| format!("{}: {e}", q.path.display()))?;
@@ -568,16 +571,36 @@ impl<'a> BindingRun<'a> {
             .map_err(|e| e.to_string())?;
             self.ui
                 .step(Level::Debug, "Rendered", &q.path.display().to_string(), None);
-            // 2. Split.
-            for st in sqlsplit::split(&sql) {
+            // 2. Split. One file makes at most one tab, from its last statement, so any earlier
+            // SELECT would be lost: that's an error, not a guess.
+            let parts = sqlsplit::split(&sql);
+            if q.tab && parts.is_empty() {
+                return Err(format!(
+                    "{}: `{}` makes a tab but has no statements; add a query, or `tab: false` if it's meant to be empty",
+                    q.path.display(),
+                    q.query
+                ));
+            }
+            let n = parts.len();
+            for (i, st) in parts.into_iter().enumerate() {
                 let body = sqlsplit::strip_leading_comments(&st.text);
                 let line = st.line + st.text[..st.text.len() - body.len()].matches('\n').count();
+                let kind = sqlsplit::classify(&st.text);
+                let last = i + 1 == n;
+                if q.tab && !last && kind == StatementKind::Read && two_tabs.is_none() {
+                    two_tabs = Some(format!(
+                        "{}:{line}: `{}` has more than one SELECT, but one .sql file makes one tab (from its last statement); put each tab's query in its own .sql file and list each in `queries:`",
+                        q.path.display(),
+                        q.query
+                    ));
+                }
                 statements.push(Statement {
                     query: q.query.clone(),
                     file: q.path.clone(),
                     line,
-                    kind: sqlsplit::classify(&st.text),
+                    kind,
                     text: st.text,
+                    tab: q.tab && last,
                 });
             }
         }
@@ -600,6 +623,9 @@ impl<'a> BindingRun<'a> {
             let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
                 || session.lock().unwrap().loaded;
             session.lock().unwrap().want_read_only(!creates_temp);
+        }
+        if let Some(e) = two_tabs {
+            return Err(e);
         }
 
         if self.opts.dry_run {
@@ -627,7 +653,6 @@ impl<'a> BindingRun<'a> {
 
         // 4. Execute in order on one session.
         std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
-        let mut per_query: BTreeMap<String, usize> = BTreeMap::new();
         let sql_log = self.ui.sql_log();
         for (i, st) in statements.iter().enumerate() {
             sql_log(&format!("{}:{}", st.file.display(), st.line), &st.text);
@@ -662,7 +687,23 @@ impl<'a> BindingRun<'a> {
                 &format!("{at}  {what}"),
                 Some(t.elapsed()),
             );
-            if let Execution::Result { schema, rows } = exec {
+            // The YAML decides the tabs; the result only has to match it. A tab with no rows
+            // still gets its column names.
+            let (schema, rows) = match (st.tab, exec) {
+                (true, Execution::Result { schema, rows }) => (schema, rows),
+                (true, Execution::NoResult { .. }) => {
+                    return Err(format!(
+                        "{at}: `{}` makes a tab, but its last statement returned no result set; if the query only prepares data (a temp view, a SET), add `tab: false` to it in the YAML",
+                        st.query
+                    ));
+                }
+                (false, _) => {
+                    drop(writer);
+                    let _ = std::fs::remove_file(&spool_path);
+                    continue;
+                }
+            };
+            {
                 let mut w = match writer {
                     Some(w) => w,
                     None => {
@@ -671,11 +712,8 @@ impl<'a> BindingRun<'a> {
                     }
                 };
                 w.finish().map_err(|e| e.to_string())?;
-                let n = per_query.entry(st.query.clone()).or_default();
-                *n += 1;
                 self.produced.push(Produced {
                     query: st.query.clone(),
-                    index: *n,
                     schema,
                     rows,
                     spool: spool_path,
@@ -765,37 +803,13 @@ impl<'a> BindingRun<'a> {
             .collect()
     }
 
-    /// Sheet names: `tab_name`, a `tab_name` list, the basename, or `<basename>_N`.
+    /// Tab names: `tab_name`, else the query's basename.
     fn name_result_sets(&mut self) -> Result<(), Fail> {
         let entries: BTreeMap<&str, &QueryEntry> =
             self.b.queries.iter().map(|q| (q.query.as_str(), q)).collect();
-        let counts: BTreeMap<String, usize> = self.produced.iter().fold(BTreeMap::new(), |mut m, p| {
-            *m.entry(p.query.clone()).or_default() += 1;
-            m
-        });
         for p in &mut self.produced {
             let q = entries[p.query.as_str()];
-            let k = counts[&p.query];
-            p.name = match (&q.tab_name, k) {
-                (Some(TabName::One(s)), 1) => s.clone(),
-                (Some(TabName::Many(l)), n) if l.len() == n => l[p.index - 1].clone(),
-                (Some(TabName::Many(l)), n) => {
-                    return Err(format!(
-                        "`{}` has {} tab names but returned {n} result set{}",
-                        p.query,
-                        l.len(),
-                        if n == 1 { "" } else { "s" }
-                    ));
-                }
-                (Some(TabName::One(s)), n) => {
-                    return Err(format!(
-                        "`{}` returned {n} result sets but `tab_name` is the single name `{s}`; give a list of {n} names",
-                        p.query
-                    ));
-                }
-                (None, 1) => p.query.clone(),
-                (None, _) => format!("{}_{}", p.query, p.index),
-            };
+            p.name = q.tab_name.clone().unwrap_or_else(|| q.query.clone());
             p.anchor = q.anchor.clone();
             p.header = q.header;
         }
@@ -890,7 +904,7 @@ impl<'a> BindingRun<'a> {
         std::fs::create_dir_all(&self.run_dir).map_err(|e| e.to_string())?;
         if self.produced.is_empty() {
             self.ui
-                .warn("  no query returned a result set; no output file was written");
+                .warn("  no query makes a tab (every query has `tab: false`); no output file was written");
             return Ok(());
         }
         let out = &self.b.output;
@@ -925,7 +939,7 @@ impl<'a> BindingRun<'a> {
                     ResultSetMeta {
                         name: r.name.clone(),
                         query: r.query.clone(),
-                        result_index: r.index,
+                        result_index: 1,
                         anchor: r.anchor.clone(),
                         header: r.header,
                     }
