@@ -17,6 +17,25 @@ use suppaftp::{Mode, NativeTlsConnector, NativeTlsFtpStream};
 
 struct Ftp;
 
+/// Connects to the first of `host`'s addresses that answers, like `TcpStream::connect` does:
+/// `localhost` resolves to both `::1` and `127.0.0.1`, and a server may listen on only one.
+fn connect(host: &str, port: u16) -> std::result::Result<NativeTlsFtpStream, String> {
+    let mut last = None;
+    for addr in (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("can't resolve {host}: {e}"))?
+    {
+        match NativeTlsFtpStream::connect_timeout(addr, Duration::from_secs(30)) {
+            Ok(ftp) => return Ok(ftp),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(match last {
+        Some(e) => format!("can't connect to {host}:{port}: {e}"),
+        None => format!("can't resolve {host}"),
+    })
+}
+
 fn upload(local: &Path, remote: &str, c: &Map<String, Value>) -> Result<String> {
     let host = conn_required(c, "host")?;
     let port: u16 = match c.get("port") {
@@ -26,12 +45,7 @@ fn upload(local: &Path, remote: &str, c: &Map<String, Value>) -> Result<String> 
     };
     let user = conn_required(c, "username")?;
     let password = conn_str(c, "password").unwrap_or("");
-    let addr = (host, port)
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| format!("can't resolve {host}"))?;
-    let mut ftp = NativeTlsFtpStream::connect_timeout(addr, Duration::from_secs(30))
-        .map_err(|e| format!("can't connect to {host}:{port}: {e}"))?;
+    let mut ftp = connect(host, port)?;
     match conn_str(c, "tls").unwrap_or("none") {
         "none" => {}
         "explicit" => {
@@ -98,4 +112,23 @@ impl Destination for Ftp {
 
 fn main() {
     serve_destination(About::new("ftp", env!("CARGO_PKG_VERSION")), Ftp)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    #[test]
+    fn connect_falls_back_to_the_next_resolved_address() {
+        // Listen on IPv4 only; `localhost` often resolves to `::1` first.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            s.write_all(b"220 ready\r\n").unwrap();
+        });
+        super::connect("localhost", port).unwrap();
+        server.join().unwrap();
+    }
 }

@@ -48,7 +48,7 @@ jobs:
       DRE_TEST_AZURITE_ENDPOINT: http://localhost:10000
       DRE_TEST_GCS_ENDPOINT: http://localhost:4443
       DRE_TEST_SFTP: localhost:2222
-      DRE_TEST_FTP: localhost:2121
+      DRE_TEST_FTP: 127.0.0.1:2121
       DRE_TEST_SMTP: localhost:1025
       DRE_TEST_MAILPIT_API: http://localhost:8025
     steps:
@@ -64,11 +64,26 @@ jobs:
           docker run -d -p 10000:10000 mcr.microsoft.com/azure-storage/azurite \
             azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
           docker run -d -p 2121:21 -p 30000-30009:30000-30009 -e USERS="dre|dre-pass" \
-            -e ADDRESS=localhost -e MIN_PORT=30000 -e MAX_PORT=30009 delfer/alpine-ftp-server
-          # Wait until each emulator accepts connections, rather than a fixed sleep.
+            -e ADDRESS=127.0.0.1 -e MIN_PORT=30000 -e MAX_PORT=30009 delfer/alpine-ftp-server
+          # Wait until each emulator answers, rather than a fixed sleep. A bare TCP connect isn't
+          # enough: Docker's port proxy accepts on the host before the container listens, so read
+          # each server's greeting (or make an HTTP request), and fail with its logs if it never
+          # comes up.
+          ready() {
+            case $1 in
+              2222) timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2222; read -r l <&3; [[ $l == SSH-* ]]' ;;
+              2121) timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2121; read -r l <&3; [[ $l == 220* ]]' ;;
+              *) curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$1/" ;;
+            esac
+          }
           for port in 4443 2222 10000 2121; do
-            for _ in $(seq 60); do
-              (echo > "/dev/tcp/localhost/$port") 2>/dev/null && break
+            for i in $(seq 60); do
+              ready "$port" 2>/dev/null && break
+              if [ "$i" = 60 ]; then
+                echo "::error::emulator on port $port isn't ready after 60s"
+                docker ps -a; docker logs "$(docker ps -aq --filter "publish=$port")"
+                exit 1
+              fi
               sleep 1
             done
           done
