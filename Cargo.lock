@@ -1288,7 +1288,8 @@ name = "dre-destination-ftp"
 version = "0.0.1-alpha-2"
 dependencies = [
  "dre-protocol",
- "native-tls",
+ "rustls",
+ "rustls-platform-verifier",
  "serde_json",
  "suppaftp",
  "tempfile",
@@ -4431,7 +4432,7 @@ dependencies = [
  "chrono",
  "lazy-regex",
  "log",
- "native-tls",
+ "rustls",
  "thiserror",
 ]
 
