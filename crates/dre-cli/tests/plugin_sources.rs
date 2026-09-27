@@ -201,7 +201,8 @@ fn github_releases_install_the_newest_match_and_pin_it() {
     let lock = e.lock();
     assert!(
         lock.contains(&format!(
-            "sources:\n  fixture:\n    version: 1.1.0\n    sha256: {}\n    from: github:acme/dre-source-fixture\n",
+            "sources:\n  fixture:\n    version: 1.1.0\n    sha256:\n      {}: {}\n    from: github:acme/dre-source-fixture\n",
+            platform(),
             sha(&bin)
         )),
         "{lock}"
@@ -244,7 +245,7 @@ fn github_without_published_checksums_pins_the_first_download() {
     e.server.github_releases(&bin, false);
     e.dre(&["deps"]).ok();
     assert!(
-        e.lock().contains(&format!("sha256: {}", sha(&bin))),
+        e.lock().contains(&format!("{}: {}", platform(), sha(&bin))),
         "{}",
         e.lock()
     );

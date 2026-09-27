@@ -12,7 +12,7 @@ use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::lock::{Lock, Locked};
+use crate::lock::{Checksums, Lock, Locked};
 use crate::project::{PluginKind, PluginRequirement, PluginSource, Project};
 
 pub const DEFAULT_REGISTRY: &str = "https://github.com/allenhori/dre/releases/download/registry/index.json";
@@ -306,7 +306,7 @@ pub fn install(
     dir: &Path,
     plugin: &IndexPlugin,
     v: &IndexVersion,
-    expect_sha: Option<&str>,
+    pin: Option<&Checksums>,
 ) -> Result<Locked, String> {
     let plat = platform();
     let art = v.artifacts.get(&plat).ok_or_else(|| {
@@ -326,20 +326,37 @@ pub fn install(
     } else {
         None
     };
-    if let (Some(want), Some(published)) = (expect_sha, &published)
-        && !want.eq_ignore_ascii_case(published)
-    {
-        return Err(format!(
+    let refuse = || {
+        format!(
             "{} `{}` {}: the registry's checksum doesn't match dre.lock; refusing to install",
             plugin.kind.as_str(),
             plugin.name,
             v.version
-        ));
+        )
+    };
+    // What the lock expects on this platform. A lock that doesn't name platforms (from an older
+    // DRE) was written on one of them: its checksum must be one the registry publishes for
+    // this version, whichever platform that is.
+    let mut want = pin.and_then(|c| c.get(&plat));
+    if let (Some(want), Some(published)) = (want, &published)
+        && !want.eq_ignore_ascii_case(published)
+    {
+        return Err(refuse());
+    }
+    if want.is_none()
+        && let Some(legacy) = pin.and_then(Checksums::legacy)
+    {
+        let all = published_checksums(v);
+        if all.is_empty() {
+            want = Some(legacy);
+        } else if !all.contains(legacy) {
+            return Err(refuse());
+        }
     }
     let bytes = fetch(&art.url)?;
     let got = hex(&Sha256::digest(&bytes));
     // Nothing published: the lock's pin, if any, is what the download must match.
-    let expected = published.as_deref().or(expect_sha);
+    let expected = published.as_deref().or(want);
     if let Some(want) = expected
         && !got.eq_ignore_ascii_case(want)
     {
@@ -366,11 +383,27 @@ pub fn install(
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     }
     std::fs::rename(&tmp, &dst).map_err(|e| format!("can't install {}: {e}", dst.display()))?;
+    let mut sha256 = published_checksums(v);
+    if let Some(p) = pin {
+        sha256.merge(p);
+    }
+    sha256.insert(&plat, &got);
     Ok(Locked {
         version: v.version.clone(),
-        sha256: got,
+        sha256,
         from: None,
     })
+}
+
+/// The checksums the registry publishes for `v`, by platform.
+fn published_checksums(v: &IndexVersion) -> Checksums {
+    let mut c = Checksums::new();
+    for (p, a) in &v.artifacts {
+        if !a.sha256.is_empty() {
+            c.insert(p, &a.sha256);
+        }
+    }
+    c
 }
 
 fn extract_tar_gz(bytes: &[u8], exe: &str) -> Result<Vec<u8>, String> {
@@ -612,12 +645,12 @@ fn install_one(
     {
         let locked = Locked {
             version: v.version.clone(),
-            sha256: art.sha256.to_lowercase(),
+            sha256: published_checksums(v),
             from: None,
         };
         return Ok((locked, false));
     }
-    let expect = pin.map(|l| l.sha256.as_str());
+    let expect = pin.map(|l| &l.sha256);
     if req.source.is_default() {
         install_linked(dir, plugin, v, expect).map(|l| (l, true))
     } else {
@@ -630,10 +663,10 @@ pub fn install_linked(
     dir: &Path,
     plugin: &IndexPlugin,
     v: &IndexVersion,
-    expect_sha: Option<&str>,
+    pin: Option<&Checksums>,
 ) -> Result<Locked, String> {
     let cache = crate::plugins::cache_dir();
-    let locked = install(&cache, plugin, v, expect_sha)?;
+    let locked = install(&cache, plugin, v, pin)?;
     if dir != cache {
         crate::plugins::link_or_copy(
             &install_path(&cache, plugin.kind, &plugin.name, &v.version),
