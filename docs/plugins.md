@@ -38,9 +38,48 @@ want a typed column. Types DRE can't map ask for a cast, e.g. `interval_col::tex
 |---|---|
 | `host` | Workspace host. |
 | `http_path` | The SQL warehouse's HTTP path. |
-| `token` | Personal access token or OAuth token. |
+| `auth_type` | `pat` (default) or `oauth`. |
+| `token` | For `pat`: a personal access token, or any other bearer token. |
+| `client_id` | For `oauth`: the OAuth client. Browser sign-in defaults to `databricks-cli`, which every workspace has. For a service principal, its application ID. |
+| `client_secret` | For `oauth`: a service principal's OAuth secret. Without it, `oauth` signs you in through the browser. |
+| `scopes` | For `oauth`: default `all-apis offline_access` for browser sign-in, `all-apis` for a service principal. |
+| `redirect_port` | For browser sign-in: the localhost port the sign-in redirects to. Default 8020, which is what `databricks-cli` allows. |
 | `catalog`, `schema` | Defaults for the session. |
 | `retry_timeout` | Seconds to keep waiting while a stopped warehouse starts. Default 900. |
+
+```yaml
+sources:
+  warehouse:
+    target: dev
+    targets:
+      dev:        # you, through the browser
+        type: databricks
+        host: dbc-123.cloud.databricks.com
+        http_path: /sql/1.0/warehouses/abc
+        auth_type: oauth
+      prod:       # a service principal, for the orchestrator
+        type: databricks
+        host: dbc-123.cloud.databricks.com
+        http_path: /sql/1.0/warehouses/abc
+        auth_type: oauth
+        client_id: "{{ env_var('DATABRICKS_CLIENT_ID') }}"
+        client_secret: "{{ env_var('DATABRICKS_CLIENT_SECRET') }}"
+```
+
+DRE signs in only when a report actually uses the profile: a source when its first query runs,
+a destination when it delivers.
+
+Browser sign-in opens your browser the first time and saves the session in
+`~/.dre/oauth_sessions.json`, which only you can read. The file has one entry per workspace and
+OAuth client, so a report can read from one workspace and deliver to another, and the `databricks`
+source and `databricks_volumes` destination share one sign-in per workspace. After that the
+refresh token renews the session, and the browser only opens again once the refresh token stops
+working. Delete the file (or its entry) to sign out. Set `DRE_NO_BROWSER=1` to only print the
+sign-in URL.
+
+Service principal tokens stay in memory. With either kind, the access token is renewed before it
+expires, so a long run keeps its session. Passwords, tokens and client secrets are never saved:
+put them in environment variables and use `env_var()`.
 
 Capabilities: `sessions`, `check` (via `EXPLAIN`). The plugin holds a real warehouse session,
 so temp views and `SET`s last for the whole Binding. The session runs in UTC. Warehouses have no
@@ -129,8 +168,8 @@ refused unless `accept_unknown_host: true`. Missing directories are created.
 
 ### `databricks_volumes`
 
-`host` and `token`, the same fields as the `databricks` source, so one set of credentials can
-serve both. Paths are `/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API.
+`host` and the same sign-in fields as the `databricks` source (`auth_type`, `token`, `client_id`,
+`client_secret`), so one set of credentials, and one OAuth session per workspace, can serve both. Paths are `/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API.
 
 **When to use it**: runs outside Databricks, such as a laptop, Airflow or CI. Inside a Databricks
 job or cluster, `/Volumes/...` is already a mounted path, so use the built-in `local` destination
