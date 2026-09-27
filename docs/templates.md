@@ -16,6 +16,7 @@ in `macros/` and packages, every template sees:
 | `ref('file')` / `lookup('name')` | Another `.sql` file as a subquery; a lookup's rows. |
 | `date()`, `datetime()`, `period()`, `month_of()`, ... | Calendar values (below). |
 | `dispatch('macro', 'package')` | A package macro's per-database variant. |
+| `raise_error('message')` | Stop rendering with this error, e.g. from a macro that checks its arguments. |
 
 ## Names from profiles: `target` and `profile()`
 
@@ -60,6 +61,11 @@ earlier query, or `ref('file')`. DRE asks the database with `select * from <rel>
 where 1=0`, once per relation per Binding. Like `run_query()`, it connects only when a template
 calls it, so `dre compile` connects for reports that use it. Packages build on it:
 `dre_utils.star()` is one.
+
+`dre run` renders each query just before running it, so a template sees what the queries before
+it made. `dre compile`, `--dry-run` and `dre validate` run nothing, so there a temp table made by
+an earlier query doesn't exist yet: `columns()` or `run_query()` on it fails there, and works in
+`dre run`.
 
 ## Dates and times
 

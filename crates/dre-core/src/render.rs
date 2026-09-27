@@ -173,6 +173,9 @@ impl Renderer {
                 }),
             }
         });
+        env.add_function("raise_error", |message: String| -> Result<Value, Error> {
+            Err(Error::new(ErrorKind::InvalidOperation, message))
+        });
         let source_type = cfg.context.source_type.clone();
         crate::dates::register(&mut env, cfg.context.calendar, cfg.context.date);
         env.add_global("run", Value::from_object(Run(cfg.context)));

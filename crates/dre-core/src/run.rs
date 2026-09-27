@@ -597,172 +597,83 @@ impl<'a> BindingRun<'a> {
         })
         .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.compiled_dir).map_err(|e| e.to_string())?;
+        // A real run of a managed report renders each query just before running it, so a
+        // template can look at what earlier queries made (`columns()` of a temp table).
+        // Compiling, checking and unmanaged reports render everything first.
+        let interleave = !self.opts.dry_run && !self.opts.live_check && self.report.managed;
         let mut statements = Vec::new();
         // Reported after the unmanaged-report check, which matters more.
         let mut two_tabs: Option<String> = None;
-        for q in &self.b.queries {
-            let src = std::fs::read_to_string(self.project.root.join(&q.path))
-                .map_err(|e| format!("{}: {e}", q.path.display()))?;
-            let sql = renderer
-                .render(&q.path, &src)
-                .map_err(|e: RenderError| e.to_string())?;
-            std::fs::write(
-                self.compiled_dir.join(format!("{}.sql", q.query)),
-                crate::secrets::mask(&sql).as_bytes(),
-            )
-            .map_err(|e| e.to_string())?;
-            self.ui
-                .step(Level::Debug, "Rendered", &q.path.display().to_string(), None);
-            // 2. Split. One file makes at most one tab, from its last statement, so any earlier
-            // SELECT would be lost: that's an error, not a guess.
-            let parts = sqlsplit::split(&sql);
-            if q.tab && parts.is_empty() {
-                return Err(format!(
-                    "{}: `{}` makes a tab but has no statements; add a query, or `tab: false` if it's meant to be empty",
-                    q.path.display(),
-                    q.query
-                ));
+        if interleave {
+            self.dests = self.render_destinations(&renderer)?;
+            if self.b.queries.len() > 1 {
+                self.check_sessions(&session, self.b.queries.len(), &output.kind)?;
             }
-            let n = parts.len();
-            for (i, st) in parts.into_iter().enumerate() {
-                let body = sqlsplit::strip_leading_comments(&st.text);
-                let line = st.line + st.text[..st.text.len() - body.len()].matches('\n').count();
-                let kind = sqlsplit::classify(&st.text);
-                let last = i + 1 == n;
-                if q.tab && !last && kind == StatementKind::Read && two_tabs.is_none() {
-                    two_tabs = Some(format!(
-                        "{}:{line}: `{}` has more than one SELECT, but one .sql file makes one tab (from its last statement); put each tab's query in its own .sql file and list each in `queries:`",
-                        q.path.display(),
-                        q.query
-                    ));
+            std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
+            let mut i = 0;
+            for q in &self.b.queries {
+                let sts = self.render_query(&renderer, q, &mut two_tabs)?;
+                for w in renderer.take_warnings() {
+                    self.ui.warn(&w);
                 }
-                statements.push(Statement {
-                    query: q.query.clone(),
-                    file: q.path.clone(),
-                    line,
-                    kind,
-                    text: st.text,
-                    tab: q.tab && last,
-                });
-            }
-        }
-        self.dests = self.render_destinations(&renderer)?;
-        for w in renderer.take_warnings() {
-            self.ui.warn(&w);
-        }
-
-        // 3. Unmanaged: every rendered statement must only read (or create temp objects).
-        if !self.report.managed {
-            if let Some(bad) = statements.iter().find(|s| !s.kind.is_read_only_safe()) {
-                return Err(format!(
-                    "{}:{}: unmanaged report `{}` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `{}`; nothing was run — rewrite the statement, or give the report a YAML to declare it",
-                    bad.file.display(),
-                    bad.line,
-                    self.report.name,
-                    dre_protocol::util::summarize(&bad.text, 60)
-                ));
-            }
-            let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
-                || session.lock().unwrap().loaded;
-            session.lock().unwrap().want_read_only(!creates_temp);
-        }
-        if let Some(e) = two_tabs {
-            return Err(e);
-        }
-
-        if self.opts.dry_run {
-            let plan = self.plan(&profile_name, &output.kind);
-            self.ui.compiled(&plan);
-            return Ok(());
-        }
-
-        // The one-session guarantee.
-        {
-            let mut s = session.lock().unwrap();
-            let p = s.get()?;
-            if statements.len() > 1 && !p.has(CAP_SESSIONS) {
-                return Err(format!(
-                    "this Binding runs {} statements, but the `{}` source plugin can't hold one session across them; nothing was run",
-                    statements.len(),
-                    output.kind
-                ));
-            }
-        }
-
-        if self.opts.live_check {
-            return self.live_check(&session, &statements, &output.kind);
-        }
-
-        // 4. Execute in order on one session.
-        std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
-        let sql_log = self.ui.sql_log();
-        for (i, st) in statements.iter().enumerate() {
-            sql_log(&format!("{}:{}", st.file.display(), st.line), &st.text);
-            let spool_path = self.run_dir.join(".spool").join(format!("{i}.arrow"));
-            let mut writer: Option<FileWriter<File>> = None;
-            let t = Instant::now();
-            let exec = {
-                let mut s = session.lock().unwrap();
-                let p = s.get()?;
-                p.execute(&st.text, self.opts.preview, |schema, batch| {
-                    if writer.is_none() {
-                        let f = File::create(&spool_path).map_err(|e| e.to_string())?;
-                        writer = Some(FileWriter::try_new(f, schema).map_err(|e| e.to_string())?);
-                    }
-                    writer.as_mut().unwrap().write(&batch).map_err(|e| e.to_string())
-                })
-                .map_err(|e| format!("{}:{}: {e}", st.file.display(), st.line))?
-            };
-            let what = match &exec {
-                Execution::Result { rows, .. } => {
-                    format!("{} row{}", thousands(*rows), if *rows == 1 { "" } else { "s" })
+                if let Some(e) = two_tabs.take() {
+                    return Err(e);
                 }
-                Execution::NoResult {
-                    rows_affected: Some(n),
-                } => format!("no result set ({n} affected)"),
-                Execution::NoResult { .. } => "no result set".to_string(),
-            };
-            let at = format!("{}:{}", st.file.display(), st.line);
-            self.ui.step(
-                Level::Debug,
-                "Executed",
-                &format!("{at}  {what}"),
-                Some(t.elapsed()),
-            );
-            // The YAML decides the tabs; the result only has to match it. A tab with no rows
-            // still gets its column names.
-            let (schema, rows) = match (st.tab, exec) {
-                (true, Execution::Result { schema, rows }) => (schema, rows),
-                (true, Execution::NoResult { .. }) => {
+                if i == 0 && sts.len() > 1 {
+                    self.check_sessions(&session, sts.len(), &output.kind)?;
+                }
+                for st in &sts {
+                    self.execute_statement(&session, i, st)?;
+                    i += 1;
+                }
+            }
+        } else {
+            for q in &self.b.queries {
+                statements.extend(self.render_query(&renderer, q, &mut two_tabs)?);
+            }
+            self.dests = self.render_destinations(&renderer)?;
+            for w in renderer.take_warnings() {
+                self.ui.warn(&w);
+            }
+
+            // 3. Unmanaged: every rendered statement must only read (or create temp objects).
+            if !self.report.managed {
+                if let Some(bad) = statements.iter().find(|s| !s.kind.is_read_only_safe()) {
                     return Err(format!(
-                        "{at}: `{}` makes a tab, but its last statement returned no result set; if the query only prepares data (a temp view, a SET), add `tab: false` to it in the YAML",
-                        st.query
+                        "{}:{}: unmanaged report `{}` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `{}`; nothing was run — rewrite the statement, or give the report a YAML to declare it",
+                        bad.file.display(),
+                        bad.line,
+                        self.report.name,
+                        dre_protocol::util::summarize(&bad.text, 60)
                     ));
                 }
-                (false, _) => {
-                    drop(writer);
-                    let _ = std::fs::remove_file(&spool_path);
-                    continue;
-                }
-            };
-            {
-                let mut w = match writer {
-                    Some(w) => w,
-                    None => {
-                        FileWriter::try_new(File::create(&spool_path).map_err(|e| e.to_string())?, &schema)
-                            .map_err(|e| e.to_string())?
-                    }
-                };
-                w.finish().map_err(|e| e.to_string())?;
-                self.produced.push(Produced {
-                    query: st.query.clone(),
-                    schema,
-                    rows,
-                    spool: spool_path,
-                    name: String::new(),
-                    anchor: None,
-                    header: None,
-                });
+                let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
+                    || session.lock().unwrap().loaded;
+                session.lock().unwrap().want_read_only(!creates_temp);
+            }
+            if let Some(e) = two_tabs {
+                return Err(e);
+            }
+
+            if self.opts.dry_run {
+                let plan = self.plan(&profile_name, &output.kind);
+                self.ui.compiled(&plan);
+                return Ok(());
+            }
+
+            // The one-session guarantee.
+            if statements.len() > 1 {
+                self.check_sessions(&session, statements.len(), &output.kind)?;
+            }
+
+            if self.opts.live_check {
+                return self.live_check(&session, &statements, &output.kind);
+            }
+
+            // 4. Execute in order on one session.
+            std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
+            for (i, st) in statements.iter().enumerate() {
+                self.execute_statement(&session, i, st)?;
             }
         }
         if let Ok(mut s) = session.lock() {
@@ -812,6 +723,148 @@ impl<'a> BindingRun<'a> {
         if self.opts.preview.is_none() {
             self.write_snapshot()
                 .map_err(|e| format!("can't write the schema snapshot: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Render one query file into its statements, writing it to `target/compiled/`.
+    fn render_query(
+        &mut self,
+        renderer: &Renderer,
+        q: &QueryEntry,
+        two_tabs: &mut Option<String>,
+    ) -> Result<Vec<Statement>, Fail> {
+        let mut out = Vec::new();
+        let src = std::fs::read_to_string(self.project.root.join(&q.path))
+            .map_err(|e| format!("{}: {e}", q.path.display()))?;
+        let sql = renderer
+            .render(&q.path, &src)
+            .map_err(|e: RenderError| e.to_string())?;
+        std::fs::write(
+            self.compiled_dir.join(format!("{}.sql", q.query)),
+            crate::secrets::mask(&sql).as_bytes(),
+        )
+        .map_err(|e| e.to_string())?;
+        self.ui
+            .step(Level::Debug, "Rendered", &q.path.display().to_string(), None);
+        // 2. Split. One file makes at most one tab, from its last statement, so any earlier
+        // SELECT would be lost: that's an error, not a guess.
+        let parts = sqlsplit::split(&sql);
+        if q.tab && parts.is_empty() {
+            return Err(format!(
+                "{}: `{}` makes a tab but has no statements; add a query, or `tab: false` if it's meant to be empty",
+                q.path.display(),
+                q.query
+            ));
+        }
+        let n = parts.len();
+        for (i, st) in parts.into_iter().enumerate() {
+            let body = sqlsplit::strip_leading_comments(&st.text);
+            let line = st.line + st.text[..st.text.len() - body.len()].matches('\n').count();
+            let kind = sqlsplit::classify(&st.text);
+            let last = i + 1 == n;
+            if q.tab && !last && kind == StatementKind::Read && two_tabs.is_none() {
+                *two_tabs = Some(format!(
+                    "{}:{line}: `{}` has more than one SELECT, but one .sql file makes one tab (from its last statement); put each tab's query in its own .sql file and list each in `queries:`",
+                    q.path.display(),
+                    q.query
+                ));
+            }
+            out.push(Statement {
+                query: q.query.clone(),
+                file: q.path.clone(),
+                line,
+                kind,
+                text: st.text,
+                tab: q.tab && last,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Fail unless the source can hold one session across `n` statements.
+    fn check_sessions(&self, session: &Arc<Mutex<Session>>, n: usize, kind: &str) -> Result<(), Fail> {
+        let mut s = session.lock().unwrap();
+        if !s.get()?.has(CAP_SESSIONS) {
+            return Err(format!(
+                "this Binding runs {n} statements, but the `{kind}` source plugin can't hold one session across them; nothing was run"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Run statement `i`, spooling its result if it makes a tab.
+    fn execute_statement(
+        &mut self,
+        session: &Arc<Mutex<Session>>,
+        i: usize,
+        st: &Statement,
+    ) -> Result<(), Fail> {
+        let sql_log = self.ui.sql_log();
+        sql_log(&format!("{}:{}", st.file.display(), st.line), &st.text);
+        let spool_path = self.run_dir.join(".spool").join(format!("{i}.arrow"));
+        let mut writer: Option<FileWriter<File>> = None;
+        let t = Instant::now();
+        let exec = {
+            let mut s = session.lock().unwrap();
+            let p = s.get()?;
+            p.execute(&st.text, self.opts.preview, |schema, batch| {
+                if writer.is_none() {
+                    let f = File::create(&spool_path).map_err(|e| e.to_string())?;
+                    writer = Some(FileWriter::try_new(f, schema).map_err(|e| e.to_string())?);
+                }
+                writer.as_mut().unwrap().write(&batch).map_err(|e| e.to_string())
+            })
+            .map_err(|e| format!("{}:{}: {e}", st.file.display(), st.line))?
+        };
+        let what = match &exec {
+            Execution::Result { rows, .. } => {
+                format!("{} row{}", thousands(*rows), if *rows == 1 { "" } else { "s" })
+            }
+            Execution::NoResult {
+                rows_affected: Some(n),
+            } => format!("no result set ({n} affected)"),
+            Execution::NoResult { .. } => "no result set".to_string(),
+        };
+        let at = format!("{}:{}", st.file.display(), st.line);
+        self.ui.step(
+            Level::Debug,
+            "Executed",
+            &format!("{at}  {what}"),
+            Some(t.elapsed()),
+        );
+        // The YAML decides the tabs; the result only has to match it. A tab with no rows
+        // still gets its column names.
+        let (schema, rows) = match (st.tab, exec) {
+            (true, Execution::Result { schema, rows }) => (schema, rows),
+            (true, Execution::NoResult { .. }) => {
+                return Err(format!(
+                    "{at}: `{}` makes a tab, but its last statement returned no result set; if the query only prepares data (a temp view, a SET), add `tab: false` to it in the YAML",
+                    st.query
+                ));
+            }
+            (false, _) => {
+                drop(writer);
+                let _ = std::fs::remove_file(&spool_path);
+                return Ok(());
+            }
+        };
+        {
+            let mut w = match writer {
+                Some(w) => w,
+                None => FileWriter::try_new(File::create(&spool_path).map_err(|e| e.to_string())?, &schema)
+                    .map_err(|e| e.to_string())?,
+            };
+            w.finish().map_err(|e| e.to_string())?;
+            self.produced.push(Produced {
+                query: st.query.clone(),
+                schema,
+                rows,
+                spool: spool_path,
+                name: String::new(),
+                anchor: None,
+                header: None,
+            });
         }
         Ok(())
     }

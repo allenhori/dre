@@ -162,3 +162,27 @@ fn columns_of_a_missing_relation_is_a_clear_error() {
         .failed()
         .says("`columns('no_such_table')`");
 }
+
+#[test]
+fn a_run_renders_each_query_after_the_ones_before_it_ran() {
+    let p = project(
+        "select {% for c in columns('recent') %}{{ c.name }}{% if not loop.last %}, {% endif %}{% endfor %} from recent\n",
+    );
+    p.write(
+        "reports/finance/monthly/monthly.yml",
+        "queries:\n  - {query: setup, tab: false}\n  - q\noutput: {format: csv}\n",
+    );
+    p.write(
+        "reports/finance/monthly/setup.sql",
+        "create temp table recent as select id, amount from orders\n",
+    );
+    p.dre_env("run", &["-s", "monthly"], &[SECRET]).ok();
+    assert_eq!(
+        p.read("target/compiled/monthly/default/q.sql"),
+        "select id, amount from recent\n"
+    );
+    assert_eq!(
+        p.read("target/run/monthly/default/monthly.csv"),
+        "id,amount\r\n1,9.50\r\n"
+    );
+}

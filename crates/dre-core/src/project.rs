@@ -37,6 +37,7 @@ const RESERVED_NAMES: &[&str] = &[
     "year_of",
     "week_of",
     "period",
+    "raise_error",
 ];
 use crate::profiles::{LOCAL_TYPE, Profiles, Role};
 use crate::yaml::YamlFile;

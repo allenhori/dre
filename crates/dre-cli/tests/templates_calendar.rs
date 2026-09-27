@@ -263,3 +263,15 @@ fn unknown_run_date_attributes_are_caught_by_validate() {
         .failed()
         .says("`run.date.fortnight` isn't part of the run context");
 }
+
+#[test]
+fn raise_error_stops_rendering_with_its_message() {
+    let p = project(&[(
+        "reports/finance/monthly/q.sql",
+        "{% if var('x', 'bad') == 'bad' %}{{ raise_error('x must be set to something good') }}{% endif %}select 1\n",
+    )]);
+    p.dre("compile", &[])
+        .failed()
+        .says("x must be set to something good");
+    p.dre("compile", &["--var", "x=good"]).ok();
+}
