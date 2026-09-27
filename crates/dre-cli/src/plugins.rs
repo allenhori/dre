@@ -5,7 +5,7 @@ use std::process::ExitCode;
 
 use dre_core::lock::Lock;
 use dre_core::manager::{self, Index};
-use dre_core::project::{self, LoadOptions, PluginKind, Project};
+use dre_core::project::{self, LoadOptions, PluginKind, PluginSource, Project};
 use semver::VersionReq;
 
 use crate::output::{Printer, Tone};
@@ -100,7 +100,34 @@ fn project_at(dir: &std::path::Path) -> Option<Project> {
 
 /// `dre plugin install` / `dre plugin update`.
 pub fn install(spec: String, project_dir: PathBuf, update: bool, printer: &Printer) -> ExitCode {
-    let index = match Index::load() {
+    let project = project_at(&project_dir);
+    // A plugin the project declares installs from wherever it's declared to come from.
+    let id = spec.split_once('@').map_or(spec.as_str(), |(i, _)| i);
+    let from_project: Vec<&dre_core::project::PluginRequirement> = project
+        .iter()
+        .flat_map(|p| &p.plugins)
+        .filter(|r| r.name == id || format!("{}/{}", r.kind.as_str(), r.name) == id)
+        .collect();
+    let source = match from_project.as_slice() {
+        [r] => Some((r.source.clone(), r.kind, r.name.clone())),
+        _ => None,
+    };
+    if let Some((PluginSource::Local(path), kind, name)) = &source {
+        printer.line(
+            Tone::Note,
+            "Local",
+            &format!(
+                "{} plugin `{name}` is used from {path}; there's nothing to install",
+                kind.as_str()
+            ),
+        );
+        return ExitCode::SUCCESS;
+    }
+    let index = match &source {
+        Some((s, kind, name)) => Index::for_source(s, *kind, name),
+        None => Index::load(),
+    };
+    let index = match index {
         Ok(i) => i,
         Err(e) => {
             printer.error(&e);
@@ -114,7 +141,7 @@ pub fn install(spec: String, project_dir: PathBuf, update: bool, printer: &Print
             return ExitCode::FAILURE;
         }
     };
-    let project = project_at(&project_dir);
+    let source_key = source.as_ref().and_then(|(s, _, _)| s.lock_key());
     let declared = project
         .as_ref()
         .and_then(|p| p.plugins.iter().find(|r| r.kind == kind && r.name == name))
@@ -139,7 +166,10 @@ pub fn install(spec: String, project_dir: PathBuf, update: bool, printer: &Print
         printer.error(&format!("the registry has no {} plugin `{name}`", kind.as_str()));
         return ExitCode::FAILURE;
     };
-    let pinned = lock.as_ref().and_then(|l| l.get(kind, &name).cloned());
+    let pinned = lock
+        .as_ref()
+        .and_then(|l| l.get(kind, &name).cloned())
+        .filter(|l| l.from == source_key);
     let version = match (&pinned, update, &cli_req) {
         (Some(l), false, None) => plugin.exact(&l.version),
         _ => plugin.best(&req),
@@ -154,7 +184,8 @@ pub fn install(spec: String, project_dir: PathBuf, update: bool, printer: &Print
     };
     let dir = dre_core::plugins::plugins_dir(project.as_ref().map(|p| p.root.as_path()));
     match manager::install_linked(&dir, plugin, version, None) {
-        Ok(locked) => {
+        Ok(mut locked) => {
+            locked.from = source_key.clone();
             printer.line(
                 Tone::Good,
                 "Installed",

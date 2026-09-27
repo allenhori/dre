@@ -12,7 +12,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -20,7 +20,7 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # The Databricks adapter is Go.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/databricks/go.mod
           cache-dependency-path: go/databricks/go.sum
@@ -60,7 +60,7 @@ jobs:
       DRE_TEST_SMTP: localhost:1025
       DRE_TEST_MAILPIT_API: http://localhost:8025
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Start emulators that need arguments
         run: |
           ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/id_test"
@@ -108,10 +108,10 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/databricks/go.mod
           cache-dependency-path: go/databricks/go.sum

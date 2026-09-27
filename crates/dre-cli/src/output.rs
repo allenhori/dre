@@ -519,6 +519,7 @@ impl Ui for Printer {
                 "event": "binding_end", "report": o.report, "set": o.set, "status": o.status,
                 "elapsed_ms": o.elapsed.as_millis() as u64, "error": o.error, "summary": o.summary,
                 "files": o.files, "schedule": o.schedule, "schedule_vars": o.schedule_vars, "vars": o.vars,
+                "timezone": o.timezone,
             }));
             return;
         }

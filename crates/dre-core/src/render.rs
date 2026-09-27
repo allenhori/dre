@@ -1,13 +1,16 @@
 //! Runtime Jinja rendering: one environment per Binding, shared by SQL, output paths and
-//! template values. Provides `run.*`, `var()`, `env_var()`, `run_query()`, `ref()` and every
-//! macro in `macros/`.
+//! template values. Provides `run.*`, `var()`, `env_var()`, `run_query()`, `columns()`,
+//! `ref()`, `target`, `profile()`, the calendar functions in [`crate::dates`] and every macro in
+//! `macros/`.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
+
+use crate::dates::{Calendar, Date, DateTime};
 
 use crate::lookups::{self, Cell, Load, Lookup, Table};
 use crate::packages::{DispatchOrder, Package};
@@ -29,6 +32,10 @@ pub struct RunContext {
     /// The schedule's name under `dre run --schedule`, else `None`.
     pub schedule: Option<String>,
     pub date: NaiveDate,
+    /// When the run started: `run.now`.
+    pub now: chrono::DateTime<Utc>,
+    /// The run's timezone and week settings.
+    pub calendar: Calendar,
 }
 
 /// Rows returned to templates by `run_query()`.
@@ -38,15 +45,47 @@ pub struct QueryRows {
     pub rows: Vec<Vec<Value>>,
 }
 
+/// One column of a relation, as `columns()` returns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Column {
+    pub name: String,
+    /// The Arrow type name (`Int64`, `Utf8`, `Date32`, ...).
+    pub data_type: String,
+}
+
 /// Executes `run_query()` SQL on the Binding's own session.
 pub trait QueryRunner: Send + Sync {
     /// Run `sql`, failing if it returns more than `max_rows` rows.
     fn run_query(&self, sql: &str, max_rows: u64) -> Result<QueryRows, String>;
+    /// The columns `sql` returns, without fetching rows.
+    fn columns(&self, sql: &str) -> Result<Vec<Column>, String>;
     /// Load a lookup into a temp table on the session: `Some((relation, plugin warning))`, or
     /// `None` when the source can't load rows.
     fn load(&self, _name: &str, _table: &Table) -> Result<Option<(String, Option<String>)>, String> {
         Ok(None)
     }
+}
+
+/// One profile target as templates see it: `target.*` and `profile('name').*`.
+#[derive(Debug, Clone, Default)]
+pub struct Connection {
+    /// The profile's name.
+    pub profile: String,
+    /// The target's name (`dev`, `prod`).
+    pub target: String,
+    /// The plugin type.
+    pub kind: String,
+    /// Every field, with `env_var()` already rendered.
+    pub fields: JsonMap<String, Json>,
+    /// Fields that hold secrets: reading one is an error.
+    pub secrets: Vec<String>,
+}
+
+/// Where `target` and `profile()` get their values. `role` is `source` or `destination`.
+pub trait Connections: Send + Sync {
+    /// The Binding's source connection.
+    fn source(&self) -> Result<Connection, String>;
+    fn profile(&self, name: &str, role: Option<&str>) -> Result<Connection, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +106,8 @@ impl fmt::Display for RenderError {
 
 pub struct Renderer {
     env: Environment<'static>,
+    /// What `columns()` found, by relation, for the file being rendered.
+    columns_cache: Arc<Mutex<BTreeMap<String, Value>>>,
     /// Warnings raised while rendering (e.g. a large lookup inlined), drained by the caller.
     warnings: Arc<Mutex<Vec<String>>>,
     import: String,
@@ -83,6 +124,8 @@ pub struct RendererConfig<'a> {
     /// `--var` overrides, highest precedence.
     pub cli_vars: BTreeMap<String, String>,
     pub runner: Option<Arc<dyn QueryRunner>>,
+    /// Profiles for `target` and `profile()`; `None` where no profile resolves (offline checks).
+    pub connections: Option<Arc<dyn Connections>>,
     pub run_query_max_rows: u64,
     /// Every `.sql` file `ref()` can name, by basename, relative to `root`.
     pub sql: BTreeMap<String, PathBuf>,
@@ -132,8 +175,45 @@ impl Renderer {
                 }),
             }
         });
+        env.add_function("raise_error", |message: String| -> Result<Value, Error> {
+            Err(Error::new(ErrorKind::InvalidOperation, message))
+        });
         let source_type = cfg.context.source_type.clone();
+        crate::dates::register(&mut env, cfg.context.calendar, cfg.context.date);
         env.add_global("run", Value::from_object(Run(cfg.context)));
+        if let Some(c) = cfg.connections {
+            // Resolved on first use: a report that never reads `target` never asks for it.
+            env.add_global(
+                "target",
+                Value::from_object(LazyTarget {
+                    connections: c.clone(),
+                    resolved: std::sync::OnceLock::new(),
+                }),
+            );
+            env.add_function(
+                "profile",
+                move |name: String, kwargs: Kwargs| -> Result<Value, Error> {
+                    let role: Option<String> = kwargs.get("role")?;
+                    kwargs.assert_all_used()?;
+                    if let Some(r) = &role
+                        && r != "source"
+                        && r != "destination"
+                    {
+                        return Err(Error::new(
+                            ErrorKind::InvalidOperation,
+                            format!(
+                                "`profile('{name}', role='{r}')`: role must be 'source' or 'destination'"
+                            ),
+                        ));
+                    }
+                    c.profile(&name, role.as_deref())
+                        .map(|t| Value::from_object(ConnectionValue(t)))
+                        .map_err(|e| {
+                            Error::new(ErrorKind::InvalidOperation, format!("`profile('{name}')`: {e}"))
+                        })
+                },
+            );
+        }
         let runner = cfg.runner;
         let warnings: Arc<Mutex<Vec<String>>> = Arc::default();
         let lookups = Arc::new(Lookups {
@@ -159,6 +239,7 @@ impl Renderer {
             Ok(Value::from_object(QueryResult::new(rows)))
         });
         let default_max = cfg.run_query_max_rows;
+        let runner_c = runner.clone();
         env.add_function(
             "run_query",
             move |sql: String, kwargs: Kwargs| -> Result<Value, Error> {
@@ -176,6 +257,33 @@ impl Renderer {
                 Ok(Value::from_object(QueryResult::new(rows)))
             },
         );
+        // Per rendered file: a later query may have recreated the relation.
+        let columns_cache: Arc<Mutex<BTreeMap<String, Value>>> = Arc::default();
+        let cache = columns_cache.clone();
+        env.add_function("columns", move |rel: String| -> Result<Value, Error> {
+            if let Some(v) = cache.lock().unwrap().get(&rel) {
+                return Ok(v.clone());
+            }
+            let Some(runner) = &runner_c else {
+                return Err(Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("`columns('{rel}')` has no connection here"),
+                ));
+            };
+            let sql = format!("select * from {rel} as _dre_cols where 1=0");
+            let cols = runner
+                .columns(&sql)
+                .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("`columns('{rel}')`: {e}")))?;
+            let v = Value::from(
+                cols.into_iter()
+                    .map(|c| {
+                        Value::from_iter([("name", Value::from(c.name)), ("type", Value::from(c.data_type))])
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            cache.lock().unwrap().insert(rel, v.clone());
+            Ok(v)
+        });
 
         // Every macro file is combined into one template, imported (on the first line, so line
         // numbers don't move) into everything rendered. Each package gets its own template,
@@ -212,6 +320,7 @@ impl Renderer {
         );
         let mut r = Renderer {
             env,
+            columns_cache,
             warnings,
             import,
             macro_files: BTreeMap::new(),
@@ -234,6 +343,7 @@ impl Renderer {
 
     /// Render `src`, reporting errors against `file`.
     pub fn render(&self, file: &Path, src: &str) -> Result<String, RenderError> {
+        self.columns_cache.lock().unwrap().clear();
         let full = format!("{}{src}", self.import);
         let name = file.to_string_lossy().to_string();
         let tmpl = self
@@ -567,7 +677,9 @@ impl Object for Run {
             "profile" => Value::from(c.profile.clone()),
             "source_type" => Value::from(c.source_type.clone()),
             "schedule" => c.schedule.clone().map(Value::from).unwrap_or(Value::from(())),
-            "date" => Value::from_object(RunDate(c.date)),
+            "date" => Date::value(c.date, c.calendar),
+            "now" => DateTime::now(c.now, c.calendar),
+            "timezone" => Value::from(c.calendar.tz.name()),
             _ => return None,
         })
     }
@@ -601,25 +713,90 @@ impl Object for Run {
     }
 }
 
+/// `target` and `profile('name')`: a profile target's fields, refusing secret ones.
 #[derive(Debug)]
-struct RunDate(NaiveDate);
+struct ConnectionValue(Connection);
 
-impl Object for RunDate {
+impl Object for ConnectionValue {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
-        let f = match key.as_str()? {
-            "yyyymmdd" => "%Y%m%d",
-            "ddmmyyyy" => "%d%m%Y",
-            "yyyy" => "%Y",
-            "mm" => "%m",
-            "dd" => "%d",
-            "iso" => "%Y-%m-%d",
-            _ => return None,
-        };
-        Some(Value::from(self.0.format(f).to_string()))
+        connection_field(&self.0, key)
     }
 
     fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.format("%Y-%m-%d"))
+        write!(f, "{}", self.0.target)
+    }
+}
+
+/// `target`: the Binding's source connection, looked up the first time a template reads it.
+struct LazyTarget {
+    connections: Arc<dyn Connections>,
+    resolved: std::sync::OnceLock<Result<Connection, String>>,
+}
+
+impl fmt::Debug for LazyTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("target")
+    }
+}
+
+impl LazyTarget {
+    fn get(&self) -> &Result<Connection, String> {
+        self.resolved.get_or_init(|| self.connections.source())
+    }
+}
+
+impl Object for LazyTarget {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match self.get() {
+            Ok(c) => connection_field(c, key),
+            Err(e) => Some(Value::from(Error::new(
+                ErrorKind::InvalidOperation,
+                format!("`target`: {e}"),
+            ))),
+        }
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.get() {
+            Ok(c) => write!(f, "{}", c.target),
+            Err(_) => Err(fmt::Error),
+        }
+    }
+}
+
+/// One field of a profile target for templates; a secret or missing one is an error value.
+fn connection_field(c: &Connection, key: &Value) -> Option<Value> {
+    {
+        let k = key.as_str()?;
+        Some(match k {
+            "name" => Value::from(c.target.clone()),
+            "type" => Value::from(c.kind.clone()),
+            "profile" => Value::from(c.profile.clone()),
+            _ if c.secrets.iter().any(|s| s == k) => Value::from(Error::new(
+                ErrorKind::InvalidOperation,
+                format!(
+                    "`{k}` of profile `{}` holds a secret, so templates can't read it (it would end up in compiled SQL and logs)",
+                    c.profile
+                ),
+            )),
+            _ => match c.fields.get(k) {
+                Some(v) => Value::from_serialize(v),
+                None => Value::from(Error::new(
+                    ErrorKind::UndefinedError,
+                    format!(
+                        "profile `{}` (target `{}`) has no field `{k}`; it has: {}",
+                        c.profile,
+                        c.target,
+                        c.fields
+                            .keys()
+                            .filter(|f| !c.secrets.contains(f))
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                )),
+            },
+        })
     }
 }
 
@@ -752,10 +929,13 @@ mod tests {
                 source_type: "duckdb".into(),
                 schedule: None,
                 date: NaiveDate::from_ymd_opt(2026, 1, 25).unwrap(),
+                now: Utc::now(),
+                calendar: Calendar::default(),
             },
             vars: vars.as_object().cloned().unwrap_or_default(),
             cli_vars: cli.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
             runner: None,
+            connections: None,
             run_query_max_rows: 10_000,
             sql: BTreeMap::new(),
             lookups: BTreeMap::new(),
@@ -869,6 +1049,9 @@ mod tests {
                 ],
             })
         }
+        fn columns(&self, _: &str) -> Result<Vec<Column>, String> {
+            Ok(Vec::new())
+        }
     }
 
     #[test]
@@ -885,10 +1068,13 @@ mod tests {
                 source_type: "duckdb".into(),
                 schedule: None,
                 date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+                now: Utc::now(),
+                calendar: Calendar::default(),
             },
             vars: JsonMap::new(),
             cli_vars: BTreeMap::new(),
             runner: Some(Arc::new(Fake)),
+            connections: None,
             run_query_max_rows: 10_000,
             sql: BTreeMap::new(),
             lookups: BTreeMap::new(),

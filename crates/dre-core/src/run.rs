@@ -20,10 +20,14 @@ use dre_protocol::{CAP_LOAD, CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as Json, json};
 
+use crate::dates::Calendar;
 use crate::lookups::Table;
-use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Role};
+use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Profiles, Role};
 use crate::project::{Binding, PluginKind, Project, QueryEntry, Report, TARGET_DIR};
-use crate::render::{QueryRows, QueryRunner, RenderError, Renderer, RendererConfig, RunContext};
+use crate::render::{
+    Column, Connection, Connections, QueryRows, QueryRunner, RenderError, Renderer, RendererConfig,
+    RunContext,
+};
 use crate::sqlsplit::{self, StatementKind};
 use crate::{lock, selector};
 
@@ -50,6 +54,8 @@ pub struct RunOptions {
     pub live_check: bool,
     /// `--schedule <name>`: run exactly the Bindings that schedule targets, with its vars.
     pub schedule: Option<String>,
+    /// `--timezone` or `DRE_TIMEZONE`: above every configured `timezone:`.
+    pub timezone: Option<String>,
 }
 
 impl RunOptions {
@@ -63,6 +69,7 @@ impl RunOptions {
             "profile": self.profile,
             "vars": self.vars,
             "run_date": date.to_string(),
+            "timezone": self.timezone,
             "output_name": self.output_name,
             "output_path": self.output_path,
             "dry_run": self.dry_run,
@@ -135,6 +142,9 @@ pub struct BindingOutcome {
     pub schedule_vars: Option<JsonMap<String, Json>>,
     /// Every var the Binding rendered with: its own, the schedule's, then `--var`.
     pub vars: JsonMap<String, Json>,
+    /// The run's timezone (IANA name); empty when the Binding never started.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub timezone: String,
     #[serde(skip)]
     pub elapsed: Duration,
 }
@@ -188,7 +198,6 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
             summary.error = Some(unknown_schedule(project, name));
             return summary;
         }
-        let date = opts.date.unwrap_or_else(|| chrono::Local::now().date_naive());
         let planned: Vec<(&Report, Binding)> = project
             .reports
             .iter()
@@ -208,7 +217,7 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
         ui.plan(planned.len());
         for (report, b) in &planned {
             ui.binding_start(&report.name, b.set.as_deref());
-            let mut r = BindingRun::new(project, report, b, opts, date, ui);
+            let mut r = BindingRun::new(project, report, b, opts, ui);
             let outcome = r.run();
             ui.binding_end(&outcome);
             summary.outcomes.push(outcome);
@@ -229,7 +238,6 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
             }
         },
     };
-    let date = opts.date.unwrap_or_else(|| chrono::Local::now().date_naive());
     // Resolve every report's Bindings first (prompts happen here), so progress has a total.
     let mut planned: Vec<(&Report, Binding)> = Vec::new();
     for report in reports {
@@ -247,6 +255,7 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
                     schedule: opts.schedule.clone(),
                     schedule_vars: None,
                     vars: JsonMap::new(),
+                    timezone: String::new(),
                     elapsed: Duration::ZERO,
                 };
                 ui.binding_end(&outcome);
@@ -257,7 +266,7 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
     ui.plan(planned.len());
     for (report, b) in &planned {
         ui.binding_start(&report.name, b.set.as_deref());
-        let mut r = BindingRun::new(project, report, b, opts, date, ui);
+        let mut r = BindingRun::new(project, report, b, opts, ui);
         let outcome = r.run();
         ui.binding_end(&outcome);
         summary.outcomes.push(outcome);
@@ -366,7 +375,9 @@ struct BindingRun<'a> {
     rendered_vars: JsonMap<String, Json>,
     schedule_vars: Option<JsonMap<String, Json>>,
     opts: &'a RunOptions,
+    /// `run.date`: `DRE_RUN_DATE`, else today in the run's timezone.
     date: NaiveDate,
+    calendar: Calendar,
     ui: &'a mut dyn Ui,
     compiled_dir: PathBuf,
     run_dir: PathBuf,
@@ -401,16 +412,29 @@ impl<'a> BindingRun<'a> {
         report: &'a Report,
         b: &'a Binding,
         opts: &'a RunOptions,
-        date: NaiveDate,
         ui: &'a mut dyn Ui,
     ) -> Self {
         let t = project.root.join(TARGET_DIR);
         let rel = Path::new(&report.name).join(b.dir_name());
-        let schedule_vars = opts
+        let schedule = opts
             .schedule
             .as_ref()
-            .and_then(|n| project.schedules.iter().find(|e| &e.name == n))
-            .map(|e| e.vars.clone());
+            .and_then(|n| project.schedules.iter().find(|e| &e.name == n));
+        let schedule_vars = schedule.map(|e| e.vars.clone());
+        // Names were checked when the project and the command line were read.
+        let tz = opts
+            .timezone
+            .as_ref()
+            .or(schedule.and_then(|e| e.timezone.as_ref()))
+            .or(report.timezone.as_ref())
+            .and_then(|t| crate::dates::parse_tz(t).ok())
+            .unwrap_or(chrono_tz::Tz::UTC);
+        let calendar = Calendar {
+            tz,
+            week_start: project.week_start,
+            numbering: project.week_numbering,
+        };
+        let date = opts.date.unwrap_or_else(|| calendar.today());
         // Binding vars, then the schedule's, then `--var` on top.
         let mut vars = b.vars.clone();
         vars.extend(schedule_vars.clone().unwrap_or_default());
@@ -433,6 +457,7 @@ impl<'a> BindingRun<'a> {
             schedule_vars,
             opts,
             date,
+            calendar,
             ui,
             compiled_dir: t.join("compiled").join(&rel),
             run_dir: t.join("run").join(&rel),
@@ -450,6 +475,18 @@ impl<'a> BindingRun<'a> {
         }
     }
 
+    /// What `target` and `profile()` read for this Binding.
+    fn connections(&self, source: Option<&str>) -> Arc<dyn Connections> {
+        Arc::new(ProfileConnections {
+            profiles: self.project.profiles.clone(),
+            source: source.map(str::to_string),
+            target: self.opts.target.clone(),
+            root: self.project.root.clone(),
+            plugins: self.project.plugins.clone(),
+            log: self.ui.plugin_log(),
+        })
+    }
+
     fn outcome(&self, status: Status, error: Option<String>) -> BindingOutcome {
         BindingOutcome {
             report: self.report.name.clone(),
@@ -462,6 +499,7 @@ impl<'a> BindingRun<'a> {
             schedule: self.opts.schedule.clone(),
             schedule_vars: self.schedule_vars.clone(),
             vars: self.rendered_vars.clone(),
+            timezone: self.calendar.tz.name().to_string(),
             elapsed: self.started.elapsed(),
         }
     }
@@ -541,10 +579,13 @@ impl<'a> BindingRun<'a> {
                 source_type: output.kind.clone(),
                 schedule: self.opts.schedule.clone(),
                 date: self.date,
+                now: self.started_at,
+                calendar: self.calendar,
             },
             vars: self.vars.clone(),
             cli_vars: self.opts.vars.clone(),
             runner: Some(Arc::new(SessionRunner(session.clone(), self.ui.sql_log()))),
+            connections: Some(self.connections(Some(&profile_name))),
             run_query_max_rows: self.project.run_query_max_rows,
             sql: self.project.sql.clone(),
             lookups: self.project.lookups.clone(),
@@ -555,172 +596,83 @@ impl<'a> BindingRun<'a> {
         })
         .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.compiled_dir).map_err(|e| e.to_string())?;
+        // A real run of a managed report renders each query just before running it, so a
+        // template can look at what earlier queries made (`columns()` of a temp table).
+        // Compiling, checking and unmanaged reports render everything first.
+        let interleave = !self.opts.dry_run && !self.opts.live_check && self.report.managed;
         let mut statements = Vec::new();
         // Reported after the unmanaged-report check, which matters more.
         let mut two_tabs: Option<String> = None;
-        for q in &self.b.queries {
-            let src = std::fs::read_to_string(self.project.root.join(&q.path))
-                .map_err(|e| format!("{}: {e}", q.path.display()))?;
-            let sql = renderer
-                .render(&q.path, &src)
-                .map_err(|e: RenderError| e.to_string())?;
-            std::fs::write(
-                self.compiled_dir.join(format!("{}.sql", q.query)),
-                crate::secrets::mask(&sql).as_bytes(),
-            )
-            .map_err(|e| e.to_string())?;
-            self.ui
-                .step(Level::Debug, "Rendered", &q.path.display().to_string(), None);
-            // 2. Split. One file makes at most one tab, from its last statement, so any earlier
-            // SELECT would be lost: that's an error, not a guess.
-            let parts = sqlsplit::split(&sql);
-            if q.tab && parts.is_empty() {
-                return Err(format!(
-                    "{}: `{}` makes a tab but has no statements; add a query, or `tab: false` if it's meant to be empty",
-                    q.path.display(),
-                    q.query
-                ));
+        if interleave {
+            self.dests = self.render_destinations(&renderer)?;
+            if self.b.queries.len() > 1 {
+                self.check_sessions(&session, self.b.queries.len(), &output.kind)?;
             }
-            let n = parts.len();
-            for (i, st) in parts.into_iter().enumerate() {
-                let body = sqlsplit::strip_leading_comments(&st.text);
-                let line = st.line + st.text[..st.text.len() - body.len()].matches('\n').count();
-                let kind = sqlsplit::classify(&st.text);
-                let last = i + 1 == n;
-                if q.tab && !last && kind == StatementKind::Read && two_tabs.is_none() {
-                    two_tabs = Some(format!(
-                        "{}:{line}: `{}` has more than one SELECT, but one .sql file makes one tab (from its last statement); put each tab's query in its own .sql file and list each in `queries:`",
-                        q.path.display(),
-                        q.query
-                    ));
+            std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
+            let mut i = 0;
+            for q in &self.b.queries {
+                let sts = self.render_query(&renderer, q, &mut two_tabs)?;
+                for w in renderer.take_warnings() {
+                    self.ui.warn(&w);
                 }
-                statements.push(Statement {
-                    query: q.query.clone(),
-                    file: q.path.clone(),
-                    line,
-                    kind,
-                    text: st.text,
-                    tab: q.tab && last,
-                });
-            }
-        }
-        self.dests = self.render_destinations(&renderer)?;
-        for w in renderer.take_warnings() {
-            self.ui.warn(&w);
-        }
-
-        // 3. Unmanaged: every rendered statement must only read (or create temp objects).
-        if !self.report.managed {
-            if let Some(bad) = statements.iter().find(|s| !s.kind.is_read_only_safe()) {
-                return Err(format!(
-                    "{}:{}: unmanaged report `{}` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `{}`; nothing was run — rewrite the statement, or give the report a YAML to declare it",
-                    bad.file.display(),
-                    bad.line,
-                    self.report.name,
-                    dre_protocol::util::summarize(&bad.text, 60)
-                ));
-            }
-            let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
-                || session.lock().unwrap().loaded;
-            session.lock().unwrap().want_read_only(!creates_temp);
-        }
-        if let Some(e) = two_tabs {
-            return Err(e);
-        }
-
-        if self.opts.dry_run {
-            let plan = self.plan(&profile_name, &output.kind);
-            self.ui.compiled(&plan);
-            return Ok(());
-        }
-
-        // The one-session guarantee.
-        {
-            let mut s = session.lock().unwrap();
-            let p = s.get()?;
-            if statements.len() > 1 && !p.has(CAP_SESSIONS) {
-                return Err(format!(
-                    "this Binding runs {} statements, but the `{}` source plugin can't hold one session across them; nothing was run",
-                    statements.len(),
-                    output.kind
-                ));
-            }
-        }
-
-        if self.opts.live_check {
-            return self.live_check(&session, &statements, &output.kind);
-        }
-
-        // 4. Execute in order on one session.
-        std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
-        let sql_log = self.ui.sql_log();
-        for (i, st) in statements.iter().enumerate() {
-            sql_log(&format!("{}:{}", st.file.display(), st.line), &st.text);
-            let spool_path = self.run_dir.join(".spool").join(format!("{i}.arrow"));
-            let mut writer: Option<FileWriter<File>> = None;
-            let t = Instant::now();
-            let exec = {
-                let mut s = session.lock().unwrap();
-                let p = s.get()?;
-                p.execute(&st.text, self.opts.preview, |schema, batch| {
-                    if writer.is_none() {
-                        let f = File::create(&spool_path).map_err(|e| e.to_string())?;
-                        writer = Some(FileWriter::try_new(f, schema).map_err(|e| e.to_string())?);
-                    }
-                    writer.as_mut().unwrap().write(&batch).map_err(|e| e.to_string())
-                })
-                .map_err(|e| format!("{}:{}: {e}", st.file.display(), st.line))?
-            };
-            let what = match &exec {
-                Execution::Result { rows, .. } => {
-                    format!("{} row{}", thousands(*rows), if *rows == 1 { "" } else { "s" })
+                if let Some(e) = two_tabs.take() {
+                    return Err(e);
                 }
-                Execution::NoResult {
-                    rows_affected: Some(n),
-                } => format!("no result set ({n} affected)"),
-                Execution::NoResult { .. } => "no result set".to_string(),
-            };
-            let at = format!("{}:{}", st.file.display(), st.line);
-            self.ui.step(
-                Level::Debug,
-                "Executed",
-                &format!("{at}  {what}"),
-                Some(t.elapsed()),
-            );
-            // The YAML decides the tabs; the result only has to match it. A tab with no rows
-            // still gets its column names.
-            let (schema, rows) = match (st.tab, exec) {
-                (true, Execution::Result { schema, rows }) => (schema, rows),
-                (true, Execution::NoResult { .. }) => {
+                if i == 0 && sts.len() > 1 {
+                    self.check_sessions(&session, sts.len(), &output.kind)?;
+                }
+                for st in &sts {
+                    self.execute_statement(&session, i, st)?;
+                    i += 1;
+                }
+            }
+        } else {
+            for q in &self.b.queries {
+                statements.extend(self.render_query(&renderer, q, &mut two_tabs)?);
+            }
+            self.dests = self.render_destinations(&renderer)?;
+            for w in renderer.take_warnings() {
+                self.ui.warn(&w);
+            }
+
+            // 3. Unmanaged: every rendered statement must only read (or create temp objects).
+            if !self.report.managed {
+                if let Some(bad) = statements.iter().find(|s| !s.kind.is_read_only_safe()) {
                     return Err(format!(
-                        "{at}: `{}` makes a tab, but its last statement returned no result set; if the query only prepares data (a temp view, a SET), add `tab: false` to it in the YAML",
-                        st.query
+                        "{}:{}: unmanaged report `{}` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `{}`; nothing was run — rewrite the statement, or give the report a YAML to declare it",
+                        bad.file.display(),
+                        bad.line,
+                        self.report.name,
+                        dre_protocol::util::summarize(&bad.text, 60)
                     ));
                 }
-                (false, _) => {
-                    drop(writer);
-                    let _ = std::fs::remove_file(&spool_path);
-                    continue;
-                }
-            };
-            {
-                let mut w = match writer {
-                    Some(w) => w,
-                    None => {
-                        FileWriter::try_new(File::create(&spool_path).map_err(|e| e.to_string())?, &schema)
-                            .map_err(|e| e.to_string())?
-                    }
-                };
-                w.finish().map_err(|e| e.to_string())?;
-                self.produced.push(Produced {
-                    query: st.query.clone(),
-                    schema,
-                    rows,
-                    spool: spool_path,
-                    name: String::new(),
-                    anchor: None,
-                    header: None,
-                });
+                let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
+                    || session.lock().unwrap().loaded;
+                session.lock().unwrap().want_read_only(!creates_temp);
+            }
+            if let Some(e) = two_tabs {
+                return Err(e);
+            }
+
+            if self.opts.dry_run {
+                let plan = self.plan(&profile_name, &output.kind);
+                self.ui.compiled(&plan);
+                return Ok(());
+            }
+
+            // The one-session guarantee.
+            if statements.len() > 1 {
+                self.check_sessions(&session, statements.len(), &output.kind)?;
+            }
+
+            if self.opts.live_check {
+                return self.live_check(&session, &statements, &output.kind);
+            }
+
+            // 4. Execute in order on one session.
+            std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
+            for (i, st) in statements.iter().enumerate() {
+                self.execute_statement(&session, i, st)?;
             }
         }
         if let Ok(mut s) = session.lock() {
@@ -770,6 +722,148 @@ impl<'a> BindingRun<'a> {
         if self.opts.preview.is_none() {
             self.write_snapshot()
                 .map_err(|e| format!("can't write the schema snapshot: {e}"))?;
+        }
+        Ok(())
+    }
+
+    /// Render one query file into its statements, writing it to `target/compiled/`.
+    fn render_query(
+        &mut self,
+        renderer: &Renderer,
+        q: &QueryEntry,
+        two_tabs: &mut Option<String>,
+    ) -> Result<Vec<Statement>, Fail> {
+        let mut out = Vec::new();
+        let src = std::fs::read_to_string(self.project.root.join(&q.path))
+            .map_err(|e| format!("{}: {e}", q.path.display()))?;
+        let sql = renderer
+            .render(&q.path, &src)
+            .map_err(|e: RenderError| e.to_string())?;
+        std::fs::write(
+            self.compiled_dir.join(format!("{}.sql", q.query)),
+            crate::secrets::mask(&sql).as_bytes(),
+        )
+        .map_err(|e| e.to_string())?;
+        self.ui
+            .step(Level::Debug, "Rendered", &q.path.display().to_string(), None);
+        // 2. Split. One file makes at most one tab, from its last statement, so any earlier
+        // SELECT would be lost: that's an error, not a guess.
+        let parts = sqlsplit::split(&sql);
+        if q.tab && parts.is_empty() {
+            return Err(format!(
+                "{}: `{}` makes a tab but has no statements; add a query, or `tab: false` if it's meant to be empty",
+                q.path.display(),
+                q.query
+            ));
+        }
+        let n = parts.len();
+        for (i, st) in parts.into_iter().enumerate() {
+            let body = sqlsplit::strip_leading_comments(&st.text);
+            let line = st.line + st.text[..st.text.len() - body.len()].matches('\n').count();
+            let kind = sqlsplit::classify(&st.text);
+            let last = i + 1 == n;
+            if q.tab && !last && kind == StatementKind::Read && two_tabs.is_none() {
+                *two_tabs = Some(format!(
+                    "{}:{line}: `{}` has more than one SELECT, but one .sql file makes one tab (from its last statement); put each tab's query in its own .sql file and list each in `queries:`",
+                    q.path.display(),
+                    q.query
+                ));
+            }
+            out.push(Statement {
+                query: q.query.clone(),
+                file: q.path.clone(),
+                line,
+                kind,
+                text: st.text,
+                tab: q.tab && last,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Fail unless the source can hold one session across `n` statements.
+    fn check_sessions(&self, session: &Arc<Mutex<Session>>, n: usize, kind: &str) -> Result<(), Fail> {
+        let mut s = session.lock().unwrap();
+        if !s.get()?.has(CAP_SESSIONS) {
+            return Err(format!(
+                "this Binding runs {n} statements, but the `{kind}` source plugin can't hold one session across them; nothing was run"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Run statement `i`, spooling its result if it makes a tab.
+    fn execute_statement(
+        &mut self,
+        session: &Arc<Mutex<Session>>,
+        i: usize,
+        st: &Statement,
+    ) -> Result<(), Fail> {
+        let sql_log = self.ui.sql_log();
+        sql_log(&format!("{}:{}", st.file.display(), st.line), &st.text);
+        let spool_path = self.run_dir.join(".spool").join(format!("{i}.arrow"));
+        let mut writer: Option<FileWriter<File>> = None;
+        let t = Instant::now();
+        let exec = {
+            let mut s = session.lock().unwrap();
+            let p = s.get()?;
+            p.execute(&st.text, self.opts.preview, |schema, batch| {
+                if writer.is_none() {
+                    let f = File::create(&spool_path).map_err(|e| e.to_string())?;
+                    writer = Some(FileWriter::try_new(f, schema).map_err(|e| e.to_string())?);
+                }
+                writer.as_mut().unwrap().write(&batch).map_err(|e| e.to_string())
+            })
+            .map_err(|e| format!("{}:{}: {e}", st.file.display(), st.line))?
+        };
+        let what = match &exec {
+            Execution::Result { rows, .. } => {
+                format!("{} row{}", thousands(*rows), if *rows == 1 { "" } else { "s" })
+            }
+            Execution::NoResult {
+                rows_affected: Some(n),
+            } => format!("no result set ({n} affected)"),
+            Execution::NoResult { .. } => "no result set".to_string(),
+        };
+        let at = format!("{}:{}", st.file.display(), st.line);
+        self.ui.step(
+            Level::Debug,
+            "Executed",
+            &format!("{at}  {what}"),
+            Some(t.elapsed()),
+        );
+        // The YAML decides the tabs; the result only has to match it. A tab with no rows
+        // still gets its column names.
+        let (schema, rows) = match (st.tab, exec) {
+            (true, Execution::Result { schema, rows }) => (schema, rows),
+            (true, Execution::NoResult { .. }) => {
+                return Err(format!(
+                    "{at}: `{}` makes a tab, but its last statement returned no result set; if the query only prepares data (a temp view, a SET), add `tab: false` to it in the YAML",
+                    st.query
+                ));
+            }
+            (false, _) => {
+                drop(writer);
+                let _ = std::fs::remove_file(&spool_path);
+                return Ok(());
+            }
+        };
+        {
+            let mut w = match writer {
+                Some(w) => w,
+                None => FileWriter::try_new(File::create(&spool_path).map_err(|e| e.to_string())?, &schema)
+                    .map_err(|e| e.to_string())?,
+            };
+            w.finish().map_err(|e| e.to_string())?;
+            self.produced.push(Produced {
+                query: st.query.clone(),
+                schema,
+                rows,
+                spool: spool_path,
+                name: String::new(),
+                anchor: None,
+                header: None,
+            });
         }
         Ok(())
     }
@@ -1009,10 +1103,13 @@ impl<'a> BindingRun<'a> {
                 source_type: self.source_type.clone(),
                 schedule: self.opts.schedule.clone(),
                 date: self.date,
+                now: self.started_at,
+                calendar: self.calendar,
             },
             vars: self.vars.clone(),
             cli_vars: self.opts.vars.clone(),
             runner: None,
+            connections: Some(self.connections(self.b.profile.as_deref())),
             run_query_max_rows: self.project.run_query_max_rows,
             sql: self.project.sql.clone(),
             lookups: self.project.lookups.clone(),
@@ -1327,6 +1424,7 @@ impl<'a> BindingRun<'a> {
             "schedule_vars": self.schedule_vars,
             "vars": self.rendered_vars,
             "run_date": self.date.to_string(),
+            "timezone": self.calendar.tz.name(),
             "params": self.opts.params(self.date),
             "status": status,
             "error": error,
@@ -1517,6 +1615,31 @@ impl QueryRunner for SessionRunner {
         Ok(out)
     }
 
+    fn columns(&self, sql: &str) -> Result<Vec<Column>, String> {
+        let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
+        (self.1)("columns()", sql);
+        let p = s.get()?;
+        let mut schema: Option<SchemaRef> = None;
+        let exec = p
+            .execute(sql, Some(1), |sch, _| {
+                schema.get_or_insert_with(|| sch.clone());
+                Ok(())
+            })
+            .map_err(|e| e.to_string())?;
+        if let Execution::Result { schema: sch, .. } = exec {
+            schema.get_or_insert(sch);
+        }
+        let schema = schema.ok_or("the query returned no result set")?;
+        Ok(schema
+            .fields()
+            .iter()
+            .map(|f| Column {
+                name: f.name().clone(),
+                data_type: f.data_type().to_string(),
+            })
+            .collect())
+    }
+
     fn load(&self, name: &str, table: &Table) -> Result<Option<(String, Option<String>)>, String> {
         let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
         // A temp table is allowed even in an unmanaged report; it needs a writable session.
@@ -1592,15 +1715,38 @@ fn render_connection(output: &ProfileTarget) -> Result<JsonMap<String, Json>, St
 
 /// Locate the plugin for a declared type, honouring `dre.lock` pins and declared constraints.
 pub fn find_plugin(project: &Project, kind: PluginKind, name: &str) -> Result<PathBuf, String> {
-    let req = project
-        .plugins
+    find_plugin_in(&project.root, &project.plugins, kind, name)
+}
+
+fn find_plugin_in(
+    root: &Path,
+    plugins: &[crate::project::PluginRequirement],
+    kind: PluginKind,
+    name: &str,
+) -> Result<PathBuf, String> {
+    let declared = plugins.iter().find(|p| p.kind == kind && p.name == name);
+    if let Some(crate::project::PluginRequirement {
+        source: crate::project::PluginSource::Local(p),
+        ..
+    }) = declared
+    {
+        let path = root.join(p);
+        return if path.is_file() {
+            Ok(path)
+        } else {
+            Err(format!(
+                "the {} plugin `{name}` is declared `local: {p}`, but there's no file at {}",
+                kind.as_str(),
+                path.display()
+            ))
+        };
+    }
+    let req = plugins
         .iter()
         .find(|p| p.kind == kind && p.name == name)
         .map(|p| p.req());
-    let pin = lock::Lock::load(&project.root)
-        .ok()
-        .and_then(|l| l.version(kind, name));
-    let dir = crate::plugins::plugins_dir(Some(&project.root));
+    let pin = lock::Lock::load(root).ok().and_then(|l| l.version(kind, name));
+    let dir = crate::plugins::plugins_dir(Some(root));
     crate::plugins::find(&dir, kind, name, req.as_ref(), pin.as_ref()).map(|p| p.path).ok_or_else(|| {
         format!(
             "the {} plugin `{name}` isn't installed (looked in {}); run `dre deps` to install the project's plugins",
@@ -1608,6 +1754,142 @@ pub fn find_plugin(project: &Project, kind: PluginKind, name: &str) -> Result<Pa
             dir.display()
         )
     })
+}
+
+/// `target` and `profile()` from `profiles.yml`. A field is secret when the plugin's `describe`
+/// says so; when the plugin can't be asked, when its name looks like one; and always when its
+/// value comes from a `DRE_SECRET_*` variable.
+struct ProfileConnections {
+    profiles: Profiles,
+    /// The Binding's source profile.
+    source: Option<String>,
+    /// `--target`.
+    target: Option<String>,
+    root: PathBuf,
+    plugins: Vec<crate::project::PluginRequirement>,
+    log: LogSink,
+}
+
+/// Secret field names by `(project, role, type)`, `None` when `describe` couldn't be asked:
+/// each plugin is asked once per process, not once per Binding.
+static DESCRIBED: std::sync::LazyLock<Mutex<BTreeMap<DescribeKey, SecretFields>>> =
+    std::sync::LazyLock::new(Mutex::default);
+
+/// `(project root, role, plugin type)`.
+type DescribeKey = (PathBuf, Role, String);
+
+type SecretFields = Option<Vec<String>>;
+
+const SECRET_NAME_WORDS: &[&str] = &["password", "secret", "token", "key", "credential"];
+
+impl ProfileConnections {
+    fn view(&self, role: Role, name: &str) -> Result<Connection, String> {
+        let (target, out): (String, ProfileTarget) = match self.profiles.get(role, name) {
+            Some(p) => {
+                let t = self
+                    .target
+                    .as_ref()
+                    .filter(|t| p.targets.contains_key(t.as_str()))
+                    .unwrap_or(&p.target);
+                let o = p
+                    .targets
+                    .get(t)
+                    .ok_or_else(|| format!("profile `{name}` has no `{t}` target"))?;
+                (t.clone(), o.clone())
+            }
+            None if role == Role::Destination && self.profiles.is_builtin_local(name) => {
+                ("default".into(), BUILTIN_LOCAL.clone())
+            }
+            None => {
+                return Err(format!(
+                    "no {} profile `{name}` in {}",
+                    role.as_str(),
+                    self.profiles.path.display()
+                ));
+            }
+        };
+        let mut secrets: Vec<String> = out
+            .fields
+            .iter()
+            .filter(|(_, v)| v.as_str().is_some_and(|s| s.contains(crate::secrets::PREFIX)))
+            .map(|(k, _)| k.clone())
+            .collect();
+        match self.described(role, &out.kind) {
+            Some(named) => secrets.extend(named),
+            None => secrets.extend(
+                out.fields
+                    .keys()
+                    .filter(|k| {
+                        let k = k.to_lowercase();
+                        SECRET_NAME_WORDS.iter().any(|w| k.contains(w))
+                    })
+                    .cloned(),
+            ),
+        }
+        let fields = render_connection(&out)?;
+        Ok(Connection {
+            profile: name.to_string(),
+            target,
+            kind: out.kind.clone(),
+            fields,
+            secrets,
+        })
+    }
+
+    /// The fields the plugin marks secret, asked once per plugin type.
+    fn described(&self, role: Role, kind: &str) -> Option<Vec<String>> {
+        let key = (self.root.clone(), role, kind.to_string());
+        if let Some(v) = DESCRIBED.lock().unwrap().get(&key) {
+            return v.clone();
+        }
+        let plugin_kind = match role {
+            Role::Source => PluginKind::Source,
+            Role::Destination => PluginKind::Destination,
+        };
+        let asked = (|| {
+            if kind == LOCAL_TYPE {
+                return Some(Vec::new());
+            }
+            let path = find_plugin_in(&self.root, &self.plugins, plugin_kind, kind).ok()?;
+            let mut p = PluginProcess::start_in(&path, self.log.clone(), Some(&self.root)).ok()?;
+            let fields = p.describe().ok();
+            let _ = p.close();
+            Some(fields?.into_iter().filter(|f| f.secret).map(|f| f.name).collect())
+        })();
+        DESCRIBED.lock().unwrap().insert(key, asked.clone());
+        asked
+    }
+}
+
+impl Connections for ProfileConnections {
+    fn source(&self) -> Result<Connection, String> {
+        let name = self
+            .source
+            .as_deref()
+            .ok_or("no source profile resolves for this Binding")?;
+        self.view(Role::Source, name)
+    }
+
+    fn profile(&self, name: &str, role: Option<&str>) -> Result<Connection, String> {
+        let role = match role {
+            Some("source") => Role::Source,
+            Some(_) => Role::Destination,
+            None => {
+                let s = self.profiles.get(Role::Source, name).is_some();
+                let d = self.profiles.get(Role::Destination, name).is_some();
+                match (s, d) {
+                    (true, true) => {
+                        return Err(format!(
+                            "`{name}` is both a source and a destination profile; say which with `profile('{name}', role='source')` or `role='destination'`"
+                        ));
+                    }
+                    (true, false) => Role::Source,
+                    _ => Role::Destination,
+                }
+            }
+        };
+        self.view(role, name)
+    }
 }
 
 fn check_sheet_name(n: &str) -> Result<(), String> {

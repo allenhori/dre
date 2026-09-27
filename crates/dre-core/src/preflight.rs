@@ -15,9 +15,11 @@ pub const RUN_ATTRS: &[&str] = &[
     "schedule",
     "date",
     "date_format",
+    "now",
+    "timezone",
 ];
-/// Pre-built formats of `run.date`.
-pub const DATE_ATTRS: &[&str] = &["yyyymmdd", "ddmmyyyy", "yyyy", "mm", "dd", "iso"];
+/// Attributes and methods of `run.date`.
+pub use crate::dates::DATE_ATTRS;
 
 static SEGMENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)\{\{.*?\}\}|\{%.*?%\}").unwrap());
 static VAR: LazyLock<Regex> =

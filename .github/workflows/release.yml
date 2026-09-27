@@ -34,7 +34,7 @@ jobs:
           - {platform: linux-aarch64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, goos: linux, goarch: arm64}
           - {platform: windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc, goos: windows, goarch: amd64}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -44,7 +44,7 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go/databricks/go.mod
           cache-dependency-path: go/databricks/go.sum
@@ -96,7 +96,7 @@ jobs:
           done
           ls -l dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist-${{ matrix.platform }}
           path: dist/*
@@ -113,9 +113,9 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dist-*
           path: dist

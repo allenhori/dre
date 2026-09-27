@@ -20,7 +20,8 @@ destinations:
 ";
 
 fn project() -> TestProject {
-    let p = TestProject::new(
+    // No database files: compiling these reports mustn't need one.
+    TestProject::new(
         &[
             (
                 "dre_project.yml",
@@ -47,9 +48,7 @@ fn project() -> TestProject {
             ("reports/finance/other/o.sql", "select 4 as y\n"),
         ],
         PROFILES,
-    );
-    // No database files: compiling these reports mustn't need one.
-    p
+    )
 }
 
 #[test]

@@ -126,6 +126,37 @@ How the commands use it:
 DRE only ever installs plugins the project declares under `sources:`, `destinations:` or
 `formats:`. It never infers them from a `profiles.yml` `type:`.
 
+## Other places to install from
+
+A plugin entry can name where it comes from instead of the default registry. Bare names and
+`name: "<version>"` keep working; the map form adds a source:
+
+```yaml
+sources:
+  - duckdb                                              # the default registry
+  - {name: foo, github: acme/dre-source-foo, version: ">=1.2, <2"}
+  - {name: bar, local: ../dre-source-bar/target/release/dre-source-bar}
+  - {name: baz, registry: https://plugins.acme.internal/index.json, version: "^1"}
+```
+
+- **`github: owner/repo`**: the repo's GitHub Releases. A release tagged `v1.2.0` (or `1.2.0`)
+  offers version 1.2.0 for every platform it has an asset for, named like the registry's
+  artifacts: `dre-<kind>-<name>-<version>-<os>-<arch>.tar.gz`, or the bare executable (`.exe` on
+  Windows). Drafts and tags that aren't versions are skipped. The checksum comes from a
+  `<asset>.sha256` file in the same release; without one, the first download's checksum is
+  pinned in `dre.lock` and every later download must match it. `GITHUB_TOKEN` is sent when set
+  (private repos, rate limits), and `DRE_GITHUB_API_URL` points at GitHub Enterprise.
+- **`local: <path>`**: an executable on disk, relative to the project root, used where it is and
+  never copied. It has no version. This is the way to try a plugin you're developing.
+- **`registry: <url or path>`**: another index in the [format above](#index-format), for this
+  plugin only.
+
+`dre.lock` records where each plugin came from (`from: github:acme/dre-source-foo`); local
+plugins go under `local:`. When an entry's source changes, the old pin no longer counts and the
+plugin is resolved again. `dre plugin install` and `update` use the declared source, and
+`update` has nothing to do for a local plugin. A plugin declared in several files must name the
+same source in each.
+
 ## Macro packages
 
 A macro package is a folder with a `dre_package.yml` (`name: dre_utils`) and a `macros/` folder.

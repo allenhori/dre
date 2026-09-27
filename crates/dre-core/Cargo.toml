@@ -17,13 +17,14 @@ walkdir.workspace = true
 semver.workspace = true
 minijinja.workspace = true
 chrono.workspace = true
+chrono-tz.workspace = true
 encoding_rs = "0.8"
 calamine = { version = "0.36", features = ["dates"] }
 csv = "1"
 dre-protocol = { path = "../dre-protocol" }
 arrow.workspace = true
 ureq = "3"
-sha2 = "0.10"
+sha2 = "0.11"
 flate2 = "1"
 tar = "0.4"
 
