@@ -103,6 +103,16 @@ func TestOAuthUsesTheSessionTheSourceSavedForTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestRESTErrorsShowTheCodeAndMessage(t *testing.T) {
+	body := []byte("{\n  \"error_code\" : \"NOT_FOUND\",\n  \"message\" : \"Volume 'w.s.v' does not exist.\",\n  \"details\" : [ ]\n}")
+	if got := apiError(body); got != "NOT_FOUND: Volume 'w.s.v' does not exist." {
+		t.Fatal(got)
+	}
+	if got := apiError([]byte("invalid token")); got != "invalid token" {
+		t.Fatal(got)
+	}
+}
+
 func TestTheDestinationRoleSpeaksTheProtocol(t *testing.T) {
 	if roleOf("/x/dre-destination-databricks_volumes.exe").name != "databricks_volumes" || roleOf("dre-source-databricks").name != "databricks" {
 		t.Fatal("roleOf")
