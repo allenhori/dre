@@ -53,6 +53,9 @@ func deliverToVolume(local, remote string, conn map[string]any) (string, error) 
 		return "", err
 	}
 	base := baseURL(host)
+	if err := reachable(base); err != nil {
+		return "", err
+	}
 	// Signs in only now, when a report actually delivers here.
 	a, err := authFromConn(conn, base)
 	if err != nil {

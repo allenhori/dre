@@ -6,6 +6,10 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"math"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +36,9 @@ func newDatabricks(conn map[string]any) (backend, error) {
 	}
 	path, err := required(conn, "http_path")
 	if err != nil {
+		return nil, err
+	}
+	if err := reachable(baseURL(host)); err != nil {
 		return nil, err
 	}
 	auth, err := authFromConn(conn, baseURL(host))
@@ -66,7 +73,9 @@ func newDatabricks(conn map[string]any) (backend, error) {
 	}
 	db := sql.OpenDB(c)
 	db.SetMaxOpenConns(1)
+	stop := waiting(fmt.Sprintf("the SQL warehouse %s", path))
 	cn, err := db.Conn(context.Background())
+	stop()
 	if err != nil {
 		db.Close()
 		return nil, connectErr(err, auth)
@@ -356,6 +365,61 @@ func number(v any) (int, bool) {
 }
 
 // baseURL is https://<host> for a bare host; a URL with a scheme is kept.
+// reachable fails at once when the workspace can't be reached at all: a host name that doesn't
+// resolve or a refused connection won't fix itself by retrying, unlike a warehouse that is
+// starting. Behind an HTTP(S) proxy the proxy decides, so nothing is checked here.
+func reachable(base string) error {
+	u, err := url.Parse(base)
+	if err != nil || u.Hostname() == "" {
+		return fmt.Errorf("`host` %q isn't a workspace address", base)
+	}
+	req := &http.Request{URL: u}
+	if p, err := http.ProxyFromEnvironment(req); err != nil || p != nil {
+		return nil
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+		if u.Scheme == "http" {
+			port = "80"
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := net.DefaultResolver.LookupHost(ctx, u.Hostname()); err != nil {
+		return fmt.Errorf("can't find the Databricks workspace %s: the host name doesn't resolve (check `host`): %v", u.Hostname(), err)
+	}
+	c, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(u.Hostname(), port))
+	if err != nil {
+		return fmt.Errorf("can't reach the Databricks workspace %s:%s: %v", u.Hostname(), port, err)
+	}
+	c.Close()
+	return nil
+}
+
+// waiting prints an info line every 30 s until the returned stop is called, so a person knows
+// DRE is waiting (typically for a stopped warehouse to start) rather than stuck.
+func waiting(what string) (stop func()) {
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		t := time.NewTicker(waitInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				fmt.Fprintf(os.Stderr, "info: waiting for %s to answer (%d s; a stopped warehouse takes a few minutes to start)\n",
+					what, int(time.Since(start).Seconds()))
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+var waitInterval = 30 * time.Second
+
 func baseURL(host string) string {
 	host = strings.TrimRight(host, "/")
 	if strings.HasPrefix(host, "http://") || strings.HasPrefix(host, "https://") {

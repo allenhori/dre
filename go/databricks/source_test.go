@@ -2,8 +2,10 @@ package main
 
 import (
 	"errors"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/apache/arrow/go/v12/arrow"
 	"github.com/apache/arrow/go/v12/arrow/array"
@@ -67,5 +69,31 @@ func TestHostsAndFields(t *testing.T) {
 	}
 	if n, ok := number("900"); !ok || n != 900 {
 		t.Fatal(n)
+	}
+}
+
+func TestAnUnreachableWorkspaceFailsAtOnce(t *testing.T) {
+	t.Setenv("HTTPS_PROXY", "")
+	t.Setenv("https_proxy", "")
+	for _, authType := range []string{"oauth", "pat"} {
+		start := time.Now()
+		_, err := newDatabricks(map[string]any{
+			"host": "dbc-does-not-exist.invalid", "http_path": "/sql/1.0/warehouses/x",
+			"auth_type": authType, "token": "t",
+		})
+		if err == nil || !strings.Contains(err.Error(), "doesn't resolve") {
+			t.Fatalf("%s: %v", authType, err)
+		}
+		if time.Since(start) > 10*time.Second {
+			t.Fatalf("%s: took %v", authType, time.Since(start))
+		}
+	}
+	// Nothing listens: refused at once.
+	l, _ := net.Listen("tcp", "127.0.0.1:0")
+	addr := l.Addr().String()
+	l.Close()
+	err := reachable("https://" + addr)
+	if err == nil || !strings.Contains(err.Error(), "can't reach") {
+		t.Fatal(err)
 	}
 }

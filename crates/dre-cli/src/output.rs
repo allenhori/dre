@@ -586,6 +586,11 @@ impl Ui for Printer {
         let p = self.clone();
         Arc::new(move |plugin, line| {
             let mut i = p.inner.lock().unwrap();
+            // `info: ...` lines are for the person (e.g. waiting for a warehouse to start).
+            if let Some(msg) = line.strip_prefix("info: ") {
+                i.line(Tone::Note, "Waiting", &format!("[{plugin}] {msg}"), Level::Info);
+                return;
+            }
             i.file_log("DEBUG", &format!("[{plugin}] {line}"));
             if !i.shows(Level::Debug) {
                 return;
