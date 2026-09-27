@@ -176,9 +176,20 @@ struct ProjectArgs {
     /// Set a variable for `var()`, overriding every other level: `--var name=value`.
     #[arg(long = "var", value_name = "NAME=VALUE", value_parser = parse_var)]
     vars: Vec<(String, String)>,
+    /// The run's timezone (IANA name, e.g. Australia/Sydney), above every `timezone:` setting
+    /// (default: $DRE_TIMEZONE).
+    #[arg(long)]
+    timezone: Option<String>,
 }
 
 impl ProjectArgs {
+    /// `--timezone`, else `DRE_TIMEZONE`.
+    fn timezone(&self) -> Option<String> {
+        self.timezone
+            .clone()
+            .or_else(|| std::env::var("DRE_TIMEZONE").ok().filter(|t| !t.is_empty()))
+    }
+
     fn load_options(&self) -> LoadOptions {
         LoadOptions {
             profiles_dir: self.profiles_dir.clone(),
@@ -237,6 +248,23 @@ struct CompileArgs {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let printer = cli.printer();
+    let project_args = match &cli.command {
+        Command::Validate(a) => Some(&a.project),
+        Command::Run(a) => Some(&a.project),
+        Command::Compile(a) => Some(&a.project),
+        _ => None,
+    };
+    if let Some(t) = project_args.and_then(ProjectArgs::timezone)
+        && let Err(e) = dre_core::dates::parse_tz(&t)
+    {
+        let from = if project_args.is_some_and(|p| p.timezone.is_some()) {
+            "--timezone"
+        } else {
+            "DRE_TIMEZONE"
+        };
+        printer.error(&format!("{from}: {e}"));
+        return ExitCode::from(2);
+    }
     match cli.command {
         Command::Validate(a) => validate(a, &printer),
         Command::Run(a) => run(a, printer),
@@ -355,6 +383,7 @@ fn compile_for_validate(
         target: p.target.clone(),
         vars: p.vars.iter().cloned().collect(),
         date: run_date(),
+        timezone: p.timezone(),
         dry_run: true,
         ..Default::default()
     };
@@ -398,6 +427,7 @@ fn compile(a: CompileArgs, mut printer: output::Printer) -> ExitCode {
         target: a.project.target.clone(),
         vars: a.project.vars.iter().cloned().collect(),
         date: run_date(),
+        timezone: a.project.timezone(),
         dry_run: true,
         interactive: {
             use std::io::IsTerminal;
@@ -431,6 +461,7 @@ fn validate_live(
         target: p.target.clone(),
         vars: p.vars.iter().cloned().collect(),
         date: run_date(),
+        timezone: p.timezone(),
         live_check: true,
         ..Default::default()
     };
@@ -566,6 +597,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         accept_schema_change: a.accept_schema_change,
         interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
         date: run_date(),
+        timezone: a.project.timezone(),
         live_check: false,
         schedule: a.schedule,
     };
@@ -575,7 +607,8 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         printer.error(&dre_core::run::unknown_schedule(&project, name));
         return ExitCode::from(2);
     }
-    let date = opts.date.unwrap_or_else(|| chrono::Local::now().date_naive());
+    // Each Binding records its own date, in its own timezone; this line only logs the request.
+    let date = opts.date.unwrap_or_else(|| chrono::Utc::now().date_naive());
     printer.log_params(&opts.params(date));
     let summary = dre_core::run::run(&project, &opts, &mut printer);
     if let Some(e) = &summary.error {

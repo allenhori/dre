@@ -12,7 +12,7 @@ csv, delimited, fixed-width, parquet or xlsx (including multi-sheet workbooks an
 templates), and delivers the file wherever it needs to go. It runs on whatever scheduler you
 already have: cron, Airflow, Dagster, Databricks Jobs.
 
-Status: under active development. The first pre-release, `v0.0.1-alpha`, is for trying DRE out;
+Status: under active development. The pre-releases (`v0.0.1-alpha-<n>`) are for trying DRE out;
 expect breaking changes.
 
 ## Install
@@ -28,7 +28,7 @@ This puts `dre` in `~/.local/bin`, after checking the download against the relea
 newest, pre-releases included):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha DRE_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha-2 DRE_INSTALL_DIR=/usr/local/bin sh
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
@@ -46,9 +46,12 @@ Only `dre` itself is installed. Plugins come from the same releases, on demand: 
   departments). A Binding is a report paired with a Set, with its own profile, variables, query
   subset and output.
 - **Jinja everywhere**: SQL, paths and options render with `var()`, `env_var()`, `run.*` and your
-  macros in `macros/`. `run_query()` lets a macro query the report's own connection while
-  rendering (list a table's columns, build a pivot from the distinct values). `ref('file')` reuses
-  another `.sql` file as a subquery.
+  macros in `macros/`. `target.*` and `profile('name')` read connection settings, so names can
+  follow the environment: `{{ target.catalog }}.{{ target.schema }}.orders`. `run.date` is a date
+  you can navigate (`run.date.prev_month.start.date`), in the run's timezone (UTC unless you set
+  one). `run_query()` and `columns()` let a macro query the report's own connection while
+  rendering. `ref('file')` reuses another `.sql` file as a subquery. See
+  [templates](docs/templates.md).
 - **Lookups**: mapping tables you maintain as files in `lookups/` (csv, xlsx, xls, json, jsonl,
   yml) rather than in the database. `ref('countries')` makes one usable like a table: small ones
   are inlined into the SQL, larger ones (over 200 rows by default) are loaded into a temp table
@@ -136,7 +139,7 @@ destinations:
 Plugins and macro packages are declared in `dependencies.yml` (or `packages.yml`, or both) and
 installed into the project's `dre_deps/` folder by `dre deps`. Their exact versions and commits
 are pinned in `dre.lock`. Package macros are called through the package's name
-(`{{ dre_utils.star_except(...) }}`), and `dispatch()` lets a package offer per-database variants
+(`{{ dre_utils.star(ref('customers'), except=['ssn']) }}`), and `dispatch()` lets a package offer per-database variants
 that a project can override. See [the registry docs](docs/registry.md).
 
 ## Schedules
@@ -175,6 +178,7 @@ vars, every var the run used and the command's parameters.
 | `DRE_PLUGINS_DIR` | One plugins directory for every project, instead of each project's `dre_deps/plugins`. |
 | `DRE_REGISTRY_URL` | The plugin registry index (a URL or a local path). |
 | `DRE_RUN_DATE` | The run date (`YYYY-MM-DD`) behind `run.date`, instead of today. |
+| `DRE_TIMEZONE` | The run's timezone (IANA name), above every `timezone:` setting. `--timezone` overrides it. |
 | `DRE_LOG_MAX_LINES` | Lines per `logs/dre.log` before it rotates (default 10,000). |
 | `DRE_PLUGIN_HANDSHAKE_TIMEOUT_MS` | How long to wait for a plugin to start (default 30,000). |
 | `NO_COLOR` | Turns off coloured output. |
@@ -182,6 +186,7 @@ vars, every var the run used and the command's parameters.
 
 ## Documentation
 
+- [Templates: `target`, `profile()`, `columns()`, dates and timezones](docs/templates.md)
 - [Plugins and their profile fields](docs/plugins.md)
 - [Plugin protocol](docs/protocol.md), for writing a plugin in any language
 - [Plugin registry and `dre.lock`](docs/registry.md)

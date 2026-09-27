@@ -15,6 +15,10 @@ pub const LOCK_FILE: &str = "dre.lock";
 pub struct Locked {
     pub version: Version,
     pub sha256: String,
+    /// Where it came from when not the default registry: `github:owner/repo` or
+    /// `registry:<url>`. A different declared source re-resolves the plugin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 /// A git package pinned to the commit its declared revision resolved to.
@@ -35,6 +39,9 @@ pub struct Lock {
     pub destinations: BTreeMap<String, Locked>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub packages: BTreeMap<String, LockedPackage>,
+    /// `local:` plugins by `<kind>/<name>`: the path they're used from. Nothing to pin.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub local: BTreeMap<String, String>,
 }
 
 impl Lock {

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::lock::{Lock, Locked};
-use crate::project::{PluginKind, PluginRequirement, Project};
+use crate::project::{PluginKind, PluginRequirement, PluginSource, Project};
 
 pub const DEFAULT_REGISTRY: &str = "https://github.com/allenhori/dre/releases/download/registry/index.json";
 
@@ -45,7 +45,12 @@ pub struct IndexVersion {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Artifact {
     pub url: String,
+    /// Hex SHA-256 of the download. Empty when the source doesn't publish one: then it comes
+    /// from `sha256_url`, or failing that, from the first download (and `dre.lock` pins it).
+    #[serde(default)]
     pub sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256_url: Option<String>,
 }
 
 /// This machine's platform key in the index: `<os>-<arch>`, e.g. `macos-aarch64`.
@@ -60,11 +65,36 @@ pub fn registry_url() -> String {
         .unwrap_or_else(|| DEFAULT_REGISTRY.to_string())
 }
 
+/// The GitHub API DRE talks to: `DRE_GITHUB_API_URL` (GitHub Enterprise, tests), else GitHub's.
+fn github_api() -> String {
+    std::env::var("DRE_GITHUB_API_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://api.github.com".into())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// Whether requests to `url` should carry `GITHUB_TOKEN`: GitHub itself or the configured API.
+fn is_github(url: &str) -> bool {
+    url.starts_with("https://github.com/") || url.starts_with(&format!("{}/", github_api()))
+}
+
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
     if url.starts_with("http://") || url.starts_with("https://") {
-        let mut resp = ureq::get(url)
-            .call()
-            .map_err(|e| format!("can't download {url}: {e}"))?;
+        let mut req = ureq::get(url).header("User-Agent", "dre");
+        if is_github(url) {
+            req = req.header(
+                "Accept",
+                "application/vnd.github+json, application/octet-stream;q=0.9",
+            );
+            if let Ok(t) = std::env::var("GITHUB_TOKEN")
+                && !t.is_empty()
+            {
+                req = req.header("Authorization", &format!("Bearer {t}"));
+            }
+        }
+        let mut resp = req.call().map_err(|e| format!("can't download {url}: {e}"))?;
         let mut body = Vec::new();
         resp.body_mut()
             .as_reader()
@@ -77,11 +107,28 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
 }
 
 impl Index {
+    /// The default registry.
     pub fn load() -> Result<Index, String> {
-        let url = registry_url();
-        let body = fetch(&url)?;
+        Index::load_from(&registry_url())
+    }
+
+    pub fn load_from(url: &str) -> Result<Index, String> {
+        let body = fetch(url)?;
         serde_json::from_slice(&body)
             .map_err(|e| format!("the plugin registry at {url} isn't a valid index: {e}"))
+    }
+
+    /// The index a plugin installs from, given where the project declares it comes from.
+    pub fn for_source(source: &PluginSource, kind: PluginKind, name: &str) -> Result<Index, String> {
+        match source {
+            PluginSource::Default => Index::load(),
+            PluginSource::Registry(u) => Index::load_from(u),
+            PluginSource::Github(repo) => github_index(repo, kind, name),
+            PluginSource::Local(p) => Err(format!(
+                "{} plugin `{name}` is used from {p}; there's nothing to install",
+                kind.as_str()
+            )),
+        }
     }
 
     pub fn plugin(&self, kind: PluginKind, name: &str) -> Option<&IndexPlugin> {
@@ -134,6 +181,87 @@ pub fn prefer_stable<T>(items: Vec<T>, req: &VersionReq, version: impl Fn(&T) ->
     )
 }
 
+#[derive(Deserialize)]
+struct GithubRelease {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Deserialize)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+/// A one-plugin index built from `owner/repo`'s GitHub Releases. A release tagged `v1.2.0` (or
+/// `1.2.0`) offers version 1.2.0 for each platform it has an asset for, named like the
+/// registry's: `dre-<kind>-<name>-<version>-<platform>.tar.gz`, or the bare executable.
+fn github_index(repo: &str, kind: PluginKind, name: &str) -> Result<Index, String> {
+    let url = format!("{}/repos/{repo}/releases?per_page=100", github_api());
+    let body = fetch(&url)?;
+    let releases: Vec<GithubRelease> =
+        serde_json::from_slice(&body).map_err(|e| format!("{url}: unexpected reply from GitHub: {e}"))?;
+    let exe = executable_name(kind, name);
+    let stem = exe.trim_end_matches(".exe").to_string();
+    let mut versions = Vec::new();
+    for r in releases.iter().filter(|r| !r.draft) {
+        let Ok(version) = Version::parse(r.tag_name.trim_start_matches('v')) else {
+            continue;
+        };
+        let prefix = format!("{stem}-{version}-");
+        let mut artifacts = std::collections::BTreeMap::new();
+        for a in &r.assets {
+            let Some(rest) = a.name.strip_prefix(&prefix) else {
+                continue;
+            };
+            let plat = rest
+                .trim_end_matches(".tar.gz")
+                .trim_end_matches(".tgz")
+                .trim_end_matches(".exe");
+            if plat.contains('.') || plat.is_empty() {
+                continue; // `.sha256` and other side files
+            }
+            let sha256_url = r
+                .assets
+                .iter()
+                .find(|s| s.name == format!("{}.sha256", a.name))
+                .map(|s| s.browser_download_url.clone());
+            artifacts.insert(
+                plat.to_string(),
+                Artifact {
+                    url: a.browser_download_url.clone(),
+                    sha256: String::new(),
+                    sha256_url,
+                },
+            );
+        }
+        if !artifacts.is_empty() {
+            versions.push(IndexVersion {
+                version,
+                protocol: dre_protocol::MAX_VERSION,
+                artifacts,
+            });
+        }
+    }
+    if versions.is_empty() {
+        return Err(format!(
+            "no release of github.com/{repo} has a `{stem}-<version>-<platform>` asset for any platform"
+        ));
+    }
+    Ok(Index {
+        schema: 1,
+        plugins: vec![IndexPlugin {
+            kind,
+            name: name.to_string(),
+            description: format!("from github.com/{repo}"),
+            versions,
+        }],
+    })
+}
+
 /// Where a version is installed.
 pub fn install_path(dir: &Path, kind: PluginKind, name: &str, version: &Version) -> PathBuf {
     dir.join(kind.as_str())
@@ -158,8 +286,17 @@ pub fn install(
             v.version
         )
     })?;
-    if let Some(want) = expect_sha
-        && !want.eq_ignore_ascii_case(&art.sha256)
+    // The published checksum: the index's, a `.sha256` file's, or none yet.
+    let published = if !art.sha256.is_empty() {
+        Some(art.sha256.clone())
+    } else if let Some(u) = &art.sha256_url {
+        let text = String::from_utf8_lossy(&fetch(u)?).to_string();
+        Some(text.split_whitespace().next().unwrap_or_default().to_string())
+    } else {
+        None
+    };
+    if let (Some(want), Some(published)) = (expect_sha, &published)
+        && !want.eq_ignore_ascii_case(published)
     {
         return Err(format!(
             "{} `{}` {}: the registry's checksum doesn't match dre.lock; refusing to install",
@@ -170,13 +307,16 @@ pub fn install(
     }
     let bytes = fetch(&art.url)?;
     let got = hex(&Sha256::digest(&bytes));
-    if !got.eq_ignore_ascii_case(&art.sha256) {
+    // Nothing published: the lock's pin, if any, is what the download must match.
+    let expected = published.as_deref().or(expect_sha);
+    if let Some(want) = expected
+        && !got.eq_ignore_ascii_case(want)
+    {
         return Err(format!(
-            "checksum mismatch for {} `{}` {} (expected {}, got {got}); the download was discarded",
+            "checksum mismatch for {} `{}` {} (expected {want}, got {got}); the download was discarded",
             plugin.kind.as_str(),
             plugin.name,
             v.version,
-            art.sha256
         ));
     }
     let exe = if art.url.ends_with(".tar.gz") || art.url.ends_with(".tgz") {
@@ -197,7 +337,8 @@ pub fn install(
     std::fs::rename(&tmp, &dst).map_err(|e| format!("can't install {}: {e}", dst.display()))?;
     Ok(Locked {
         version: v.version.clone(),
-        sha256: art.sha256.to_lowercase(),
+        sha256: got,
+        from: None,
     })
 }
 
@@ -249,12 +390,39 @@ pub fn sync(
 ) -> Result<Vec<Synced>, Vec<String>> {
     let dir = crate::plugins::plugins_dir(Some(&project.root));
     let mut lock = Lock::load(&project.root).map_err(|e| vec![e])?;
-    let mut index: Option<Index> = None;
+    let mut indexes: std::collections::BTreeMap<String, Index> = std::collections::BTreeMap::new();
     let mut out = Vec::new();
     let mut errors = Vec::new();
     let mut lock_changed = false;
     for req in &project.plugins {
-        let pin = lock.get(req.kind, &req.name).cloned();
+        let key = format!("{}/{}", req.kind.as_str(), req.name);
+        if let PluginSource::Local(p) = &req.source {
+            if !project.root.join(p).is_file() {
+                errors.push(format!(
+                    "the {} plugin `{}` is declared `local: {p}`, but there's no file there",
+                    req.kind.as_str(),
+                    req.name
+                ));
+                continue;
+            }
+            if lock.local.get(&key) != Some(p) {
+                lock.local.insert(key, p.clone());
+                lock_changed = true;
+            }
+            lock_changed |= lock.map_mut(req.kind).remove(&req.name).is_some();
+            out.push(Synced::AlreadyInstalled {
+                kind: req.kind,
+                name: req.name.clone(),
+                version: None,
+            });
+            continue;
+        }
+        lock_changed |= lock.local.remove(&key).is_some();
+        // A pin from another source doesn't count: the plugin is resolved again.
+        let pin = lock
+            .get(req.kind, &req.name)
+            .filter(|l| l.from == req.source.lock_key())
+            .cloned();
         if let Some(p) = crate::plugins::find(
             &dir,
             req.kind,
@@ -306,13 +474,27 @@ pub fn sync(
             ));
             continue;
         }
-        if index.is_none() {
-            match Index::load() {
-                Ok(i) => index = Some(i),
-                Err(e) => return Err(vec![e]),
+        // One index per source; a GitHub repo's covers just the plugin it was built for.
+        let ikey = match &req.source {
+            PluginSource::Github(_) => format!("{}#{key}", req.source.lock_key().unwrap_or_default()),
+            s => s.lock_key().unwrap_or_default(),
+        };
+        if !indexes.contains_key(&ikey) {
+            match Index::for_source(&req.source, req.kind, &req.name) {
+                Ok(i) => {
+                    indexes.insert(ikey.clone(), i);
+                }
+                Err(e) if req.source.is_default() => return Err(vec![e]),
+                Err(e) => {
+                    errors.push(e);
+                    continue;
+                }
             }
         }
-        match install_one(&dir, index.as_ref().unwrap(), req, pin.as_ref()) {
+        match install_one(&dir, &indexes[&ikey], req, pin.as_ref()).map(|(mut l, fresh)| {
+            l.from = req.source.lock_key();
+            (l, fresh)
+        }) {
             Ok((locked, false)) => {
                 lock.map_mut(req.kind).insert(req.name.clone(), locked.clone());
                 lock_changed = true;
@@ -392,6 +574,7 @@ fn install_one(
         let locked = Locked {
             version: v.version.clone(),
             sha256: art.sha256.to_lowercase(),
+            from: None,
         };
         return Ok((locked, false));
     }

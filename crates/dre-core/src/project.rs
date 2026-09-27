@@ -12,12 +12,32 @@ use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as Json};
 use serde_yaml_ng::{Mapping, Value};
 
+use crate::dates::{WeekNumbering, WeekStart};
 use crate::diag::Diagnostics;
 use crate::lookups::{self, DEFAULT_INLINE_MAX_ROWS, LOOKUPS_DIR, Lookup};
 use crate::packages::{self, DispatchOrder, Package};
 
 /// Names DRE puts in every Jinja context; a package can't take one.
-const RESERVED_NAMES: &[&str] = &["run", "var", "env_var", "run_query", "ref", "lookup", "dispatch"];
+const RESERVED_NAMES: &[&str] = &[
+    "run",
+    "var",
+    "env_var",
+    "run_query",
+    "columns",
+    "ref",
+    "lookup",
+    "dispatch",
+    "target",
+    "profile",
+    "date",
+    "datetime",
+    "date_range",
+    "month_of",
+    "quarter_of",
+    "year_of",
+    "week_of",
+    "period",
+];
 use crate::profiles::{LOCAL_TYPE, Profiles, Role};
 use crate::yaml::YamlFile;
 use crate::{constraints, options, preflight, schedule, selector, sqlsplit};
@@ -40,6 +60,7 @@ const REPORT_KEYS: &[&str] = &[
     "default_set",
     "schedule",
     "vars",
+    "timezone",
 ];
 const PLUGIN_KEYS: &[&str] = &["sources", "destinations", "formats"];
 const PROJECT_KEYS: &[&str] = &[
@@ -52,9 +73,12 @@ const PROJECT_KEYS: &[&str] = &[
     "lookup_inline_max_rows",
     "dispatch",
     "mask_secrets",
+    "timezone",
+    "week_start",
+    "week_numbering",
     "reports",
 ];
-const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars"];
+const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars", "+timezone"];
 const SET_ENTRY_KEYS: &[&str] = &[
     "name",
     "profile",
@@ -94,6 +118,14 @@ pub struct Project {
     pub packages: Vec<Package>,
     /// Mask `DRE_SECRET_*` values in logs and records (default true).
     pub mask_secrets: bool,
+    /// The project's default `timezone:` (IANA name); runs default to UTC without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    /// `week_start:` and `week_numbering:`, for the calendar functions.
+    #[serde(skip)]
+    pub week_start: WeekStart,
+    #[serde(skip)]
+    pub week_numbering: WeekNumbering,
     /// `dispatch:` search orders, by macro namespace.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub dispatch: DispatchOrder,
@@ -130,6 +162,9 @@ pub struct Report {
     pub queries: Vec<QueryEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_set: Option<String>,
+    /// The report's `timezone:`, else its folder config's `+timezone`, else the project's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     /// Whether the report declares `sets:` (a Binding per Set) or runs as a single Binding.
     pub has_sets: bool,
     pub bindings: Vec<Binding>,
@@ -264,6 +299,40 @@ pub struct PluginRequirement {
     pub version: String,
     /// Files declaring it, relative to the root.
     pub declared_in: Vec<PathBuf>,
+    /// Where it's installed from.
+    #[serde(skip_serializing_if = "PluginSource::is_default")]
+    pub source: PluginSource,
+}
+
+/// Where a plugin comes from: `dependencies.yml`'s `registry:`, `github:` or `local:`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginSource {
+    /// The default registry (`DRE_REGISTRY_URL`, else DRE's own).
+    #[default]
+    Default,
+    /// Another registry index: a URL or a file path.
+    Registry(String),
+    /// The GitHub Releases of `owner/repo`.
+    Github(String),
+    /// An executable on disk, relative to the project root. Used in place, never installed.
+    Local(String),
+}
+
+impl PluginSource {
+    pub fn is_default(&self) -> bool {
+        *self == PluginSource::Default
+    }
+
+    /// How `dre.lock` records it; `None` for the default registry.
+    pub fn lock_key(&self) -> Option<String> {
+        match self {
+            PluginSource::Default => None,
+            PluginSource::Registry(u) => Some(format!("registry:{u}")),
+            PluginSource::Github(r) => Some(format!("github:{r}")),
+            PluginSource::Local(p) => Some(format!("local:{p}")),
+        }
+    }
 }
 
 impl PluginRequirement {
@@ -285,6 +354,9 @@ pub struct ScheduleEntry {
     /// Layered into `var()` when run with `--schedule <name>`, above the Binding's own vars.
     #[serde(skip_serializing_if = "JsonMap::is_empty")]
     pub vars: JsonMap<String, Json>,
+    /// The run's timezone under `--schedule <name>`, above the report's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     /// Line in its schedules.yml, for messages.
     #[serde(skip)]
     pub location: (PathBuf, Option<usize>),
@@ -338,6 +410,7 @@ struct FolderCfg {
     output: Option<Mapping>,
     profile: Option<(String, Option<usize>)>,
     vars: Option<Mapping>,
+    timezone: Option<String>,
 }
 
 struct Discovered {
@@ -587,6 +660,34 @@ impl Loader {
                 true
             }
         };
+        let timezone = match m.get("timezone") {
+            None => None,
+            Some(v) => self.timezone_value(v, &yf.display, yf.line_of("timezone", None), "`timezone`"),
+        };
+        let week_start = match m.get("week_start") {
+            None => WeekStart::Monday,
+            Some(v) => v.as_str().and_then(WeekStart::parse).unwrap_or_else(|| {
+                self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    yf.line_of("week_start", None),
+                    "`week_start` must be `monday` or `sunday`",
+                );
+                WeekStart::Monday
+            }),
+        };
+        let week_numbering = match m.get("week_numbering") {
+            None => WeekNumbering::Iso,
+            Some(v) => v.as_str().and_then(WeekNumbering::parse).unwrap_or_else(|| {
+                self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    yf.line_of("week_numbering", None),
+                    "`week_numbering` must be `iso` or `us`",
+                );
+                WeekNumbering::Iso
+            }),
+        };
         let lookup_inline_max_rows = match m.get("lookup_inline_max_rows") {
             None => DEFAULT_INLINE_MAX_ROWS,
             Some(v) => match v.as_u64() {
@@ -616,6 +717,9 @@ impl Loader {
             macros: Vec::new(),
             packages: Vec::new(),
             mask_secrets,
+            timezone,
+            week_start,
+            week_numbering,
             dispatch,
             sql: BTreeMap::new(),
             lookups: BTreeMap::new(),
@@ -623,6 +727,20 @@ impl Loader {
             folders: Vec::new(),
             profiles: Profiles::default(),
         })
+    }
+
+    /// A `timezone:` value: an IANA name, else an error at `line`.
+    fn timezone_value(&mut self, v: &Value, file: &Path, line: Option<usize>, what: &str) -> Option<String> {
+        let msg = match v.as_str() {
+            Some(s) => match crate::dates::parse_tz(s) {
+                Ok(_) => return Some(s.to_string()),
+                Err(e) => format!("{what}: {e}"),
+            },
+            None => format!("{what} must be a string, an IANA timezone name such as `Australia/Sydney`"),
+        };
+        self.diags
+            .error("invalid-timezone", Some(file.to_path_buf()), line, msg);
+        None
     }
 
     fn opt_string(&mut self, yf: &YamlFile, m: &Mapping, key: &str) -> Option<String> {
@@ -800,6 +918,9 @@ impl Loader {
                             let ctx = format!("folder `{}`: `+schedule`", dotted(&path));
                             self.moved_to_schedules(&yf.display, kline, &ctx);
                         }
+                        "timezone" => {
+                            cfg.timezone = self.timezone_value(v, &yf.display, kline, "`+timezone`");
+                        }
                         _ => match v.as_mapping() {
                             Some(s) => cfg.vars = Some(s.clone()),
                             None => bad(self, "a map"),
@@ -913,7 +1034,7 @@ impl Loader {
                 }
                 let rest: Mapping = m
                     .iter()
-                    .filter(|(k, _)| !is_one_of(k, PLUGIN_KEYS) && !(k.as_str() == Some("packages")))
+                    .filter(|(k, _)| !is_one_of(k, PLUGIN_KEYS) && k.as_str() != Some("packages"))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 if rest.is_empty() {
@@ -1464,6 +1585,16 @@ impl Loader {
             .iter()
             .rev()
             .find_map(|l| l.profile.as_ref().map(|p| p.0.clone()));
+        let report_timezone = match key("timezone") {
+            Some(t) => {
+                let (f, l) = located("timezone").unwrap();
+                self.timezone_value(&t.value, &f, l, &format!("report `{name}`: `timezone`"))
+            }
+            None => None,
+        };
+        let timezone = report_timezone
+            .or_else(|| layers.iter().rev().find_map(|l| l.timezone.clone()))
+            .or_else(|| project.timezone.clone());
         let base_profile = report_profile
             .or(folder_profile)
             .or(project.default_profile.clone());
@@ -1590,6 +1721,7 @@ impl Loader {
             tags,
             queries,
             default_set,
+            timezone,
             has_sets,
             bindings,
             base: report_base,
@@ -2277,6 +2409,11 @@ impl Loader {
             tags,
             queries: vec![query],
             default_set: None,
+            timezone: layers
+                .iter()
+                .rev()
+                .find_map(|l| l.timezone.clone())
+                .or_else(|| project.timezone.clone()),
             has_sets: false,
             base: b.clone(),
             bindings: vec![b],
@@ -2392,7 +2529,7 @@ impl Loader {
                 let mut sched = Mapping::new();
                 for (k, v) in m {
                     let Some(k) = k.as_str() else { continue };
-                    if ["name", "select", "report", "set", "vars"].contains(&k) {
+                    if ["name", "select", "report", "set", "vars", "timezone"].contains(&k) {
                         continue;
                     }
                     if !schedule::SCHEDULE_KEYS.contains(&k) {
@@ -2481,6 +2618,19 @@ impl Loader {
                     );
                     ok = false;
                 }
+                let timezone = match m.get("timezone") {
+                    None => None,
+                    Some(v) => {
+                        let t = self.timezone_value(
+                            v,
+                            &yf.display,
+                            line,
+                            &format!("schedule `{name}`: `timezone`"),
+                        );
+                        ok &= t.is_some();
+                        t
+                    }
+                };
                 if ok {
                     out.push(ScheduleEntry {
                         name,
@@ -2489,6 +2639,7 @@ impl Loader {
                         set,
                         schedule: yaml_map_to_json(&sched),
                         vars,
+                        timezone,
                         location: (yf.display.clone(), line),
                     });
                 }
@@ -2531,10 +2682,13 @@ impl Loader {
                             source_type: String::new(),
                             schedule: Some(name.clone()),
                             date,
+                            now: chrono::Utc::now(),
+                            calendar: crate::dates::Calendar::default(),
                         },
                         vars,
                         cli_vars: self.opts.vars.clone(),
                         runner: None,
+                        connections: None,
                         run_query_max_rows: project.run_query_max_rows,
                         sql: project.sql.clone(),
                         lookups: project.lookups.clone(),
@@ -2677,6 +2831,81 @@ impl Loader {
         }
     }
 
+    /// A plugin entry in its map form: `{name: foo, github: acme/dre-source-foo, version: "^1"}`.
+    fn plugin_entry(
+        &mut self,
+        m: &Mapping,
+        kind: PluginKind,
+        yf: &YamlFile,
+        line: Option<usize>,
+    ) -> Option<(String, Option<Value>, PluginSource)> {
+        let file = Some(yf.display.clone());
+        let name = m
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let line = yf.line_of(&name, line);
+        let err = |s: &mut Self, msg: String| {
+            s.diags.error(
+                "invalid-plugin-declaration",
+                file.clone(),
+                line,
+                format!("{} plugin `{name}`: {msg}", kind.as_str()),
+            );
+        };
+        if name.is_empty() {
+            err(self, "`name` must be a non-empty string".into());
+            return None;
+        }
+        for k in m.keys().filter_map(Value::as_str) {
+            if !["name", "version", "github", "local", "registry"].contains(&k) {
+                err(
+                    self,
+                    format!(
+                        "unknown key `{k}`; use `name`, `version` and one of `github`, `local`, `registry`"
+                    ),
+                );
+                return None;
+            }
+        }
+        let given: Vec<(&str, &str)> = ["github", "local", "registry"]
+            .into_iter()
+            .filter_map(|k| m.get(k).map(|v| (k, v.as_str().unwrap_or(""))))
+            .collect();
+        let source = match given.as_slice() {
+            [] => PluginSource::Default,
+            [(k, "")] => {
+                err(self, format!("`{k}` must be a non-empty string"));
+                return None;
+            }
+            [("github", r)] => {
+                let ok = r.split('/').count() == 2 && r.split('/').all(|p| !p.is_empty());
+                if !ok {
+                    err(self, format!("`github: {r}` must be `owner/repo`"));
+                    return None;
+                }
+                PluginSource::Github(r.to_string())
+            }
+            [("local", p)] => {
+                if m.get("version").is_some() {
+                    err(
+                        self,
+                        "a `local` plugin has no `version`: it's used as it is".into(),
+                    );
+                    return None;
+                }
+                PluginSource::Local(p.to_string())
+            }
+            [(_, u)] => PluginSource::Registry(u.to_string()),
+            _ => {
+                err(self, "give only one of `github`, `local` and `registry`".into());
+                return None;
+            }
+        };
+        Some((name, m.get("version").cloned(), source))
+    }
+
     fn check_plugins(
         &mut self,
         decls: &[(Rc<YamlFile>, Mapping)],
@@ -2687,6 +2916,7 @@ impl Loader {
             req: semver::VersionReq,
             raw: String,
             file: PathBuf,
+            source: PluginSource,
         }
         let mut by_plugin: BTreeMap<(PluginKind, String), Vec<Decl>> = BTreeMap::new();
         for (yf, m) in decls {
@@ -2696,21 +2926,38 @@ impl Loader {
                 };
                 let line = yf.line_of(kind.block(), None);
                 let file = Some(yf.display.clone());
-                let entries: Vec<(String, Option<Value>)> = match v {
+                let entries: Vec<(String, Option<Value>, PluginSource)> = match v {
                     Value::Sequence(items) => items
                         .iter()
                         .filter_map(|i| match i {
-                            Value::String(s) => Some((s.clone(), None)),
+                            Value::String(s) => Some((s.clone(), None, PluginSource::Default)),
+                            Value::Mapping(m) if m.get("name").is_some() => {
+                                self.plugin_entry(m, kind, yf, line)
+                            }
                             Value::Mapping(m) if m.len() == 1 => {
                                 let (k, v) = m.iter().next().unwrap();
-                                k.as_str().map(|k| (k.to_string(), Some(v.clone())))
+                                k.as_str()
+                                    .map(|k| (k.to_string(), Some(v.clone()), PluginSource::Default))
                             }
-                            _ => None,
+                            _ => {
+                                self.diags.error(
+                                    "invalid-plugin-declaration",
+                                    file.clone(),
+                                    line,
+                                    format!(
+                                        "each `{}` entry is a name, `name: \"<version>\"`, or a map with `name:` and one of `github:`, `local:`, `registry:`",
+                                        kind.block()
+                                    ),
+                                );
+                                None
+                            }
                         })
                         .collect(),
                     Value::Mapping(m) => m
                         .iter()
-                        .filter_map(|(k, v)| k.as_str().map(|k| (k.to_string(), Some(v.clone()))))
+                        .filter_map(|(k, v)| {
+                            k.as_str().map(|k| (k.to_string(), Some(v.clone()), PluginSource::Default))
+                        })
                         .collect(),
                     Value::Null => Vec::new(),
                     _ => {
@@ -2723,7 +2970,7 @@ impl Loader {
                         continue;
                     }
                 };
-                for (name, c) in entries {
+                for (name, c, source) in entries {
                     let raw = match &c {
                         None | Some(Value::Null) => "*".to_string(),
                         Some(v) => crate::yaml::scalar_str(v).unwrap_or_default(),
@@ -2733,6 +2980,7 @@ impl Loader {
                             req,
                             raw,
                             file: yf.display.clone(),
+                            source,
                         }),
                         Err(e) => self.diags.error(
                             "invalid-version-constraint",
@@ -2749,6 +2997,27 @@ impl Loader {
         }
         let mut out = Vec::new();
         for ((kind, name), ds) in &by_plugin {
+            // Every declaration of one plugin must agree on where it comes from.
+            let source = ds
+                .iter()
+                .map(|d| &d.source)
+                .find(|s| !s.is_default())
+                .cloned()
+                .unwrap_or_default();
+            if let Some(other) = ds.iter().find(|d| !d.source.is_default() && d.source != source) {
+                self.diags.error(
+                    "conflicting-plugin-sources",
+                    Some(other.file.clone()),
+                    None,
+                    format!(
+                        "{} plugin `{name}` is declared with two sources: {} and {}",
+                        kind.as_str(),
+                        source.lock_key().unwrap_or_default(),
+                        other.source.lock_key().unwrap_or_default()
+                    ),
+                );
+                continue;
+            }
             let reqs: Vec<&semver::VersionReq> = ds.iter().map(|d| &d.req).collect();
             if !constraints::compatible(&reqs) {
                 for (i, a) in ds.iter().enumerate() {
@@ -2780,6 +3049,7 @@ impl Loader {
                 name: name.clone(),
                 version: combined.to_string(),
                 declared_in: files,
+                source,
             });
         }
 
@@ -2966,7 +3236,7 @@ impl Loader {
                 f.clone(),
                 Some(fixed_line.unwrap_or(line + line_offset)),
                 format!(
-                    "`{r}` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.source_type, run.schedule, run.date (.yyyymmdd, .ddmmyyyy, .yyyy, .mm, .dd), run.date_format(...)"
+                    "`{r}` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.source_type, run.schedule, run.date (a date: .prev_month, .month_start, .yyyymmdd, ...), run.now, run.timezone, run.date_format(...)"
                 ),
             );
         }
