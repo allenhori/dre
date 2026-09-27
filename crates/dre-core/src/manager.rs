@@ -214,9 +214,15 @@ pub enum Synced {
 
 /// Make every declared plugin available, installing what's missing (unless `install` is false,
 /// in which case missing plugins are errors). Honours `dre.lock` pins, writes new pins.
+///
+/// With `resolve` (`dre deps`), a plugin that `dre.lock` doesn't pin is resolved against the
+/// registry even when some matching version is already installed, so deleting `dre.lock` picks
+/// up the newest allowed release. Without it (auto-install before run/validate), any installed
+/// match will do and the registry is only consulted for what's missing.
 pub fn sync(
     project: &Project,
     install_missing: bool,
+    resolve: bool,
     mut log: impl FnMut(&str),
 ) -> Result<Vec<Synced>, Vec<String>> {
     let dir = crate::plugins::plugins_dir(Some(&project.root));
@@ -234,9 +240,11 @@ pub fn sync(
             Some(&req.req()),
             pin.as_ref().map(|l| &l.version),
         ) {
-            // A hand-placed (flat) plugin satisfies any pin; versioned installs must match it.
+            // A hand-placed (flat) plugin satisfies any pin; versioned installs must match it,
+            // and when resolving, an unpinned versioned install goes back to the registry.
             let ok = match (&pin, &p.version) {
                 (Some(l), Some(v)) => &l.version == v,
+                (None, Some(_)) => !resolve,
                 _ => true,
             };
             if ok {
@@ -283,7 +291,16 @@ pub fn sync(
             }
         }
         match install_one(&dir, index.as_ref().unwrap(), req, pin.as_ref()) {
-            Ok(locked) => {
+            Ok((locked, false)) => {
+                lock.map_mut(req.kind).insert(req.name.clone(), locked.clone());
+                lock_changed = true;
+                out.push(Synced::AlreadyInstalled {
+                    kind: req.kind,
+                    name: req.name.clone(),
+                    version: Some(locked.version),
+                });
+            }
+            Ok((locked, true)) => {
                 log(&format!(
                     "installed {} plugin `{}` {}",
                     req.kind.as_str(),
@@ -309,12 +326,15 @@ pub fn sync(
     if errors.is_empty() { Ok(out) } else { Err(errors) }
 }
 
+/// Install the pinned version, or the best match when unpinned. The flag is false when that
+/// exact version was already in `dir`, identical to the registry's, and only needed its lock
+/// entry.
 fn install_one(
     dir: &Path,
     index: &Index,
     req: &PluginRequirement,
     pin: Option<&Locked>,
-) -> Result<Locked, String> {
+) -> Result<(Locked, bool), String> {
     let plugin = index
         .plugin(req.kind, &req.name)
         .ok_or_else(|| format!("the registry has no {} plugin `{}`", req.kind.as_str(), req.name))?;
@@ -337,7 +357,23 @@ fn install_one(
             )
         })?,
     };
-    install_linked(dir, plugin, v, pin.map(|l| l.sha256.as_str()))
+    // Reuse the installed file only when it is byte for byte the registry's artifact: a rebuild
+    // published under the same version must be installed again, not pinned to a checksum the
+    // installed file doesn't have. (An archived artifact's checksum can't be compared with the
+    // extracted executable, so those are always reinstalled.)
+    let installed = install_path(dir, req.kind, &req.name, &v.version);
+    if pin.is_none()
+        && let Some(art) = v.artifacts.get(&platform())
+        && !(art.url.ends_with(".tar.gz") || art.url.ends_with(".tgz"))
+        && std::fs::read(&installed).is_ok_and(|b| hex(&Sha256::digest(&b)).eq_ignore_ascii_case(&art.sha256))
+    {
+        let locked = Locked {
+            version: v.version.clone(),
+            sha256: art.sha256.to_lowercase(),
+        };
+        return Ok((locked, false));
+    }
+    install_linked(dir, plugin, v, pin.map(|l| l.sha256.as_str())).map(|l| (l, true))
 }
 
 /// Install into `dir` through the shared cache: download there once, then link into `dir`.

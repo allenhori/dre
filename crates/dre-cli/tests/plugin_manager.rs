@@ -152,6 +152,56 @@ fn a_lockfile_pins_the_exact_version_on_another_machine() {
 }
 
 #[test]
+fn deps_without_a_lockfile_resolves_the_newest_allowed_version_again() {
+    let e = Env::new(DECLARED);
+    e.dre(&["plugin", "install", "fixture@=1.0.0"]).ok();
+    assert!(e.installed("1.0.0") && !e.installed("1.1.0"));
+    std::fs::remove_file(e.p("project/dre.lock")).unwrap();
+    e.dre(&["deps"])
+        .ok()
+        .says("source plugin `fixture` 1.1.0")
+        .says("dre.lock is up to date");
+    assert!(e.installed("1.1.0"));
+    assert!(e.lock().contains("version: 1.1.0"), "{}", e.lock());
+}
+
+#[test]
+fn deps_without_a_lockfile_pins_an_installed_newest_version_without_reinstalling() {
+    let e = Env::new(DECLARED);
+    e.dre(&["deps"]).ok();
+    let before = e.lock();
+    std::fs::remove_file(e.p("project/dre.lock")).unwrap();
+    let r = e.dre(&["deps"]);
+    r.ok();
+    assert!(!r.stdout.contains("Installed"), "{}", r.stdout);
+    assert_eq!(e.lock(), before);
+}
+
+#[test]
+fn deps_without_a_lockfile_reinstalls_an_installed_file_that_differs_from_the_registry() {
+    let e = Env::new(DECLARED);
+    e.dre(&["deps"]).ok();
+    let before = e.lock();
+    // The same version rebuilt locally: not the registry's artifact any more.
+    let exe = e
+        .p("plugins/source/fixture/1.1.0")
+        .join(format!("dre-source-fixture{}", std::env::consts::EXE_SUFFIX));
+    let original = std::fs::read(&exe).unwrap();
+    let mut changed = original.clone();
+    changed.extend_from_slice(b"rebuilt");
+    std::fs::remove_file(&exe).unwrap();
+    std::fs::write(&exe, &changed).unwrap();
+    std::fs::remove_file(e.p("project/dre.lock")).unwrap();
+    e.dre(&["deps"]).ok().says("source plugin `fixture` 1.1.0");
+    assert_eq!(
+        std::fs::read(&exe).unwrap(),
+        original,
+        "the registry's file is back"
+    );
+    assert_eq!(e.lock(), before);
+}
+
+#[test]
 fn a_checksum_mismatch_aborts_the_install() {
     let e = Env::new(DECLARED);
     std::fs::write(e.p("registry/fixture-1.1.0"), b"tampered").unwrap();

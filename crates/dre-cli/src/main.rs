@@ -550,7 +550,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         return ExitCode::FAILURE;
     };
     printer.log_to(&project.root);
-    if !plugins::ensure(&project, !a.project.no_auto_install, &printer) {
+    if !plugins::ensure(&project, !a.project.no_auto_install, false, &printer) {
         return ExitCode::FAILURE;
     }
     let opts = dre_core::run::RunOptions {
@@ -622,7 +622,7 @@ fn deps(a: DepsArgs, printer: &output::Printer) -> ExitCode {
         }
         return ExitCode::FAILURE;
     };
-    if plugins::ensure(&project, true, printer) {
+    if plugins::ensure(&project, true, true, printer) {
         printer.line(
             output::Tone::Good,
             "Synced",
