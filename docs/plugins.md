@@ -38,8 +38,9 @@ want a typed column. Types DRE can't map ask for a cast, e.g. `interval_col::tex
 |---|---|
 | `host` | Workspace host. |
 | `http_path` | The SQL warehouse's HTTP path. |
-| `auth_type` | `pat` (default) or `oauth`. |
-| `token` | For `pat`: a personal access token, or any other bearer token. |
+| `auth_type` | `auto` (default), `pat` or `oauth`. |
+| `token` | A personal access token, or any other bearer token. Optional with `auto`. |
+| `profile` | A `~/.databrickscfg` profile to sign in with (for `auto`). |
 | `client_id` | For `oauth`: the OAuth client. Browser sign-in defaults to `databricks-cli`, which every workspace has. For a service principal, its application ID. |
 | `client_secret` | For `oauth`: a service principal's OAuth secret. Without it, `oauth` signs you in through the browser. |
 | `scopes` | For `oauth`: default `all-apis offline_access` for browser sign-in, `all-apis` for a service principal. |
@@ -66,6 +67,19 @@ sources:
         client_secret: "{{ env_var('DATABRICKS_CLIENT_SECRET') }}"
 ```
 
+With `auth_type: auto` (the default) most setups need no sign-in fields at all. DRE uses, in order:
+
+1. `token` in the profile, or `client_id` + `client_secret` (a service principal);
+2. whatever Databricks' own tools would use, through Databricks' Go SDK: `DATABRICKS_TOKEN`, or
+   `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET`; a `~/.databrickscfg` profile (`profile:`,
+   or `DATABRICKS_CONFIG_PROFILE`); a `databricks auth login` session; the VS Code extension; CI
+   OIDC tokens (GitHub Actions, Azure DevOps); Azure and Google credentials;
+3. DRE's own saved sign-in, then a browser sign-in if a person is at the terminal.
+
+When no one is at the terminal (a scheduler, CI, a Databricks job), DRE never waits for a
+browser: it fails at once and lists what would work. In a Databricks job, give it
+`DATABRICKS_TOKEN` or a service principal.
+
 DRE signs in only when a report actually uses the profile: a source when its first query runs,
 a destination when it delivers.
 
@@ -81,9 +95,15 @@ Service principal tokens stay in memory. With either kind, the access token is r
 expires, so a long run keeps its session. Passwords, tokens and client secrets are never saved:
 put them in environment variables and use `env_var()`.
 
-Capabilities: `sessions`, `check` (via `EXPLAIN`). The plugin holds a real warehouse session,
-so temp views and `SET`s last for the whole Binding. The session runs in UTC. Warehouses have no
-read-only mode.
+Capabilities: `sessions`, `check` (via `EXPLAIN`), `load`. The plugin holds a real warehouse
+session, so temp views and `SET`s last for the whole Binding. The session runs in UTC. Warehouses
+have no read-only mode.
+
+The Databricks adapter is written in Go, on Databricks' official Go connector
+(`databricks-sql-go`): SQL warehouses only hold sessions for Databricks' own clients, and the
+connector identifies itself with `dre` appended. One program serves as both this source and the
+`databricks_volumes` destination; it's installed under both plugin names. Set
+`DATABRICKS_LOG_LEVEL=debug` to see the connector's own log.
 
 ## Formats
 
@@ -169,11 +189,14 @@ refused unless `accept_unknown_host: true`. Missing directories are created.
 ### `databricks_volumes`
 
 `host` and the same sign-in fields as the `databricks` source (`auth_type`, `token`, `client_id`,
-`client_secret`), so one set of credentials, and one OAuth session per workspace, can serve both. Paths are `/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API.
+`client_secret`), so one set of credentials, and one OAuth session per workspace, can serve both.
+It's the same program as the `databricks` source. Paths are
+`/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API. On Databricks compute,
+where the volume is mounted, the file is copied to `/Volumes/...` directly instead: no API call and
+no sign-in, with the job's own access. The same report works in both places.
 
-**When to use it**: runs outside Databricks, such as a laptop, Airflow or CI. Inside a Databricks
-job or cluster, `/Volumes/...` is already a mounted path, so use the built-in `local` destination
-with that path instead.
+**When to use it**: anywhere. Outside Databricks (a laptop, Airflow, CI) it uploads; inside a
+Databricks job or cluster it writes to the mounted volume.
 
 ### `email`
 

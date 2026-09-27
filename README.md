@@ -164,15 +164,25 @@ vars, every var the run used and the command's parameters.
 
 ## Building from source
 
-Requires a recent stable Rust toolchain.
+Requires a recent stable Rust toolchain, and Go for the Databricks adapter.
 
 ```bash
 cargo build --release
 ./target/release/dre --help
 ```
 
-The first-party plugins are built from the same workspace (`target/release/dre-*`). Put them in a
-project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them without a registry.
+The first-party plugins are built from the same workspace (`target/release/dre-*`), except the
+Databricks adapter in `go/databricks`, which is one Go program installed under both of its plugin
+names:
+
+```bash
+cd go/databricks
+go build -o ../../target/release/dre-source-databricks .
+cp ../../target/release/dre-source-databricks ../../target/release/dre-destination-databricks_volumes
+```
+
+Put them in a project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them
+without a registry.
 
 ## License
 

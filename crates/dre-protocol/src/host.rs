@@ -29,6 +29,9 @@ pub fn stderr_log() -> LogSink {
 }
 
 pub const DEFAULT_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Set to `1` in a plugin's environment when a person is at core's terminal, else `0`.
+pub const INTERACTIVE_ENV: &str = "DRE_INTERACTIVE";
 const STDERR_TAIL: usize = 20;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -223,6 +226,13 @@ impl PluginProcess {
         let mut cmd = Command::new(path);
         if let Some(dir) = cwd {
             cmd.current_dir(dir);
+        }
+        // Plugins can't see the terminal (their stdio is piped), so tell them whether a person is
+        // there, e.g. to finish a browser sign-in. An existing DRE_INTERACTIVE is left alone.
+        if std::env::var_os(INTERACTIVE_ENV).is_none() {
+            use std::io::IsTerminal;
+            let there = std::io::stderr().is_terminal() && std::io::stdin().is_terminal();
+            cmd.env(INTERACTIVE_ENV, if there { "1" } else { "0" });
         }
         let mut child = cmd
             .envs(env.iter().copied())
