@@ -28,6 +28,11 @@ fn fixture_bin() -> Vec<u8> {
     std::fs::read(test_plugins(&["dre-source-fixture"]).join(exe())).unwrap()
 }
 
+/// Where the fake GitHub API serves a release asset.
+fn asset_path(version: &str, name: &str) -> String {
+    format!("/repos/acme/dre-source-fixture/releases/assets/{version}/{name}")
+}
+
 /// A tiny HTTP server: `GET <path>` answers the bytes registered for it, else 404.
 #[derive(Clone)]
 struct Server {
@@ -53,13 +58,17 @@ impl Server {
                 let mut line = String::new();
                 r.read_line(&mut line).unwrap_or_default();
                 let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let mut accept = String::new();
                 loop {
                     let mut h = String::new();
                     if r.read_line(&mut h).unwrap_or(0) == 0 || h == "\r\n" {
                         break;
                     }
+                    if let Some(v) = h.to_lowercase().strip_prefix("accept:") {
+                        accept = v.trim().to_string();
+                    }
                 }
-                hits.lock().unwrap().push(path.clone());
+                hits.lock().unwrap().push(format!("{path} {accept}"));
                 let body = routes.lock().unwrap().get(&path).cloned();
                 let (status, body) = match body {
                     Some(b) => ("200 OK", b),
@@ -86,15 +95,13 @@ impl Server {
         let mut releases = Vec::new();
         for v in ["1.0.0", "1.1.0"] {
             let asset = format!("dre-source-fixture-{v}-{}", platform());
-            let url = format!("/dl/{v}/{asset}");
+            let url = asset_path(v, &asset);
             self.route(&url, bin.to_vec());
-            let mut assets = vec![
-                serde_json::json!({"name": asset, "browser_download_url": format!("{}{url}", self.base)}),
-            ];
+            let mut assets = vec![serde_json::json!({"name": asset, "url": format!("{}{url}", self.base)})];
             if with_sha {
-                let sum = format!("/dl/{v}/{asset}.sha256");
+                let sum = asset_path(v, &format!("{asset}.sha256"));
                 self.route(&sum, format!("{}  {asset}\n", sha(bin)).into_bytes());
-                assets.push(serde_json::json!({"name": format!("{asset}.sha256"), "browser_download_url": format!("{}{sum}", self.base)}));
+                assets.push(serde_json::json!({"name": format!("{asset}.sha256"), "url": format!("{}{sum}", self.base)}));
             }
             releases.push(serde_json::json!({"tag_name": format!("v{v}"), "draft": false, "assets": assets}));
         }
@@ -200,6 +207,13 @@ fn github_releases_install_the_newest_match_and_pin_it() {
         "{lock}"
     );
     e.dre(&["run"]).ok();
+    // Assets come through the API URL, asking for the file rather than its metadata.
+    let hits = e.server.hits.lock().unwrap().clone();
+    assert!(
+        hits.iter()
+            .any(|h| h.contains("/releases/assets/1.1.0/") && h.ends_with("application/octet-stream")),
+        "{hits:?}"
+    );
     // Narrower constraint, fresh resolve.
     e.write("project/dependencies.yml", &GITHUB.replace(">=1.0", "<1.1"));
     std::fs::remove_file(e.p("project/dre.lock")).unwrap();
@@ -213,7 +227,7 @@ fn github_checksum_mismatch_is_refused() {
     e.server.github_releases(&bin, true);
     let asset = format!("dre-source-fixture-1.1.0-{}", platform());
     e.server.route(
-        &format!("/dl/1.1.0/{asset}.sha256"),
+        &asset_path("1.1.0", &format!("{asset}.sha256")),
         format!("{}  {asset}\n", "0".repeat(64)).into_bytes(),
     );
     e.dre(&["deps"])
@@ -238,8 +252,7 @@ fn github_without_published_checksums_pins_the_first_download() {
     std::fs::remove_dir_all(e.p("plugins/source")).unwrap();
     std::fs::remove_dir_all(e.p("home")).ok();
     let asset = format!("dre-source-fixture-1.1.0-{}", platform());
-    e.server
-        .route(&format!("/dl/1.1.0/{asset}"), b"tampered".to_vec());
+    e.server.route(&asset_path("1.1.0", &asset), b"tampered".to_vec());
     e.dre(&["deps"]).failed().says("checksum mismatch");
 }
 
@@ -363,4 +376,39 @@ fn bad_entries_are_validate_errors() {
     e.dre(&["validate", "--no-auto-install"])
         .failed()
         .says("declared with two sources");
+}
+
+#[test]
+fn a_run_notices_a_changed_source_without_dre_deps() {
+    // First from a registry, then the entry moves to GitHub: `dre run` must reinstall, not keep
+    // using the registry's copy.
+    let e = Env::new("sources:\n  - fixture\nformats:\n  - csv\n");
+    let reg = e.p("registry");
+    std::fs::create_dir_all(&reg).unwrap();
+    let bin = fixture_bin();
+    std::fs::write(reg.join("fixture-1.1.0"), &bin).unwrap();
+    let index = serde_json::json!({"schema": 1, "plugins": [{"kind": "source", "name": "fixture", "versions": [
+        {"version": "1.1.0", "protocol": 0, "artifacts": {platform(): {"url": reg.join("fixture-1.1.0").to_string_lossy(), "sha256": sha(&bin)}}}
+    ]}]});
+    std::fs::write(reg.join("index.json"), index.to_string()).unwrap();
+    let mut c = assert_cmd::Command::cargo_bin("dre").unwrap();
+    c.args(["deps"])
+        .current_dir(e.p("project"))
+        .env("DRE_PLUGINS_DIR", e.p("plugins"))
+        .env("DRE_REGISTRY_URL", reg.join("index.json"))
+        .env("HOME", e.p("home"));
+    assert!(c.output().unwrap().status.success());
+    assert!(!e.lock().contains("from:"), "{}", e.lock());
+
+    e.server.github_releases(&bin, true);
+    e.write("project/dependencies.yml", GITHUB);
+    e.dre(&["run"])
+        .ok()
+        .says("Installed")
+        .says("source plugin `fixture` 1.1.0");
+    assert!(
+        e.lock().contains("from: github:acme/dre-source-fixture"),
+        "{}",
+        e.lock()
+    );
 }

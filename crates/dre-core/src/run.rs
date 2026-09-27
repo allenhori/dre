@@ -484,7 +484,6 @@ impl<'a> BindingRun<'a> {
             root: self.project.root.clone(),
             plugins: self.project.plugins.clone(),
             log: self.ui.plugin_log(),
-            described: Mutex::default(),
         })
     }
 
@@ -1769,9 +1768,15 @@ struct ProfileConnections {
     root: PathBuf,
     plugins: Vec<crate::project::PluginRequirement>,
     log: LogSink,
-    /// Secret field names by `(role, type)`, `None` when `describe` couldn't be asked.
-    described: Mutex<BTreeMap<(Role, String), SecretFields>>,
 }
+
+/// Secret field names by `(project, role, type)`, `None` when `describe` couldn't be asked:
+/// each plugin is asked once per process, not once per Binding.
+static DESCRIBED: std::sync::LazyLock<Mutex<BTreeMap<DescribeKey, SecretFields>>> =
+    std::sync::LazyLock::new(Mutex::default);
+
+/// `(project root, role, plugin type)`.
+type DescribeKey = (PathBuf, Role, String);
 
 type SecretFields = Option<Vec<String>>;
 
@@ -1833,8 +1838,8 @@ impl ProfileConnections {
 
     /// The fields the plugin marks secret, asked once per plugin type.
     fn described(&self, role: Role, kind: &str) -> Option<Vec<String>> {
-        let key = (role, kind.to_string());
-        if let Some(v) = self.described.lock().unwrap().get(&key) {
+        let key = (self.root.clone(), role, kind.to_string());
+        if let Some(v) = DESCRIBED.lock().unwrap().get(&key) {
             return v.clone();
         }
         let plugin_kind = match role {
@@ -1851,7 +1856,7 @@ impl ProfileConnections {
             let _ = p.close();
             Some(fields?.into_iter().filter(|f| f.secret).map(|f| f.name).collect())
         })();
-        self.described.lock().unwrap().insert(key, asked.clone());
+        DESCRIBED.lock().unwrap().insert(key, asked.clone());
         asked
     }
 }

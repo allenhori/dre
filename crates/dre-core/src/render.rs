@@ -106,6 +106,8 @@ impl fmt::Display for RenderError {
 
 pub struct Renderer {
     env: Environment<'static>,
+    /// What `columns()` found, by relation, for the file being rendered.
+    columns_cache: Arc<Mutex<BTreeMap<String, Value>>>,
     /// Warnings raised while rendering (e.g. a large lookup inlined), drained by the caller.
     warnings: Arc<Mutex<Vec<String>>>,
     import: String,
@@ -180,11 +182,14 @@ impl Renderer {
         crate::dates::register(&mut env, cfg.context.calendar, cfg.context.date);
         env.add_global("run", Value::from_object(Run(cfg.context)));
         if let Some(c) = cfg.connections {
-            let target = match c.source() {
-                Ok(t) => Value::from_object(ConnectionValue(t)),
-                Err(e) => Value::from(Error::new(ErrorKind::InvalidOperation, format!("`target`: {e}"))),
-            };
-            env.add_global("target", target);
+            // Resolved on first use: a report that never reads `target` never asks for it.
+            env.add_global(
+                "target",
+                Value::from_object(LazyTarget {
+                    connections: c.clone(),
+                    resolved: std::sync::OnceLock::new(),
+                }),
+            );
             env.add_function(
                 "profile",
                 move |name: String, kwargs: Kwargs| -> Result<Value, Error> {
@@ -252,7 +257,9 @@ impl Renderer {
                 Ok(Value::from_object(QueryResult::new(rows)))
             },
         );
-        let cache: Mutex<BTreeMap<String, Value>> = Mutex::default();
+        // Per rendered file: a later query may have recreated the relation.
+        let columns_cache: Arc<Mutex<BTreeMap<String, Value>>> = Arc::default();
+        let cache = columns_cache.clone();
         env.add_function("columns", move |rel: String| -> Result<Value, Error> {
             if let Some(v) = cache.lock().unwrap().get(&rel) {
                 return Ok(v.clone());
@@ -313,6 +320,7 @@ impl Renderer {
         );
         let mut r = Renderer {
             env,
+            columns_cache,
             warnings,
             import,
             macro_files: BTreeMap::new(),
@@ -335,6 +343,7 @@ impl Renderer {
 
     /// Render `src`, reporting errors against `file`.
     pub fn render(&self, file: &Path, src: &str) -> Result<String, RenderError> {
+        self.columns_cache.lock().unwrap().clear();
         let full = format!("{}{src}", self.import);
         let name = file.to_string_lossy().to_string();
         let tmpl = self
@@ -710,7 +719,54 @@ struct ConnectionValue(Connection);
 
 impl Object for ConnectionValue {
     fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
-        let c = &self.0;
+        connection_field(&self.0, key)
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0.target)
+    }
+}
+
+/// `target`: the Binding's source connection, looked up the first time a template reads it.
+struct LazyTarget {
+    connections: Arc<dyn Connections>,
+    resolved: std::sync::OnceLock<Result<Connection, String>>,
+}
+
+impl fmt::Debug for LazyTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("target")
+    }
+}
+
+impl LazyTarget {
+    fn get(&self) -> &Result<Connection, String> {
+        self.resolved.get_or_init(|| self.connections.source())
+    }
+}
+
+impl Object for LazyTarget {
+    fn get_value(self: &Arc<Self>, key: &Value) -> Option<Value> {
+        match self.get() {
+            Ok(c) => connection_field(c, key),
+            Err(e) => Some(Value::from(Error::new(
+                ErrorKind::InvalidOperation,
+                format!("`target`: {e}"),
+            ))),
+        }
+    }
+
+    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.get() {
+            Ok(c) => write!(f, "{}", c.target),
+            Err(_) => Err(fmt::Error),
+        }
+    }
+}
+
+/// One field of a profile target for templates; a secret or missing one is an error value.
+fn connection_field(c: &Connection, key: &Value) -> Option<Value> {
+    {
         let k = key.as_str()?;
         Some(match k {
             "name" => Value::from(c.target.clone()),
@@ -741,10 +797,6 @@ impl Object for ConnectionValue {
                 )),
             },
         })
-    }
-
-    fn render(self: &Arc<Self>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0.target)
     }
 }
 

@@ -84,10 +84,13 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
     if url.starts_with("http://") || url.starts_with("https://") {
         let mut req = ureq::get(url).header("User-Agent", "dre");
         if is_github(url) {
-            req = req.header(
-                "Accept",
-                "application/vnd.github+json, application/octet-stream;q=0.9",
-            );
+            // A release asset's API URL answers with its metadata unless asked for the file.
+            let accept = if url.contains("/releases/assets/") {
+                "application/octet-stream"
+            } else {
+                "application/vnd.github+json"
+            };
+            req = req.header("Accept", accept);
             if let Ok(t) = std::env::var("GITHUB_TOKEN")
                 && !t.is_empty()
             {
@@ -193,7 +196,9 @@ struct GithubRelease {
 #[derive(Deserialize)]
 struct GithubAsset {
     name: String,
-    browser_download_url: String,
+    /// The API URL: it takes `GITHUB_TOKEN` (private repos, GitHub Enterprise) and answers the
+    /// file itself with `Accept: application/octet-stream`.
+    url: String,
 }
 
 /// A one-plugin index built from `owner/repo`'s GitHub Releases. A release tagged `v1.2.0` (or
@@ -228,11 +233,11 @@ fn github_index(repo: &str, kind: PluginKind, name: &str) -> Result<Index, Strin
                 .assets
                 .iter()
                 .find(|s| s.name == format!("{}.sha256", a.name))
-                .map(|s| s.browser_download_url.clone());
+                .map(|s| s.url.clone());
             artifacts.insert(
                 plat.to_string(),
                 Artifact {
-                    url: a.browser_download_url.clone(),
+                    url: a.url.clone(),
                     sha256: String::new(),
                     sha256_url,
                 },
@@ -418,18 +423,24 @@ pub fn sync(
             continue;
         }
         lock_changed |= lock.local.remove(&key).is_some();
-        // A pin from another source doesn't count: the plugin is resolved again.
+        // A pin from another source doesn't count: the plugin is resolved again, and an
+        // installed copy (from the old source) isn't reused.
+        let moved = lock
+            .get(req.kind, &req.name)
+            .is_some_and(|l| l.from != req.source.lock_key());
         let pin = lock
             .get(req.kind, &req.name)
             .filter(|l| l.from == req.source.lock_key())
             .cloned();
-        if let Some(p) = crate::plugins::find(
-            &dir,
-            req.kind,
-            &req.name,
-            Some(&req.req()),
-            pin.as_ref().map(|l| &l.version),
-        ) {
+        if !moved
+            && let Some(p) = crate::plugins::find(
+                &dir,
+                req.kind,
+                &req.name,
+                Some(&req.req()),
+                pin.as_ref().map(|l| &l.version),
+            )
+        {
             // A hand-placed (flat) plugin satisfies any pin; versioned installs must match it,
             // and when resolving, an unpinned versioned install goes back to the registry.
             let ok = match (&pin, &p.version) {
@@ -446,8 +457,10 @@ pub fn sync(
                 continue;
             }
         }
-        // Already downloaded for another project: link the pinned version from the cache.
+        // Already downloaded for another project: link the pinned version from the cache. The
+        // cache only holds the default registry's builds: it's keyed by name and version.
         if let Some(l) = &pin
+            && req.source.is_default()
             && dir != crate::plugins::cache_dir()
         {
             let cached = install_path(&crate::plugins::cache_dir(), req.kind, &req.name, &l.version);
@@ -578,7 +591,12 @@ fn install_one(
         };
         return Ok((locked, false));
     }
-    install_linked(dir, plugin, v, pin.map(|l| l.sha256.as_str())).map(|l| (l, true))
+    let expect = pin.map(|l| l.sha256.as_str());
+    if req.source.is_default() {
+        install_linked(dir, plugin, v, expect).map(|l| (l, true))
+    } else {
+        install(dir, plugin, v, expect).map(|l| (l, true))
+    }
 }
 
 /// Install into `dir` through the shared cache: download there once, then link into `dir`.

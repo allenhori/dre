@@ -58,7 +58,7 @@ from orders
 
 `rel` is anything that can follow `from`: a table, a fully qualified name, a temp table made by an
 earlier query, or `ref('file')`. DRE asks the database with `select * from <rel> as _dre_cols
-where 1=0`, once per relation per Binding. Like `run_query()`, it connects only when a template
+where 1=0`, once per relation in each file it renders. Like `run_query()`, it connects only when a template
 calls it, so `dre compile` connects for reports that use it. Packages build on it:
 `dre_utils.star()` is one.
 

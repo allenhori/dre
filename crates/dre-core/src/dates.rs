@@ -15,8 +15,8 @@ use std::fmt;
 use std::sync::Arc;
 
 use chrono::{
-    DateTime as ChronoDateTime, Datelike, Days, Duration, Months, NaiveDate, NaiveDateTime, NaiveTime,
-    Offset, TimeZone, Timelike, Utc, Weekday,
+    DateTime as ChronoDateTime, Datelike, Days, Duration, LocalResult, Months, NaiveDate, NaiveDateTime,
+    NaiveTime, Offset, TimeZone, Timelike, Utc, Weekday,
 };
 use chrono_tz::Tz;
 use minijinja::value::{Kwargs, Object, ObjectRepr, Value};
@@ -448,16 +448,33 @@ impl Object for DateTime {
                     (get("years")?, get("months")?, get("weeks")?, get("days")?);
                 let (hours, minutes, seconds) = (get("hours")?, get("minutes")?, get("seconds")?);
                 kw.assert_all_used()?;
-                // Calendar parts move the wall clock; clock parts move the instant.
-                let local = self.t.naive_local();
-                let day = add_months(local.date(), years * 12 + months)
-                    .and_then(|d| add_days(d, weeks * 7 + days))
-                    .ok_or_else(|| err("date out of range"))?;
-                let tz = self.t.timezone();
-                let moved = tz
-                    .from_local_datetime(&day.and_time(local.time()))
-                    .earliest()
-                    .unwrap_or_else(|| self.cal.start_of(day).with_timezone(&tz));
+                // Calendar parts move the wall clock (a day later is the same clock time, even
+                // across a daylight-saving change); clock parts move the instant.
+                let moved = if years == 0 && months == 0 && weeks == 0 && days == 0 {
+                    self.t
+                } else {
+                    let local = self.t.naive_local();
+                    let day = add_months(local.date(), years * 12 + months)
+                        .and_then(|d| add_days(d, weeks * 7 + days))
+                        .ok_or_else(|| err("date out of range"))?;
+                    let wall = day.and_time(local.time());
+                    let tz = self.t.timezone();
+                    let offset = self.t.offset().fix();
+                    match tz.from_local_datetime(&wall) {
+                        LocalResult::Single(t) => t,
+                        // A clock time that happens twice: keep the offset it had, if it can.
+                        LocalResult::Ambiguous(a, b) => {
+                            if b.offset().fix() == offset {
+                                b
+                            } else {
+                                a
+                            }
+                        }
+                        // A clock time the change skips: read it with the old offset, so 02:30
+                        // becomes 03:30 when 02:00 jumps to 03:00.
+                        LocalResult::None => tz.from_utc_datetime(&(wall - offset)),
+                    }
+                };
                 let t =
                     moved + Duration::hours(hours) + Duration::minutes(minutes) + Duration::seconds(seconds);
                 Ok(DateTime::value(t, self.cal))
@@ -1096,6 +1113,38 @@ mod tests {
         assert!(e.contains("unknown period; use one of today, yesterday"), "{e}");
         assert!(render("2026-03-18", "{{ period('last_n_days') }}").contains("needs a positive `n`"));
         assert!(render("2026-03-18", "{{ period('last_n_days', n=0) }}").contains("needs a positive `n`"));
+    }
+
+    #[test]
+    fn datetime_add_across_daylight_saving_changes() {
+        let ny = cal("America/New_York");
+        // 2026-03-08 02:30 doesn't exist in New York: the clocks skip from 02:00 to 03:00.
+        assert_eq!(
+            render_with(
+                ny,
+                "2026-03-07",
+                "{{ datetime('2026-03-07 02:30').add(days=1).iso }}"
+            ),
+            "2026-03-08T03:30:00-04:00"
+        );
+        // 2026-11-01 01:30 happens twice; an hour after the first is the second.
+        assert_eq!(
+            render_with(
+                ny,
+                "2026-11-01",
+                "{% set t = datetime('2026-11-01 01:30') %}{{ t.iso }} {{ t.add(hours=1).iso }} {{ t.add(hours=1).unix - t.unix }}"
+            ),
+            "2026-11-01T01:30:00-04:00 2026-11-01T01:30:00-05:00 3600"
+        );
+        // A day later from the second 01:30 keeps the clock time.
+        assert_eq!(
+            render_with(
+                ny,
+                "2026-11-01",
+                "{{ datetime('2026-11-01 01:30').add(hours=1).add(days=1).iso }}"
+            ),
+            "2026-11-02T01:30:00-05:00"
+        );
     }
 
     #[test]

@@ -128,7 +128,7 @@ fn secret_fields_are_refused_and_never_compiled() {
 }
 
 #[test]
-fn columns_lists_a_relations_columns_once_per_run() {
+fn columns_lists_a_relations_columns_once_per_file() {
     let p = project(
         "select {% for c in columns('orders') %}{{ c.name }} /* {{ c.type }} */{% if not loop.last %}, {% endif %}{% endfor %}\n\
          from orders\n\
@@ -184,5 +184,33 @@ fn a_run_renders_each_query_after_the_ones_before_it_ran() {
     assert_eq!(
         p.read("target/run/monthly/default/monthly.csv"),
         "id,amount\r\n1,9.50\r\n"
+    );
+}
+
+#[test]
+fn columns_sees_a_relation_recreated_by_an_earlier_query() {
+    let cols = "select '{% for c in columns('t') %}{{ c.name }} {% endfor %}' as cols\n";
+    let p = project(cols);
+    p.write(
+        "reports/finance/monthly/monthly.yml",
+        "queries:\n  - {query: make, tab: false}\n  - q\n  - {query: remake, tab: false}\n  - q2\noutput: {format: csv}\n",
+    );
+    p.write(
+        "reports/finance/monthly/make.sql",
+        "create temp table t as select 1 as id\n",
+    );
+    p.write(
+        "reports/finance/monthly/remake.sql",
+        "create or replace temp table t as select 1 as id, 2 as extra\n",
+    );
+    p.write("reports/finance/monthly/q2.sql", cols);
+    p.dre_env("run", &["-s", "monthly"], &[SECRET]).ok();
+    assert_eq!(
+        p.read("target/compiled/monthly/default/q.sql"),
+        "select 'id ' as cols\n"
+    );
+    assert_eq!(
+        p.read("target/compiled/monthly/default/q2.sql"),
+        "select 'id extra ' as cols\n"
     );
 }
