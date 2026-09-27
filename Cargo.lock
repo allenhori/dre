@@ -1279,9 +1279,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dre-databricks-auth"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "dre-protocol",
+ "getrandom 0.3.4",
+ "serde_json",
+ "sha2 0.10.9",
+ "ureq",
+]
+
+[[package]]
 name = "dre-destination-databricks_volumes"
 version = "0.0.0"
 dependencies = [
+ "dre-databricks-auth",
  "dre-protocol",
  "serde_json",
  "tempfile",
@@ -1415,9 +1428,13 @@ name = "dre-source-databricks"
 version = "0.0.0"
 dependencies = [
  "arrow",
+ "base64 0.22.1",
  "chrono",
+ "dre-databricks-auth",
  "dre-protocol",
  "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
  "ureq",
 ]
 

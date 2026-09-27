@@ -4,14 +4,16 @@
 //! Inside a Databricks job or cluster, `/Volumes/...` is a mounted path: use the built-in `local`
 //! destination there instead; no plugin or token is needed.
 //!
-//! Profile target fields: `host` and `token`, the same fields as the Databricks source profile,
-//! so one set of credentials can serve both. The remote path must be
+//! Profile target fields: `host` plus the Databricks source profile's sign-in fields (`auth_type`,
+//! `token`, `client_id`, `client_secret`; see `dre_databricks_auth`), so one set of credentials,
+//! and one OAuth session per workspace, can serve both. The remote path must be
 //! `/Volumes/<catalog>/<schema>/<volume>/...`; missing directories are created. Retries while
 //! the workspace answers 429/503.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use dre_databricks_auth::{Auth, base_url};
 use dre_protocol::msg::ConnectionField;
 use dre_protocol::plugin::{About, Destination, Result, conn_required, serve_destination};
 use dre_protocol::util::percent_encode;
@@ -19,11 +21,14 @@ use serde_json::{Map, Value};
 
 struct Volumes;
 
-fn request(agent: &ureq::Agent, url: &str, token: &str, body: Option<&Path>) -> Result<()> {
+fn request(agent: &ureq::Agent, url: &str, auth: &mut Auth, body: Option<&Path>) -> Result<()> {
     let started = Instant::now();
     let mut wait = Duration::from_secs(1);
     loop {
-        let req = agent.put(url).header("Authorization", &format!("Bearer {token}"));
+        let bearer = auth.bearer(agent)?;
+        let req = agent
+            .put(url)
+            .header("Authorization", &format!("Bearer {bearer}"));
         let resp = match body {
             Some(p) => {
                 let f = std::fs::File::open(p).map_err(|e| format!("can't read {}: {e}", p.display()))?;
@@ -46,7 +51,10 @@ fn request(agent: &ureq::Agent, url: &str, token: &str, body: Option<&Path>) -> 
         }
         let text = resp.body_mut().read_to_string().unwrap_or_default();
         let hint = match status {
-            401 | 403 => " (check the token and its permissions on the volume)",
+            401 | 403 => match auth {
+                Auth::Token(_) => " (check the token and its permissions on the volume)",
+                Auth::OAuth(_) => " (check the signed-in identity's permissions on the volume)",
+            },
             404 => " (check the catalog, schema and volume exist)",
             _ => "",
         };
@@ -60,15 +68,13 @@ fn request(agent: &ureq::Agent, url: &str, token: &str, body: Option<&Path>) -> 
 
 impl Destination for Volumes {
     fn connection_fields(&self) -> Vec<ConnectionField> {
-        vec![
+        let mut fields = vec![
             ConnectionField::new("host", "workspace host, e.g. adb-123.4.azuredatabricks.net")
                 .required()
                 .same_as_source("databricks"),
-            ConnectionField::new("token", "personal access token")
-                .required()
-                .secret()
-                .same_as_source("databricks"),
-        ]
+        ];
+        fields.extend(dre_databricks_auth::connection_fields());
+        fields
     }
 
     fn deliver(&mut self, local: &Path, remote: Option<&str>, c: &Map<String, Value>) -> Result<String> {
@@ -77,13 +83,9 @@ impl Destination for Volumes {
         if parts.first() != Some(&"Volumes") || parts.len() < 5 || parts.iter().any(|p| p.is_empty()) {
             return Err(format!("`{remote}` must be /Volumes/<catalog>/<schema>/<volume>/<file>").into());
         }
-        let host = conn_required(c, "host")?.trim_end_matches('/');
-        let base = if host.starts_with("http://") || host.starts_with("https://") {
-            host.to_string()
-        } else {
-            format!("https://{host}")
-        };
-        let token = conn_required(c, "token")?;
+        let base = base_url(conn_required(c, "host")?);
+        // Signs in only now, when a report actually delivers here.
+        let mut auth = Auth::from_conn(c, &base)?;
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .build()
@@ -95,7 +97,7 @@ impl Destination for Volumes {
             request(
                 &agent,
                 &format!("{base}/api/2.0/fs/directories{}", percent_encode(&dir, true)),
-                token,
+                &mut auth,
                 None,
             )
             .map_err(|e| format!("can't create {dir}: {e}"))?;
@@ -106,7 +108,7 @@ impl Destination for Volumes {
                 "{base}/api/2.0/fs/files{}?overwrite=true",
                 percent_encode(&path, true)
             ),
-            token,
+            &mut auth,
             Some(local),
         )
         .map_err(|e| format!("upload to {path} failed: {e}; the output is still in target/"))?;

@@ -9,12 +9,14 @@
 //! - [`host`]: the core side: spawning a plugin, the handshake, requests.
 //! - [`plugin`]: the SDK plugin authors use to serve requests.
 //! - [`conformance`]: checks any plugin binary against the protocol.
+//! - [`sessions`]: OAuth sessions plugins keep in `~/.dre/oauth_sessions.json`.
 
 pub mod conformance;
 pub mod frame;
 pub mod host;
 pub mod msg;
 pub mod plugin;
+pub mod sessions;
 pub mod util;
 
 /// Protocol versions this build speaks.
