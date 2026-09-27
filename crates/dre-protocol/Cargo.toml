@@ -1,6 +1,7 @@
 [package]
 name = "dre-protocol"
 description = "The DRE plugin protocol: frames, messages, host side, plugin SDK and conformance suite"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

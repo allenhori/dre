@@ -38,8 +38,10 @@ path. An internal mirror and an offline copy both work this way.
 
 - `kind` is `source`, `format` or `destination`. `name` is the plugin name (`[a-z0-9_]+`), the
   same string used in `profiles.yml` `type:` or `output.format`.
-- `version` is semver. Pre-releases are only installed when asked for explicitly
-  (`dre plugin install duckdb@=1.3.0-rc.1`).
+- `version` is semver. A pre-release is installed when asked for explicitly
+  (`dre plugin install duckdb@=1.3.0-rc.1`), or when no stable version matches: a plugin whose
+  only releases are `0.0.1-alpha` installs that, and one with a stable `0.1.0` ignores a later
+  `0.2.0-rc.1` until asked.
 - `protocol` is the plugin protocol version the release speaks (see [protocol.md](protocol.md)).
   DRE skips versions it can't talk to.
 - Artifacts are keyed by platform, `<os>-<arch>`, using Rust's names: `macos`, `linux` or
@@ -51,7 +53,13 @@ path. An internal mirror and an offline copy both work this way.
 
 ## Publishing a release
 
-For each plugin release:
+Pushing a `v*` tag runs `.github/workflows/release.yml`. It builds `dre` and every first-party
+plugin for each platform, publishes them as one GitHub Release (a pre-release when the tag has a
+suffix such as `-alpha`), and adds each plugin's new version to `index.json` on the `registry`
+release, which it creates the first time. The tag must match the workspace version in
+`Cargo.toml`.
+
+For a plugin released some other way:
 
 1. Build the plugin for every platform and upload the artifacts to a GitHub Release.
 2. Compute each artifact's checksum with `shasum -a 256 <file>`.

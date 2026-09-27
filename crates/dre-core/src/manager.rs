@@ -96,20 +96,42 @@ impl Index {
 
 impl IndexPlugin {
     /// The highest version matching `req` that has an artifact for this platform and speaks a
-    /// protocol this core supports.
+    /// protocol this core supports. Pre-releases only when no stable version matches (see
+    /// [`prefer_stable`]).
     pub fn best(&self, req: &VersionReq) -> Option<&IndexVersion> {
         let plat = platform();
-        self.versions
+        let usable: Vec<&IndexVersion> = self
+            .versions
             .iter()
-            .filter(|v| req.matches(&v.version))
             .filter(|v| (dre_protocol::MIN_VERSION..=dre_protocol::MAX_VERSION).contains(&v.protocol))
             .filter(|v| v.artifacts.contains_key(&plat))
-            .max_by(|a, b| a.version.cmp(&b.version))
+            .collect();
+        prefer_stable(usable, req, |v| &v.version)
     }
 
     pub fn exact(&self, v: &Version) -> Option<&IndexVersion> {
         self.versions.iter().find(|x| &x.version == v)
     }
+}
+
+/// The highest of `items` whose version matches `req`. When none does, a pre-release counts if
+/// its release would match, so `*` finds `0.0.1-alpha` when a plugin has no stable release yet
+/// (semver on its own only matches a pre-release that `req` names explicitly).
+pub fn prefer_stable<T>(items: Vec<T>, req: &VersionReq, version: impl Fn(&T) -> &Version) -> Option<T> {
+    let highest = |ok: &dyn Fn(&Version) -> bool, items: Vec<T>| {
+        items
+            .into_iter()
+            .filter(|i| ok(version(i)))
+            .max_by(|a, b| version(a).cmp(version(b)))
+    };
+    let exact = |v: &Version| req.matches(v);
+    if items.iter().any(|i| exact(version(i))) {
+        return highest(&exact, items);
+    }
+    highest(
+        &|v: &Version| !v.pre.is_empty() && req.matches(&Version::new(v.major, v.minor, v.patch)),
+        items,
+    )
 }
 
 /// Where a version is installed.
@@ -392,4 +414,30 @@ pub fn install_linked(
         )?;
     }
     Ok(locked)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pick(versions: &[&str], req: &str) -> Option<String> {
+        let vs: Vec<Version> = versions.iter().map(|v| Version::parse(v).unwrap()).collect();
+        prefer_stable(vs.iter().collect(), &VersionReq::parse(req).unwrap(), |v| v).map(|v| v.to_string())
+    }
+
+    #[test]
+    fn pre_releases_only_when_nothing_stable_matches() {
+        assert_eq!(pick(&["0.0.1-alpha"], "*").as_deref(), Some("0.0.1-alpha"));
+        assert_eq!(
+            pick(&["0.0.1-alpha", "0.0.2-beta"], "*").as_deref(),
+            Some("0.0.2-beta")
+        );
+        assert_eq!(pick(&["0.1.0", "0.2.0-rc.1"], "*").as_deref(), Some("0.1.0"));
+        assert_eq!(
+            pick(&["0.0.1-alpha"], "^0.0.1-alpha").as_deref(),
+            Some("0.0.1-alpha")
+        );
+        assert_eq!(pick(&["0.0.1-alpha"], "^1").as_deref(), None);
+        assert_eq!(pick(&[], "*").as_deref(), None);
+    }
 }

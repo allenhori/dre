@@ -1230,7 +1230,7 @@ dependencies = [
 
 [[package]]
 name = "dre-cli"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -1255,7 +1255,7 @@ dependencies = [
 
 [[package]]
 name = "dre-core"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1280,7 +1280,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-email"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "dre-protocol",
  "lettre",
@@ -1292,7 +1292,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-ftp"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "dre-protocol",
  "native-tls",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-object_store"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1320,7 +1320,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-sftp"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "dre-protocol",
  "russh",
@@ -1332,7 +1332,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-slack"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "dre-protocol",
  "form_urlencoded",
@@ -1343,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "dre-format-csv"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "dre-format-fixed_width"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1365,7 +1365,7 @@ dependencies = [
 
 [[package]]
 name = "dre-format-parquet"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "dre-format-xlsx"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "arrow",
  "calamine",
@@ -1392,7 +1392,7 @@ dependencies = [
 
 [[package]]
 name = "dre-protocol"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "arrow",
  "serde",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "dre-source-duckdb"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1413,7 +1413,7 @@ dependencies = [
 
 [[package]]
 name = "dre-source-postgres"
-version = "0.0.0"
+version = "0.0.1-alpha"
 dependencies = [
  "arrow",
  "chrono",
