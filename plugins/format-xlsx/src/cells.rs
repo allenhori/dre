@@ -44,7 +44,11 @@ static LOSSY: std::sync::Mutex<std::collections::BTreeMap<(String, Lossy), u64>>
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 fn lossy(column: &str, why: Lossy) {
-    *LOSSY.lock().unwrap().entry((column.to_string(), why)).or_default() += 1;
+    *LOSSY
+        .lock()
+        .unwrap()
+        .entry((column.to_string(), why))
+        .or_default() += 1;
 }
 
 /// One warning per column and reason for values written as text, since the last call.
@@ -67,7 +71,11 @@ pub fn take_warnings() -> Vec<String> {
 }
 
 fn significant_digits(text: &str) -> usize {
-    let digits: String = text.chars().take_while(|c| *c != 'e' && *c != 'E').filter(char::is_ascii_digit).collect();
+    let digits: String = text
+        .chars()
+        .take_while(|c| *c != 'e' && *c != 'E')
+        .filter(char::is_ascii_digit)
+        .collect();
     let digits = digits.trim_start_matches('0');
     // Trailing zeros of an integer part or a fraction carry no precision.
     digits.trim_end_matches('0').len()
@@ -116,7 +124,10 @@ pub fn excel_value(a: &dyn Array, i: usize, column: &str) -> Option<Excel> {
         }
         DataType::Int64 => number(a, i, column, a.as_primitive::<Int64Type>().value(i) as f64),
         DataType::UInt64 => number(a, i, column, a.as_primitive::<UInt64Type>().value(i) as f64),
-        DataType::Decimal32(..) | DataType::Decimal64(..) | DataType::Decimal128(..) | DataType::Decimal256(..) => {
+        DataType::Decimal32(..)
+        | DataType::Decimal64(..)
+        | DataType::Decimal128(..)
+        | DataType::Decimal256(..) => {
             let t = text(a, i);
             match t.parse::<f64>() {
                 Ok(v) if v.abs() <= EXCEL_MAX_NUMBER => number(a, i, column, v),
@@ -133,10 +144,18 @@ pub fn excel_value(a: &dyn Array, i: usize, column: &str) -> Option<Excel> {
         }
         DataType::Timestamp(TimeUnit::Microsecond, _) => {
             let us = a.as_primitive::<TimestampMicrosecondType>().value(i) as f64;
-            serial(a, i, column, us / 86_400_000_000.0 + EPOCH_OFFSET, Excel::DateTime)
+            serial(
+                a,
+                i,
+                column,
+                us / 86_400_000_000.0 + EPOCH_OFFSET,
+                Excel::DateTime,
+            )
         }
         DataType::Time64(TimeUnit::Microsecond) => {
-            let us = a.as_primitive::<arrow::datatypes::Time64MicrosecondType>().value(i) as f64;
+            let us = a
+                .as_primitive::<arrow::datatypes::Time64MicrosecondType>()
+                .value(i) as f64;
             Excel::Time(us / 86_400_000_000.0)
         }
         DataType::Utf8 => Excel::Text(a.as_string::<i32>().value(i).to_string()),

@@ -79,6 +79,16 @@ type tokens struct {
 	expiresAt int64 // unix seconds
 }
 
+// checkAuthType reports an unknown auth_type before anything connects.
+func checkAuthType(conn map[string]any) error {
+	switch optional(conn, "auth_type") {
+	case "", "auto", "pat", "token", "oauth":
+		return nil
+	default:
+		return fmt.Errorf("unknown `auth_type` `%s`; use `auto`, `pat` or `oauth`", optional(conn, "auth_type"))
+	}
+}
+
 func authFromConn(conn map[string]any, base string) (*auth, error) {
 	t := optional(conn, "auth_type")
 	if t == "" {

@@ -146,12 +146,31 @@ fn timestamps(tz: &str) -> RecordBatch {
 #[test]
 fn timezone_aware_timestamps_are_written_in_their_zone() {
     for bin in [csv(), delimited()] {
-        let out = write(bin, json!({"header": false}), vec![timestamps("UTC"), timestamps("UTC")]).unwrap();
-        assert_eq!(String::from_utf8(out).unwrap(), "2026-01-01 00:00:00+00:00\r\n\r\n".repeat(2));
-        let out = write(bin, json!({"header": false}), vec![timestamps("Australia/Sydney")]).unwrap();
-        assert_eq!(String::from_utf8(out).unwrap(), "2026-01-01 11:00:00+11:00\r\n\r\n");
+        let out = write(
+            bin,
+            json!({"header": false}),
+            vec![timestamps("UTC"), timestamps("UTC")],
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "2026-01-01 00:00:00+00:00\r\n\r\n".repeat(2)
+        );
+        let out = write(
+            bin,
+            json!({"header": false}),
+            vec![timestamps("Australia/Sydney")],
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "2026-01-01 11:00:00+11:00\r\n\r\n"
+        );
         let out = write(bin, json!({"header": false}), vec![timestamps("+10:00")]).unwrap();
-        assert_eq!(String::from_utf8(out).unwrap(), "2026-01-01 10:00:00+10:00\r\n\r\n");
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "2026-01-01 10:00:00+10:00\r\n\r\n"
+        );
     }
 }
 
@@ -162,5 +181,8 @@ fn an_error_on_the_first_of_several_batches_is_the_plugins_own() {
     batches.extend(std::iter::repeat_n(batch(), 2000));
     let err = write(csv(), json!({"quoting": "none"}), batches).unwrap_err();
     assert!(err.contains("row 2, column `name`"), "{err}");
-    assert!(!err.contains("expected `finish`") && !err.contains("255, 255"), "{err}");
+    assert!(
+        !err.contains("expected `finish`") && !err.contains("255, 255"),
+        "{err}"
+    );
 }

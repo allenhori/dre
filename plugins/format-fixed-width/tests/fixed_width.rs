@@ -97,10 +97,17 @@ fn an_unknown_column_name_is_reported() {
 #[test]
 fn timezone_aware_timestamps_are_written_in_their_zone() {
     use arrow::array::TimestampMicrosecondArray;
-    for (tz, want) in [("UTC", "2026-01-01 00:00:00+00:00"), ("Australia/Sydney", "2026-01-01 11:00:00+11:00")] {
+    for (tz, want) in [
+        ("UTC", "2026-01-01 00:00:00+00:00"),
+        ("Australia/Sydney", "2026-01-01 11:00:00+11:00"),
+    ] {
         let a = TimestampMicrosecondArray::from(vec![1_767_225_600_000_000]).with_timezone(tz);
         let b = RecordBatch::try_from_iter([("t", Arc::new(a) as ArrayRef)]).unwrap();
-        let out = write(json!({"columns": [{"name": "t", "width": 25}], "line_ending": "\n"}), b).unwrap();
+        let out = write(
+            json!({"columns": [{"name": "t", "width": 25}], "line_ending": "\n"}),
+            b,
+        )
+        .unwrap();
         assert_eq!(String::from_utf8(out).unwrap(), format!("{want}\n"));
     }
 }
@@ -114,7 +121,17 @@ fn line_breaks_are_refused_or_replaced() {
     .unwrap();
     let cols = json!([{"name": "a", "width": 20}]);
     let err = write(json!({"columns": cols}), b.clone()).unwrap_err();
-    assert!(err.contains("row 2, column `a`") && err.contains("line break"), "{err}");
-    let out = write(json!({"columns": cols, "line_breaks": "replace", "line_ending": "\n"}), b).unwrap();
-    assert_eq!(String::from_utf8(out).unwrap(), "ok                  \nline1 line2\tcol     \n");
+    assert!(
+        err.contains("row 2, column `a`") && err.contains("line break"),
+        "{err}"
+    );
+    let out = write(
+        json!({"columns": cols, "line_breaks": "replace", "line_ending": "\n"}),
+        b,
+    )
+    .unwrap();
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        "ok                  \nline1 line2\tcol     \n"
+    );
 }

@@ -234,7 +234,8 @@ pub fn sync(root: &Path, install: bool, mut log: impl FnMut(&str)) -> Result<(),
     if errors.is_empty() { Ok(()) } else { Err(errors) }
 }
 
-const GIT_MISSING: &str = "git isn't installed (needed for git packages); install git, or use a `local:` package";
+const GIT_MISSING: &str =
+    "git isn't installed (needed for git packages); install git, or use a `local:` package";
 
 fn git_works() -> bool {
     Command::new("git")

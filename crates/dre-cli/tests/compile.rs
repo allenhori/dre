@@ -143,8 +143,14 @@ fn validate_select_that_matches_nothing_is_an_error() {
 fn validate_warns_about_templates_that_need_an_earlier_query() {
     let p = project();
     p.duckdb("dev.duckdb", "select 1;");
-    p.write("reports/ops/wide/wide.yml", "queries: [{query: make, tab: false}, use]\n");
-    p.write("reports/ops/wide/make.sql", "create temp table wide_tmp as select 1 as a, 2 as b\n");
+    p.write(
+        "reports/ops/wide/wide.yml",
+        "queries: [{query: make, tab: false}, use]\n",
+    );
+    p.write(
+        "reports/ops/wide/make.sql",
+        "create temp table wide_tmp as select 1 as a, 2 as b\n",
+    );
     p.write(
         "reports/ops/wide/use.sql",
         "select {% for c in columns('wide_tmp') %}{{ c.name }}{{ ', ' if not loop.last }}{% endfor %} from wide_tmp\n",

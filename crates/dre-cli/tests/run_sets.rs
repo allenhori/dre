@@ -253,7 +253,10 @@ fn an_ambiguous_selector_gives_the_same_error_as_validate() {
 #[test]
 fn an_empty_set_is_a_set_and_keeps_the_others() {
     let p = project(&[
-        ("reports/ops/one/one.yml", "queries: [oq]\nsets: [plain, client_a]\n"),
+        (
+            "reports/ops/one/one.yml",
+            "queries: [oq]\nsets: [plain, client_a]\n",
+        ),
         ("reports/ops/one/oq.sql", "select 1 as n\n"),
     ]);
     p.write(

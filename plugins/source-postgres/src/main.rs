@@ -340,7 +340,9 @@ fn server(c: &Map<String, Value>) -> String {
         Some(Value::String(s)) => s.clone(),
         _ => "5432".into(),
     };
-    let db = conn_str(c, "database").or_else(|| conn_str(c, "dbname")).unwrap_or_default();
+    let db = conn_str(c, "database")
+        .or_else(|| conn_str(c, "dbname"))
+        .unwrap_or_default();
     format!("{host}:{port}/{db}")
 }
 

@@ -140,9 +140,15 @@ impl Printer {
         self.inner.lock().unwrap().line(tone, verb, text, Level::Info);
     }
 
-    /// Like [`Printer::line`], shown only with `-v`.
+    /// Like [`Printer::line`], shown only with `-v`, and only as text: JSON events carry the
+    /// same facts in their own fields.
     pub fn detail(&self, tone: Tone, verb: &str, text: &str) {
-        self.inner.lock().unwrap().line(tone, verb, text, Level::Debug);
+        let mut i = self.inner.lock().unwrap();
+        if i.format == LogFormat::Json {
+            i.file_log("DEBUG", &format!("{verb} {text}"));
+            return;
+        }
+        i.line(tone, verb, text, Level::Debug);
     }
 
     pub fn error(&self, msg: &str) {

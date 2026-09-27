@@ -55,6 +55,9 @@ func deliverToWorkspace(local, remote string, conn map[string]any) (string, erro
 		return "", err
 	}
 	base := baseURL(host)
+	if err := checkAuthType(conn); err != nil {
+		return "", err
+	}
 	if err := reachable(base); err != nil {
 		return "", err
 	}

@@ -32,11 +32,21 @@ impl YamlFile {
         match serde_yaml_ng::from_str::<Value>(&text) {
             Ok(mut value) => {
                 if let Err(e) = value.apply_merge() {
-                    diags.error("yaml-syntax", Some(display), None, format!("invalid YAML merge key (`<<`): {e}"));
+                    diags.error(
+                        "yaml-syntax",
+                        Some(display),
+                        None,
+                        format!("invalid YAML merge key (`<<`): {e}"),
+                    );
                     return None;
                 }
                 if !string_keys(&mut value) {
-                    diags.error("yaml-syntax", Some(display), None, "a map key is a list or a map; keys must be names");
+                    diags.error(
+                        "yaml-syntax",
+                        Some(display),
+                        None,
+                        "a map key is a list or a map; keys must be names",
+                    );
                     return None;
                 }
                 Some(YamlFile { display, text, value })
@@ -128,7 +138,10 @@ mod tests {
 
     fn parse(text: &str) -> (Option<YamlFile>, Diagnostics) {
         let mut d = Diagnostics::default();
-        (YamlFile::parse(text.to_string(), PathBuf::from("t.yml"), &mut d), d)
+        (
+            YamlFile::parse(text.to_string(), PathBuf::from("t.yml"), &mut d),
+            d,
+        )
     }
 
     #[test]

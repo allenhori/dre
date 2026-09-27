@@ -2150,7 +2150,9 @@ impl Loader {
                         "invalid-output-option",
                         file.clone(),
                         None,
-                        format!("{ctx}: `extension` must be a file extension like `aba` (no path, no spaces)"),
+                        format!(
+                            "{ctx}: `extension` must be a file extension like `aba` (no path, no spaces)"
+                        ),
                     );
                 }
                 Some(e.to_string())
@@ -3544,7 +3546,9 @@ fn is_one_of(k: &Value, keys: &[&str]) -> bool {
 fn is_set_registry(m: &Mapping) -> bool {
     m.values().any(Value::is_mapping)
         && m.values().all(|v| {
-            v.is_null() || v.as_mapping().is_some_and(|e| e.keys().all(|k| is_one_of(k, &["profile", "vars"])))
+            v.is_null()
+                || v.as_mapping()
+                    .is_some_and(|e| e.keys().all(|k| is_one_of(k, &["profile", "vars"])))
         })
 }
 

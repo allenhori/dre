@@ -32,6 +32,18 @@ Capabilities: `sessions`, `read_only`, `check` (via `EXPLAIN`). `numeric(p,s)` b
 column. An unconstrained `numeric` becomes exact text, so cast it (`::numeric(18,2)`) when you
 want a typed column. Types DRE can't map ask for a cast, e.g. `interval_col::text`.
 
+Postgres drops `numeric(p,s)`'s precision and scale in `VALUES` lists and across `UNION`, so
+their numbers arrive as plain `numeric`, i.e. text. Cast in the outer query:
+
+```sql
+select code, amount::numeric(18,2) as amount
+from (values ('a', 1.50), ('b', 2.25)) as t(code, amount)
+```
+
+A connection error names the server (`host:port/database`). On macOS the plugin uses the system
+TLS stack: TLS 1.2 at most, and with `verify-ca`/`verify-full` a server certificate valid for more
+than 825 days is rejected (Apple's limit), so issue server certificates for 825 days or less.
+
 ### `databricks`
 
 | Field | Notes |
@@ -46,7 +58,7 @@ want a typed column. Types DRE can't map ask for a cast, e.g. `interval_col::tex
 | `scopes` | For `oauth`: default `all-apis offline_access` for browser sign-in, `all-apis` for a service principal. |
 | `redirect_port` | For browser sign-in: the localhost port the sign-in redirects to. Default 8020, which is what `databricks-cli` allows. |
 | `catalog`, `schema` | Defaults for the session. |
-| `retry_timeout` | Seconds to keep waiting while a stopped warehouse starts. Default 900. |
+| `retry_timeout` | Seconds to keep waiting while a stopped warehouse starts. Default 900. While it waits, DRE says so every 30 seconds. A host that doesn't resolve, or refuses the connection, fails at once. |
 
 ```yaml
 sources:
@@ -107,16 +119,34 @@ connector identifies itself with `dre` appended. One program serves as this sour
 name. Set
 `DATABRICKS_LOG_LEVEL=debug` to see the connector's own log.
 
+Databricks SQL reads backslashes as escapes in string literals and doesn't read `''` as an
+escaped quote: `'O''Brien'` is two literals, `'O'` and `'Brien'`, which Databricks joins into
+`OBrien`. Jinja that builds literals from values should escape for Databricks
+(`'O\'Brien'`); `dre_utils` does this through `dispatch()`, and lookups are inlined portably.
+
 ## Formats
 
 | Format | Options |
 |---|---|
 | `csv`, `delimited` | `delimiter`, `quote`, `quoting`, `header`, `line_ending`, `encoding`, `null`, `byte_order_mark` |
-| `fixed_width` | `columns` (`name`, `width`, `align`, `pad`, `truncate`), `line_ending`, `encoding` |
+| `fixed_width` | `columns` (`name`, `width`, `align`, `pad`, `truncate`), `line_ending`, `encoding`, `line_breaks` |
 | `parquet` | none; Arrow types are preserved |
 | `xlsx` | `header`, `max_rows_per_sheet`; per query `anchor`/`header`; `template` |
 
-See the YAML schema for defaults.
+Every format but xlsx also takes `extension`: the output file's extension (`aba`, `dat`, ...), or
+`""` for none. The file is written the same way; only its name changes.
+
+- `null: "NULL"` (csv, delimited) writes that marker for nulls instead of an empty field. It can be
+  written unquoted as above: DRE reads a YAML `null:` key as the option `null`.
+- Timestamps with a timezone are written in their zone with the offset,
+  `2026-01-01 11:00:00+11:00`; timestamps without one as `2026-01-01 00:00:00`.
+- `fixed_width` refuses a value with a line break, since it would split the record, naming the
+  row and column. `line_breaks: replace` writes a space instead. Tabs and other characters are
+  written as they are.
+- `xlsx` keeps every value exact. What Excel can't store as a number or date is written as text,
+  with one warning per column: numbers with more than 15 significant digits (large integers,
+  wide decimals), numbers beyond Excel's range, and dates or timestamps before 1900-03-01 or
+  after 9999-12-31 (as ISO text).
 
 ## Destinations
 
@@ -161,20 +191,24 @@ output:
 ### `s3`
 
 `bucket`, `region`, and `access_key_id` + `secret_access_key` (+ `session_token`). Leave the keys
-out to use the ambient credential chain: environment, shared config, or an instance or container
-role. `endpoint` and `allow_http` point it at S3-compatible stores. Paths are `s3://bucket/key`,
-or a bare key in `bucket`.
+out to use AWS's default credential chain, the same as the AWS CLI: environment variables, the
+shared config and credentials files (the profile named by `profile:`, else `AWS_PROFILE`), SSO,
+`credential_process`, web identity, and container or instance roles. `AWS_EC2_METADATA_DISABLED`
+is honoured, and with no credentials anywhere the delivery fails at once, listing what it tried.
+The region comes from `region:`, else the AWS config. `endpoint` and `allow_http` point it at
+S3-compatible stores. Paths are `s3://bucket/key`, or a bare key in `bucket`.
 
 ### `gcs`
 
 `bucket`, and `service_account_key_path` or `service_account_key`. Leave both out to use
-application default credentials. `endpoint` is for emulators. Paths are `gs://bucket/key`.
+application default credentials: `GOOGLE_APPLICATION_CREDENTIALS`, the file
+`gcloud auth application-default login` writes, or the metadata server on Google Cloud. `endpoint` is for emulators. Paths are `gs://bucket/key`.
 Uploads use GCS's resumable protocol.
 
 ### `azure_blob`
 
-`account_name`, `container`, and one of `connection_string`, `sas_token`, `access_key` or
-`use_managed_identity: true`. `endpoint` is for emulators. Paths are `az://container/key`.
+`account_name`, `container`, and one of `connection_string`, `sas_token`, `access_key`,
+`use_managed_identity: true`, or `use_azure_cli: true` (the `az login` session). `endpoint` is for emulators. Paths are `az://container/key`.
 
 ### `sftp`
 
@@ -187,6 +221,11 @@ refused unless `accept_unknown_host: true`. Missing directories are created.
 
 `host`, `port` (21), `username`, `password`, `passive` (default true), and `tls`: `none` or
 `explicit` (FTPS). `tls_accept_invalid_certs` allows self-signed server certificates.
+
+Paths are relative to the folder the login starts in; a leading `/` means the server's root,
+which on many servers isn't the login folder (`/reports/x.csv` vs `reports/x.csv`). FTPS data
+connections reuse the control connection's TLS session, which vsftpd, ProFTPD and FileZilla
+Server require by default. A failed upload removes the partial file from the server when it can.
 
 ### `databricks_volumes`
 

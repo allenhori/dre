@@ -38,6 +38,9 @@ func newDatabricks(conn map[string]any) (backend, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkAuthType(conn); err != nil {
+		return nil, err
+	}
 	if err := reachable(baseURL(host)); err != nil {
 		return nil, err
 	}

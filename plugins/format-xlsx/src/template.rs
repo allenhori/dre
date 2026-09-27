@@ -53,7 +53,6 @@ struct Collected {
     batch: RecordBatch,
 }
 
-
 pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
     let payload: Payload = serde_json::from_value(req.template.clone().unwrap_or(Value::Null))
         .map_err(|e| format!("invalid template payload: {e}"))?;

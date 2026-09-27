@@ -631,6 +631,17 @@ fn text_literal(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn inlined_text_never_relies_on_a_dialects_escapes() {
+        // Portable on DuckDB, Postgres and Databricks: no '' and no \'.
+        assert_eq!(text_literal("plain"), "'plain'");
+        assert_eq!(
+            text_literal("a\\b'c"),
+            "('a' || chr(92) || 'b' || chr(39) || 'c')"
+        );
+        assert_eq!(text_literal("'"), "(chr(39))");
+    }
+
     fn lookup(dir: &Path, file: &str, body: &str, cfg: Option<&str>) -> (Lookup, Diagnostics) {
         std::fs::create_dir_all(dir.join("lookups")).unwrap();
         std::fs::write(dir.join("lookups").join(file), body).unwrap();

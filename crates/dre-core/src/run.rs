@@ -1063,7 +1063,8 @@ impl<'a> BindingRun<'a> {
                 for b in reader {
                     let b = b.map_err(|e| e.to_string())?;
                     any = true;
-                    p.send_batch(&b).map_err(|e| format!("{} format: {e}", out.format))?;
+                    p.send_batch(&b)
+                        .map_err(|e| format!("{} format: {e}", out.format))?;
                 }
                 if !any {
                     p.send_batch(&RecordBatch::new_empty(schema))

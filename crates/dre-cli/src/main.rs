@@ -412,7 +412,8 @@ fn compile_for_validate(
         let err = o.error.clone().unwrap_or_default();
         // A template that queries what an earlier query makes (a temp table) can't render
         // without running that query; validate runs nothing, so that's for `dre run` to check.
-        if err.contains("run_query() failed:") || (err.contains("`columns('") && err.contains("')` failed:")) {
+        if err.contains("run_query() failed:") || (err.contains("`columns('") && err.contains("')` failed:"))
+        {
             diags.warning(
                 "compile-needs-run",
                 None,
@@ -577,12 +578,13 @@ fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::
     let (project, diags) = project::load(&p.project_dir, &p.load_options());
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
-        printer.detail(output::Tone::Note, "Profiles", &profiles_line(&p.profiles));
     }
     for d in diags.sorted() {
         // Unmanaged reports warn again when they run, and a selected Binding whose profile
         // lacks the `--target` fails with its own error; the rest aren't this run's concern.
-        if d.severity == dre_core::Severity::Warning && matches!(d.code, "unmanaged-report" | "missing-target") {
+        if d.severity == dre_core::Severity::Warning
+            && matches!(d.code, "unmanaged-report" | "missing-target")
+        {
             continue;
         }
         println!("{}", printer.diagnostic(d));
@@ -640,7 +642,10 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     }
     // Each Binding records its own date, in its own timezone; this line only logs the request.
     let date = opts.date.unwrap_or_else(|| chrono::Utc::now().date_naive());
-    printer.log_params(&opts.params(date));
+    let mut params = opts.params(date);
+    params["profiles"] = serde_json::json!(project.profiles.path);
+    printer.log_params(&params);
+    printer.detail(output::Tone::Note, "Profiles", &profiles_line(&project.profiles));
     let summary = dre_core::run::run(&project, &opts, &mut printer);
     if let Some(e) = &summary.error {
         printer.error(e);

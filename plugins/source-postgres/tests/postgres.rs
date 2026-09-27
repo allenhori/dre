@@ -312,6 +312,9 @@ fn a_connection_error_names_the_server() {
     let mut p = PluginProcess::start(bin(), log).unwrap();
     // Nothing listens on port 1.
     let c = json!({"host": "127.0.0.1", "port": 1, "user": "dre", "database": "shop", "sslmode": "disable"});
-    let e = p.open(c.as_object().unwrap().clone(), true).unwrap_err().to_string();
+    let e = p
+        .open(c.as_object().unwrap().clone(), true)
+        .unwrap_err()
+        .to_string();
     assert!(e.contains("can't connect to Postgres at 127.0.0.1:1/shop"), "{e}");
 }
