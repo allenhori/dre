@@ -31,7 +31,7 @@ impl YamlFile {
     pub fn parse(text: String, display: PathBuf, diags: &mut Diagnostics) -> Option<YamlFile> {
         match serde_yaml_ng::from_str::<Value>(&text) {
             Ok(mut value) => {
-                if let Err(e) = value.apply_merge() {
+                if let Err(e) = merge_keys(&mut value) {
                     diags.error(
                         "yaml-syntax",
                         Some(display),
@@ -84,6 +84,36 @@ impl YamlFile {
     /// Best-effort line of the first occurrence of `needle` anywhere in the file.
     pub fn line_containing(&self, needle: &str) -> Option<usize> {
         self.text.lines().position(|l| l.contains(needle)).map(|i| i + 1)
+    }
+}
+
+/// Apply YAML merge keys (`<<: *base`, `<<: [*a, *b]`): keys written out win, then earlier
+/// maps in a list. A merged map's own `<<` is resolved first, so merges can chain
+/// (`prod: {<<: *verify}` where `verify: &verify {<<: *dev, ...}`).
+fn merge_keys(v: &mut Value) -> Result<(), &'static str> {
+    match v {
+        Value::Mapping(m) => {
+            if let Some(src) = m.remove("<<") {
+                let sources = match src {
+                    Value::Mapping(_) => vec![src],
+                    Value::Sequence(list) => list,
+                    _ => return Err("`<<` must be a map or a list of maps"),
+                };
+                for mut s in sources {
+                    merge_keys(&mut s)?;
+                    let Value::Mapping(s) = s else {
+                        return Err("`<<` must be a map or a list of maps");
+                    };
+                    for (k, v) in s {
+                        m.entry(k).or_insert(v);
+                    }
+                }
+            }
+            m.values_mut().try_for_each(merge_keys)
+        }
+        Value::Sequence(list) => list.iter_mut().try_for_each(merge_keys),
+        Value::Tagged(t) => merge_keys(&mut t.value),
+        _ => Ok(()),
     }
 }
 
@@ -159,6 +189,22 @@ mod tests {
         // With a list, earlier maps win over later ones.
         assert_eq!(v["both"]["host"], "h");
         assert_eq!(v["both"]["port"], 5433);
+    }
+
+    #[test]
+    fn merges_chain() {
+        let (yf, _) = parse(
+            "dev: &pg {type: postgres, host: h, sslmode: prefer}\n\
+             verify: &v {<<: *pg, sslmode: verify-full}\n\
+             wrong: {<<: *v, host: other}\n",
+        );
+        let v = yf.unwrap().value;
+        assert_eq!(v["wrong"]["type"], "postgres");
+        assert_eq!(v["wrong"]["sslmode"], "verify-full");
+        assert_eq!(v["wrong"]["host"], "other");
+        assert!(v["wrong"].get("<<").is_none());
+        let (yf, d) = parse("a: {<<: 3}\n");
+        assert!(yf.is_none() && format!("{d:?}").contains("must be a map"));
     }
 
     #[test]
