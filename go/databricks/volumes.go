@@ -10,6 +10,7 @@ package main
 // created. Retries while the workspace answers 429/503.
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -131,8 +132,24 @@ func volumeRequest(client *http.Client, url string, a *auth, local string) error
 		case 404:
 			hint = " (check the catalog, schema and volume exist)"
 		}
-		return fmt.Errorf("HTTP %d%s: %s", resp.StatusCode, hint, truncate(string(text), 300))
+		return fmt.Errorf("HTTP %d%s: %s", resp.StatusCode, hint, apiError(text))
 	}
+}
+
+// apiError is the readable part of a Databricks REST error: `ERROR_CODE: message` from its JSON
+// body, or the start of the body when it isn't one.
+func apiError(body []byte) string {
+	var e struct {
+		Code    string `json:"error_code"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &e) == nil && e.Message != "" {
+		if e.Code != "" {
+			return e.Code + ": " + e.Message
+		}
+		return e.Message
+	}
+	return truncate(strings.TrimSpace(string(body)), 300)
 }
 
 // percentEncode escapes everything but RFC 3986 unreserved characters (and / when keepSlash).
