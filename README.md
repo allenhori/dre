@@ -170,7 +170,7 @@ cp ../../target/release/dre-source-databricks ../../target/release/dre-destinati
 ```
 
 Put them in a project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them
-without a registry. `scripts/local-registry.sh` builds everything, both languages included.
+without a registry.
 
 ## License
 
