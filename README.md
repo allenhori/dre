@@ -12,7 +12,31 @@ csv, delimited, fixed-width, parquet or xlsx (including multi-sheet workbooks an
 templates), and delivers the file wherever it needs to go. It runs on whatever scheduler you
 already have: cron, Airflow, Dagster, Databricks Jobs.
 
-Status: under active development. There is no released version yet.
+Status: under active development. The first pre-release, `v0.0.1-alpha`, is for trying DRE out;
+expect breaking changes.
+
+## Install
+
+macOS and Linux (x86_64 and ARM):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | sh
+```
+
+This puts `dre` in `~/.local/bin`, after checking the download against the release's
+`SHA256SUMS`. `DRE_INSTALL_DIR` picks another folder and `DRE_VERSION` a release (default: the
+newest, pre-releases included):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha DRE_INSTALL_DIR=/usr/local/bin sh
+```
+
+The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
+container build. On Windows, download `dre-<version>-windows-x86_64.zip` from
+[Releases](https://github.com/allenhori/dre/releases) and put `dre.exe` on your `PATH`.
+
+Only `dre` itself is installed. Plugins come from the same releases, on demand: `dre init` and
+`dre deps` download the ones a project uses (see [the registry docs](docs/registry.md)).
 
 ## Concepts
 

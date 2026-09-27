@@ -33,7 +33,11 @@ fn plugin_list_shows_kind_name_version_and_protocol() {
     );
     for l in &lines[1..] {
         let cols: Vec<&str> = l.split_whitespace().collect();
-        assert_eq!(&cols[..4], &["source", "fixture", "unreleased", "v0"], "{text}");
+        assert_eq!(
+            &cols[..4],
+            &["source", "fixture", env!("CARGO_PKG_VERSION"), "v0"],
+            "{text}"
+        );
     }
 }
 

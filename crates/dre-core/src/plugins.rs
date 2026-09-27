@@ -152,15 +152,11 @@ pub fn find(
         }
         return all.into_iter().find(|p| p.version.is_none());
     }
-    let versioned = all
+    let versioned: Vec<(&InstalledPlugin, &Version)> = all
         .iter()
-        .filter(|p| {
-            p.version
-                .as_ref()
-                .is_some_and(|v| req.is_none_or(|r| r.matches(v)))
-        })
-        .max_by(|a, b| a.version.cmp(&b.version));
-    versioned
-        .cloned()
+        .filter_map(|p| p.version.as_ref().map(|v| (p, v)))
+        .collect();
+    crate::manager::prefer_stable(versioned, req.unwrap_or(&VersionReq::STAR), |(_, v)| v)
+        .map(|(p, _)| p.clone())
         .or_else(|| all.into_iter().find(|p| p.version.is_none()))
 }

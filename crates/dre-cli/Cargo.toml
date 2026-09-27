@@ -1,6 +1,7 @@
 [package]
 name = "dre-cli"
 description = "The dre command-line interface"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
