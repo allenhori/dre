@@ -28,7 +28,7 @@ This puts `dre` in `~/.local/bin`, after checking the download against the relea
 newest, pre-releases included):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha-2 DRE_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha-3 DRE_INSTALL_DIR=/usr/local/bin sh
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
@@ -37,6 +37,22 @@ container build. On Windows, download `dre-<version>-windows-x86_64.zip` from
 
 Only `dre` itself is installed. Plugins come from the same releases, on demand: `dre init` and
 `dre deps` download the ones a project uses (see [the registry docs](docs/registry.md)).
+
+### With pip
+
+The `dre-cli` package holds `dre` and every first-party plugin, so a project runs without
+downloading anything (Linux x86_64 and aarch64, macOS, Windows; Python 3.8+):
+
+```bash
+pip install dre-cli          # or: uv tool install dre-cli
+dre --version
+```
+
+Each release attaches the wheels (`dre_cli-*.whl`), which install the same way with
+`pip install <wheel URL>` before the version reaches PyPI. From Python, `dre_cli.run(["run",
+"-s", "daily"])` runs `dre` and returns the finished process. In a Databricks job (serverless
+included), add `dre-cli` to the job's environment dependencies and run `dre` from a script or
+notebook. The bundled plugins are used unless `DRE_PLUGINS_DIR` is set.
 
 ## Concepts
 
@@ -55,12 +71,13 @@ Only `dre` itself is installed. Plugins come from the same releases, on demand: 
 - **Lookups**: mapping tables you maintain as files in `lookups/` (csv, xlsx, xls, json, jsonl,
   yml) rather than in the database. `ref('countries')` makes one usable like a table: small ones
   are inlined into the SQL, larger ones (over 200 rows by default) are loaded into a temp table
-  by the source plugin. `lookup('countries')` hands the rows to Jinja.
+  by the source plugin. `lookup('countries')` hands the rows to Jinja. Values are text unless a
+  `lookups/<name>.yml` config gives columns types; see [lookups](docs/lookups.md).
 - **Plugins**: every source, format and destination is a separate executable that speaks DRE's
   [plugin protocol](docs/protocol.md). Plugins are declared per project and installed on demand.
 - **Delivery**: one output can go to several destinations in a single run, e.g. object storage
-  (S3, GCS, Azure Blob), SFTP/FTP, Databricks Volumes, an email with the file attached, or a
-  Slack channel. See [plugins](docs/plugins.md).
+  (S3, GCS, Azure Blob), SFTP/FTP, Databricks Volumes or workspace files, an email with the file
+  attached, or a Slack channel. See [plugins](docs/plugins.md).
 - **Logs**: every run appends to `logs/dre.log` in the project, including the full SQL of each
   statement sent to the database (report queries, `run_query()`, lookup loads). The file rotates
   every 10,000 lines, keeping `dre.log.1` to `dre.log.5`.
@@ -69,9 +86,10 @@ Only `dre` itself is installed. Plugins come from the same releases, on demand: 
   destination (non-dev targets stand out). `dre compile` just renders the SQL into
   `target/compiled/` and lists the files. `dre validate --live` checks every statement against
   the database. `--preview` and schema-drift detection check a report before it reaches anyone.
-- **Selecting**: `run`, `compile` and `validate` take `-s`/`--select` with report names,
-  `tag:<tag>`, folder names or dotted folder paths. Several match any of them: `-s daily monthly`,
-  `-s daily,monthly`, or repeated `-s` (a semicolon works too, quoted: `-s "daily;monthly"`).
+- **Selecting**: `run`, `compile` and `validate` take report names, `tag:<tag>`, folder names
+  or dotted folder paths, as arguments (`dre run daily monthly`) or with `-s`/`--select`. Several
+  match any of them: `-s daily monthly`, `-s daily,monthly`, or repeated `-s` (a semicolon works
+  too, quoted: `-s "daily;monthly"`).
 
 ## Quick start
 
@@ -116,7 +134,20 @@ name, in the same order. The YAML decides the tabs, not the data:
 - A tab file whose last statement returns no result set at all is an error that points at
   `tab: false`.
 
-Connections live in `~/.dre/profiles.yml`, outside the project. Database connections go under
+The output file is named after the report (`monthly.xlsx`), or after the first destination's
+`path`. `extension:` changes the extension for text formats that feed other systems, e.g. a bank
+file that must end in `.aba`, or drops it with `extension: ""`:
+
+```yaml
+output:
+  format: fixed_width
+  extension: aba          # payments.aba instead of payments.txt; "" for no extension
+  columns: [...]
+```
+
+Connections live in `profiles.yml`. DRE looks for it, in order, in `--profiles-dir`,
+`DRE_PROFILES_DIR`, the project directory (next to `dre_project.yml`), and `~/.dre`, the same order
+as dbt; `dre validate` and `dre run -v` say which file they used. Database connections go under
 `sources:` and delivery targets under `destinations:`. Each profile picks a default `target`
 (environment) from its named `targets`:
 
@@ -134,7 +165,23 @@ destinations:
       prod: {type: s3, bucket: reports}
 ```
 
-`dre init` writes this file for you.
+`dre init` writes this file for you, in `~/.dre` (never into a project). A `profiles.yml` kept
+in the project, e.g. for CI, a container or a Databricks job, should take every secret from
+`env_var()` so nothing secret is committed.
+
+Targets can share settings with YAML anchors and merge keys, in `profiles.yml` and every other
+YAML file DRE reads; keys written out win over merged ones:
+
+```yaml
+sources:
+  warehouse:
+    target: dev
+    targets:
+      dev: &pg {type: postgres, host: db.internal, user: reports, database: shop}
+      prod:
+        <<: *pg
+        database: shop_prod
+```
 
 Plugins and macro packages are declared in `dependencies.yml` (or `packages.yml`, or both) and
 installed into the project's `dre_deps/` folder by `dre deps`. Their exact versions and commits
@@ -174,7 +221,7 @@ vars, every var the run used and the command's parameters.
 
 | Variable | Effect |
 |---|---|
-| `DRE_PROFILES_DIR` | Directory holding `profiles.yml` (default `~/.dre`). `--profiles-dir` overrides it. |
+| `DRE_PROFILES_DIR` | Directory holding `profiles.yml` (default: the project directory if it has one, else `~/.dre`). `--profiles-dir` overrides it. |
 | `DRE_PLUGINS_DIR` | One plugins directory for every project, instead of each project's `dre_deps/plugins`. |
 | `DRE_REGISTRY_URL` | The plugin registry index (a URL or a local path). |
 | `DRE_RUN_DATE` | The run date (`YYYY-MM-DD`) behind `run.date`, instead of today. |
@@ -187,6 +234,7 @@ vars, every var the run used and the command's parameters.
 ## Documentation
 
 - [Templates: `target`, `profile()`, `columns()`, dates and timezones](docs/templates.md)
+- [Lookups: files, typed columns, inline or temp table](docs/lookups.md)
 - [Plugins and their profile fields](docs/plugins.md)
 - [Plugin protocol](docs/protocol.md), for writing a plugin in any language
 - [Plugin registry and `dre.lock`](docs/registry.md)
@@ -201,13 +249,14 @@ cargo build --release
 ```
 
 The first-party plugins are built from the same workspace (`target/release/dre-*`), except the
-Databricks adapter in `go/databricks`, which is one Go program installed under both of its plugin
+Databricks adapter in `go/databricks`, which is one Go program installed under each of its plugin
 names:
 
 ```bash
 cd go/databricks
 go build -o ../../target/release/dre-source-databricks .
 cp ../../target/release/dre-source-databricks ../../target/release/dre-destination-databricks_volumes
+cp ../../target/release/dre-source-databricks ../../target/release/dre-destination-databricks_workspace
 ```
 
 Put them in a project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them

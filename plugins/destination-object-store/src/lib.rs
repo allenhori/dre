@@ -9,12 +9,17 @@
 //! Profile target fields:
 //!
 //! - **s3**: `bucket`, `region`, `access_key_id` + `secret_access_key` (+ `session_token`), or
-//!   none of them to use the ambient credential chain (environment, shared config, instance
-//!   or container role); `endpoint` and `allow_http` for S3-compatible stores.
+//!   none of them to use AWS's default credential chain: the environment, the shared
+//!   config/credentials files (`profile`, else `AWS_PROFILE`), SSO, `credential_process`, web
+//!   identity, and container or instance roles (`AWS_EC2_METADATA_DISABLED` is honoured). The
+//!   region falls back to the AWS config's. `endpoint` and `allow_http` for S3-compatible stores.
 //! - **gcs**: `bucket`, `service_account_key_path` (a key file) or `service_account_key` (the
-//!   key JSON), or neither for application default credentials; `endpoint` for emulators.
+//!   key JSON), or neither for application default credentials (`GOOGLE_APPLICATION_CREDENTIALS`,
+//!   the `gcloud auth application-default login` file, or the metadata server); `endpoint` for
+//!   emulators.
 //! - **azure_blob**: `account_name`, `container`, and one of `connection_string`, `sas_token`,
-//!   `access_key`, or `use_managed_identity: true`; `endpoint` for emulators.
+//!   `access_key`, `use_managed_identity: true`, or `use_azure_cli: true` (the `az login`
+//!   session); `endpoint` for emulators.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -90,11 +95,15 @@ fn locate(kind: Kind, remote: Option<&str>, c: &Map<String, Value>) -> Result<(S
     Ok((bucket.to_string(), remote.trim_start_matches('/').to_string()))
 }
 
-fn build(kind: Kind, bucket: &str, c: &Map<String, Value>) -> Result<Arc<dyn ObjectStore>> {
+fn build(
+    kind: Kind,
+    bucket: &str,
+    c: &Map<String, Value>,
+    rt: &tokio::runtime::Runtime,
+) -> Result<Arc<dyn ObjectStore>> {
     Ok(match kind {
         Kind::S3 => {
             let explicit = conn_str(c, "access_key_id").is_some();
-            // No keys: the ambient chain (environment, shared config, instance/container role).
             let mut b = if explicit {
                 AmazonS3Builder::new()
             } else {
@@ -103,6 +112,17 @@ fn build(kind: Kind, bucket: &str, c: &Map<String, Value>) -> Result<Arc<dyn Obj
             b = b.with_bucket_name(bucket);
             if let Some(r) = conn_str(c, "region") {
                 b = b.with_region(r);
+            }
+            // No keys: AWS's default chain, resolved (and checked) now so a missing login
+            // fails at once with what was tried.
+            if !explicit {
+                let (creds, region) = aws_chain(conn_str(c, "profile"), rt)?;
+                b = b.with_credentials(creds);
+                if conn_str(c, "region").is_none()
+                    && let Some(r) = region
+                {
+                    b = b.with_region(r);
+                }
             }
             if explicit {
                 b = b
@@ -167,8 +187,10 @@ fn build(kind: Kind, bucket: &str, c: &Map<String, Value>) -> Result<Arc<dyn Obj
                 b = b.with_access_key(k);
             } else if conn_bool(c, "use_managed_identity").unwrap_or(false) {
                 b = MicrosoftAzureBuilder::from_env().with_container_name(bucket);
+            } else if conn_bool(c, "use_azure_cli").unwrap_or(false) {
+                b = b.with_config(AzureConfigKey::UseAzureCli, "true");
             } else {
-                return Err("azure_blob needs `connection_string`, `sas_token`, `access_key` or `use_managed_identity: true`".into());
+                return Err("azure_blob needs `connection_string`, `sas_token`, `access_key`, `use_managed_identity: true` or `use_azure_cli: true`".into());
             }
             let account =
                 account.ok_or("azure_blob needs `account_name` (or a connection string with AccountName)")?;
@@ -182,6 +204,78 @@ fn build(kind: Kind, bucket: &str, c: &Map<String, Value>) -> Result<Arc<dyn Obj
             Arc::new(b.build()?)
         }
     })
+}
+
+/// AWS's default credential chain as an object_store credential provider, plus its region.
+fn aws_chain(
+    profile: Option<&str>,
+    rt: &tokio::runtime::Runtime,
+) -> Result<(object_store::aws::AwsCredentialProvider, Option<String>)> {
+    use aws_credential_types::provider::ProvideCredentials;
+    let (provider, region) = rt.block_on(async {
+        let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
+        if let Some(p) = profile {
+            loader = loader.profile_name(p);
+        }
+        let cfg = loader.load().await;
+        let provider = cfg
+            .credentials_provider()
+            .ok_or("the AWS SDK has no credential provider")?;
+        provider.provide_credentials().await.map_err(|e| {
+            let profile = profile
+                .map(|p| format!("profile `{p}`"))
+                .or_else(|| std::env::var("AWS_PROFILE").ok().map(|p| format!("AWS_PROFILE `{p}`")))
+                .unwrap_or_else(|| "the default profile".into());
+            format!(
+                "no AWS credentials found (tried: environment variables, the shared config and credentials files with {profile}, SSO, credential_process, web identity, container and instance roles): {}",
+                aws_error(&e)
+            )
+        })?;
+        Ok::<_, String>((provider, cfg.region().map(|r| r.to_string())))
+    })?;
+    Ok((Arc::new(AwsChain { provider }), region))
+}
+
+/// An error and its causes, on one line.
+fn aws_error(e: &dyn std::error::Error) -> String {
+    let mut msg = e.to_string();
+    let mut src = e.source();
+    while let Some(s) = src {
+        let t = s.to_string();
+        if !msg.contains(&t) {
+            msg = format!("{msg}: {t}");
+        }
+        src = s.source();
+    }
+    msg
+}
+
+#[derive(Debug)]
+struct AwsChain {
+    provider: aws_credential_types::provider::SharedCredentialsProvider,
+}
+
+#[async_trait::async_trait]
+impl object_store::CredentialProvider for AwsChain {
+    type Credential = object_store::aws::AwsCredential;
+
+    async fn get_credential(&self) -> object_store::Result<Arc<Self::Credential>> {
+        use aws_credential_types::provider::ProvideCredentials;
+        // The SDK's chain caches and refreshes before expiry.
+        let c = self
+            .provider
+            .provide_credentials()
+            .await
+            .map_err(|e| object_store::Error::Generic {
+                store: "S3",
+                source: aws_error(&e).into(),
+            })?;
+        Ok(Arc::new(object_store::aws::AwsCredential {
+            key_id: c.access_key_id().to_string(),
+            secret_key: c.secret_access_key().to_string(),
+            token: c.session_token().map(str::to_string),
+        }))
+    }
 }
 
 pub struct ObjectStoreDestination {
@@ -225,10 +319,10 @@ impl Destination for ObjectStoreDestination {
         if self.kind == Kind::Gcs {
             return gcs_upload(&bucket, &key, local, c);
         }
-        let store = build(self.kind, &bucket, c)?;
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
+        let store = build(self.kind, &bucket, c, &rt)?;
         let location = format!("{}://{bucket}/{key}", self.kind.scheme());
         rt.block_on(async {
             let mut file = tokio::fs::File::open(local)

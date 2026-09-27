@@ -61,7 +61,7 @@ fn write(bin: &Path, options: Value, batches: Vec<RecordBatch>) -> Result<Vec<u8
     };
     p.write_begin(path.to_str().unwrap(), "csv", options, vec![meta], None)
         .unwrap();
-    p.write_result_set(&schema, batches).unwrap();
+    p.write_result_set(&schema, batches).map_err(|e| e.to_string())?;
     let files = p.write_finish().map_err(|e| e.to_string())?;
     assert_eq!(files, vec![path.to_str().unwrap().to_string()]);
     Ok(std::fs::read(&path).unwrap())
@@ -133,5 +133,56 @@ fn an_empty_result_set_still_gets_its_header() {
     assert_eq!(
         String::from_utf8(write(csv(), json!({}), vec![empty]).unwrap()).unwrap(),
         "id,name,amount,active,opened\r\n"
+    );
+}
+
+fn timestamps(tz: &str) -> RecordBatch {
+    use arrow::array::TimestampMicrosecondArray;
+    // 2026-01-01 00:00:00 UTC, in two batches' worth of rows.
+    let a = TimestampMicrosecondArray::from(vec![Some(1_767_225_600_000_000), None]).with_timezone(tz);
+    RecordBatch::try_from_iter([("t", Arc::new(a) as ArrayRef)]).unwrap()
+}
+
+#[test]
+fn timezone_aware_timestamps_are_written_in_their_zone() {
+    for bin in [csv(), delimited()] {
+        let out = write(
+            bin,
+            json!({"header": false}),
+            vec![timestamps("UTC"), timestamps("UTC")],
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "2026-01-01 00:00:00+00:00\r\n\r\n".repeat(2)
+        );
+        let out = write(
+            bin,
+            json!({"header": false}),
+            vec![timestamps("Australia/Sydney")],
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "2026-01-01 11:00:00+11:00\r\n\r\n"
+        );
+        let out = write(bin, json!({"header": false}), vec![timestamps("+10:00")]).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "2026-01-01 10:00:00+10:00\r\n\r\n"
+        );
+    }
+}
+
+#[test]
+fn an_error_on_the_first_of_several_batches_is_the_plugins_own() {
+    // The first batch fails (`quoting: none` can't write a comma); many more follow.
+    let mut batches = vec![batch()];
+    batches.extend(std::iter::repeat_n(batch(), 2000));
+    let err = write(csv(), json!({"quoting": "none"}), batches).unwrap_err();
+    assert!(err.contains("row 2, column `name`"), "{err}");
+    assert!(
+        !err.contains("expected `finish`") && !err.contains("255, 255"),
+        "{err}"
     );
 }

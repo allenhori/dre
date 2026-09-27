@@ -56,6 +56,9 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
                 "databricks_volumes" => {
                     "      path: \"/Volumes/<catalog>/<schema>/<volume>/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n"
                 }
+                "databricks_workspace" => {
+                    "      path: \"/Workspace/Shared/reports/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n"
+                }
                 _ => "      path: \"reports/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n",
             });
         }

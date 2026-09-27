@@ -271,9 +271,12 @@ impl Renderer {
                 ));
             };
             let sql = format!("select * from {rel} as _dre_cols where 1=0");
-            let cols = runner
-                .columns(&sql)
-                .map_err(|e| Error::new(ErrorKind::InvalidOperation, format!("`columns('{rel}')`: {e}")))?;
+            let cols = runner.columns(&sql).map_err(|e| {
+                Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("`columns('{rel}')` failed: {e}"),
+                )
+            })?;
             let v = Value::from(
                 cols.into_iter()
                     .map(|c| {

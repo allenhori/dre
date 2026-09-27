@@ -160,3 +160,12 @@ fn the_log_rotates_keeping_five_old_files() {
     let current = p.read("logs/dre.log");
     assert!(current.lines().count() < 5 + 3, "{current}");
 }
+
+#[test]
+fn verbose_says_which_profiles_file_it_used() {
+    let p = project();
+    p.dre("run", &["daily", "-v"])
+        .ok()
+        .says("  Profiles  ")
+        .says("profiles.yml (from --profiles-dir)");
+}

@@ -979,7 +979,10 @@ impl<'a> BindingRun<'a> {
                 };
             }
         }
-        let ext = extension(&self.b.output.format);
+        let ext = match &self.b.output.extension {
+            Some(e) => e.as_str(),
+            None => extension(&self.b.output.format),
+        };
         let from_remote = self
             .dests
             .iter()
@@ -991,7 +994,10 @@ impl<'a> BindingRun<'a> {
             .output_name
             .clone()
             .or(from_remote)
-            .unwrap_or_else(|| format!("{}.{ext}", self.report.name))
+            .unwrap_or_else(|| match ext {
+                "" => self.report.name.clone(),
+                ext => format!("{}.{ext}", self.report.name),
+            })
     }
 
     fn format(&mut self, filename: &str) -> Result<(), Fail> {
@@ -1057,18 +1063,22 @@ impl<'a> BindingRun<'a> {
                 for b in reader {
                     let b = b.map_err(|e| e.to_string())?;
                     any = true;
-                    p.send_batch(&b).map_err(|e| e.to_string())?;
+                    p.send_batch(&b)
+                        .map_err(|e| format!("{} format: {e}", out.format))?;
                 }
                 if !any {
                     p.send_batch(&RecordBatch::new_empty(schema))
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| format!("{} format: {e}", out.format))?;
                 }
                 p.send(&dre_protocol::msg::Request::ResultSetEnd {})
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("{} format: {e}", out.format))?;
             }
-            let files = p
-                .write_finish()
+            let (files, warnings) = p
+                .write_finish_with_warnings()
                 .map_err(|e| format!("{} format: {e}", out.format))?;
+            for w in warnings {
+                self.ui.warn(&format!("  {} format: {w}", out.format));
+            }
             for f in files {
                 let f = PathBuf::from(f);
                 let size = std::fs::metadata(&f).map(|m| m.len()).unwrap_or(0);

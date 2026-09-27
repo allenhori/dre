@@ -136,9 +136,15 @@ pub struct WriteRequest {
 pub struct ResultSets<'a> {
     metas: std::vec::IntoIter<ResultSetMeta>,
     input: &'a mut Input,
+    warnings: Vec<String>,
 }
 
 impl ResultSets<'_> {
+    /// Tell the person something about the output, shown as a warning by core.
+    pub fn warn(&mut self, message: impl Into<String>) {
+        self.warnings.push(message.into());
+    }
+
     /// The next result set, or `None` after the last. Each must be read (or is drained) before
     /// the next is requested.
     pub fn next_set(&mut self) -> Result<Option<ResultSet<'_>>> {
@@ -486,22 +492,32 @@ fn handle(h: &mut Handler<'_>, req: Request, input: &mut Input, out: &mut Output
             let mut sets = ResultSets {
                 metas: result_sets.into_iter(),
                 input,
+                warnings: Vec::new(),
             };
             let written = f.write(&req, &mut sets);
-            // Consume whatever the format didn't read, so the stream stays in sync.
-            while let Some(mut rs) = sets.next_set()? {
-                rs.drain()?;
+            // A failed write is reported at once, so core can stop streaming; this is the
+            // request's one reply.
+            if let Err(e) = &written {
+                out.send(&Response::Error {
+                    message: e.to_string(),
+                });
             }
+            // Consume whatever the format didn't read (after an error, possibly the rest of a
+            // result set), so the stream stays in sync.
             loop {
                 match sets.input.read()? {
                     Frame::Json(v) if v.get("type").and_then(Value::as_str) == Some("finish") => break,
-                    Frame::Json(v) if v.get("type").and_then(Value::as_str) == Some("result_set_end") => {
-                        continue;
-                    }
+                    Frame::Json(v) if v.get("type").and_then(Value::as_str) == Some("result_set_end") => {}
+                    Frame::Arrow(_) => {}
                     other => return Err(format!("expected `finish`, got {other:?}").into()),
                 }
             }
-            out.send(&Response::Written { files: written? });
+            if let Ok(files) = written {
+                out.send(&Response::Written {
+                    files,
+                    warnings: sets.warnings,
+                });
+            }
         }
         (
             Handler::Destination(d),

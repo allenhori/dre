@@ -184,3 +184,63 @@ fn values_keep_their_types() {
     assert_eq!(rows[0][4], Data::Float(100.5));
     assert_eq!(rows[1][4], Data::Float(-3.25));
 }
+
+#[test]
+fn values_excel_cant_hold_are_written_as_text_with_a_warning() {
+    use arrow::array::Float64Array;
+    let dec = Decimal128Array::from(vec![
+        Some(999_999_999_999_999_999_999_999_999_999i128),
+        Some(15_000_000_000i128),
+    ])
+    .with_precision_and_scale(30, 10)
+    .unwrap();
+    let b = RecordBatch::try_from_iter([
+        ("big", Arc::new(Int64Array::from(vec![i64::MAX, 42])) as ArrayRef),
+        ("dec", Arc::new(dec) as ArrayRef),
+        // 0001-01-01, and 2026-01-25.
+        (
+            "d",
+            Arc::new(Date32Array::from(vec![-719_162, 20478])) as ArrayRef,
+        ),
+        ("f", Arc::new(Float64Array::from(vec![f64::MAX, 1.5])) as ArrayRef),
+    ])
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.xlsx");
+    let log: LogSink = Arc::new(|_, _| {});
+    let mut p = PluginProcess::start(bin(), log).unwrap();
+    p.write_begin(
+        path.to_str().unwrap(),
+        "xlsx",
+        Default::default(),
+        vec![meta("S", None, None)],
+        None,
+    )
+    .unwrap();
+    p.write_result_set(&b.schema(), vec![b]).unwrap();
+    let (_, warnings) = p.write_finish_with_warnings().unwrap();
+    let rows = sheet(&path, "S");
+    assert_eq!(rows[1][0], Data::String("9223372036854775807".into()));
+    assert_eq!(rows[2][0], Data::Float(42.0));
+    assert_eq!(rows[1][1], Data::String("99999999999999999999.9999999999".into()));
+    assert_eq!(rows[2][1], Data::Float(1.5));
+    assert_eq!(rows[1][2], Data::String("0001-01-01".into()));
+    assert!(matches!(rows[2][2], Data::DateTime(_)), "{:?}", rows[2][2]);
+    assert!(
+        matches!(&rows[1][3], Data::String(s) if s.starts_with("1.7976931348623157")),
+        "{:?}",
+        rows[1][3]
+    );
+    assert_eq!(rows[2][3], Data::Float(1.5));
+    assert_eq!(warnings.len(), 4, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("column `big`: 1 value(s) have more than Excel's 15 significant digits"),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.starts_with("column `d`: 1 date(s) before 1900-03-01")),
+        "{warnings:?}"
+    );
+}

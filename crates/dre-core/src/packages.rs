@@ -234,19 +234,38 @@ pub fn sync(root: &Path, install: bool, mut log: impl FnMut(&str)) -> Result<(),
     if errors.is_empty() { Ok(()) } else { Err(errors) }
 }
 
+const GIT_MISSING: &str =
+    "git isn't installed (needed for git packages); install git, or use a `local:` package";
+
+fn git_works() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success() && !o.stdout.is_empty())
+}
+
 fn git(args: &[&str], cwd: Option<&Path>) -> Result<String, String> {
     let mut c = Command::new("git");
     c.args(args);
     if let Some(d) = cwd {
         c.current_dir(d);
     }
-    let out = c.output().map_err(|e| format!("can't run git: {e}"))?;
+    let out = c.output().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => GIT_MISSING.to_string(),
+        _ => format!("can't run git: {e}"),
+    })?;
     if !out.status.success() {
-        return Err(format!(
-            "git {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        // A stub git (macOS without the command line tools) fails without saying why.
+        if stderr.is_empty() && !git_works() {
+            return Err(GIT_MISSING.to_string());
+        }
+        let reason = if stderr.is_empty() {
+            format!("exited with {}", out.status)
+        } else {
+            stderr
+        };
+        return Err(format!("git {}: {reason}", args.join(" ")));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
@@ -275,7 +294,9 @@ fn install_git(root: &Path, url: &str, checkout: &str) -> Result<(String, String
 
 /// The last path segment of a URL or path, for a readable temp folder name.
 fn base_name(url: &str) -> String {
-    url.trim_end_matches(['/', '\\'])
+    let url = url.trim_end_matches(['/', '\\']);
+    url.strip_suffix(".git")
+        .unwrap_or(url)
         .rsplit(['/', '\\', ':'])
         .next()
         .unwrap_or("package")

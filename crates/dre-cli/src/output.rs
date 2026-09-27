@@ -140,6 +140,17 @@ impl Printer {
         self.inner.lock().unwrap().line(tone, verb, text, Level::Info);
     }
 
+    /// Like [`Printer::line`], shown only with `-v`, and only as text: JSON events carry the
+    /// same facts in their own fields.
+    pub fn detail(&self, tone: Tone, verb: &str, text: &str) {
+        let mut i = self.inner.lock().unwrap();
+        if i.format == LogFormat::Json {
+            i.file_log("DEBUG", &format!("{verb} {text}"));
+            return;
+        }
+        i.line(tone, verb, text, Level::Debug);
+    }
+
     pub fn error(&self, msg: &str) {
         let mut i = self.inner.lock().unwrap();
         i.file_log("ERROR", msg);
@@ -581,6 +592,11 @@ impl Ui for Printer {
         let p = self.clone();
         Arc::new(move |plugin, line| {
             let mut i = p.inner.lock().unwrap();
+            // `info: ...` lines are for the person (e.g. waiting for a warehouse to start).
+            if let Some(msg) = line.strip_prefix("info: ") {
+                i.line(Tone::Note, "Waiting", &format!("[{plugin}] {msg}"), Level::Info);
+                return;
+            }
             i.file_log("DEBUG", &format!("[{plugin}] {line}"));
             if !i.shows(Level::Debug) {
                 return;

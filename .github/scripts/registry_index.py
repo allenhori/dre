@@ -34,6 +34,7 @@ DESCRIPTIONS = {
     "destination/email": "Email, with the output attached",
     "destination/slack": "A Slack channel",
     "destination/databricks_volumes": "Databricks Unity Catalog Volumes",
+    "destination/databricks_workspace": "Databricks workspace files",
 }
 
 

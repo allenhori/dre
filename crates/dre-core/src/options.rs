@@ -29,7 +29,7 @@ fn allowed(format: &str) -> &'static [&'static str] {
             "null",
             "byte_order_mark",
         ],
-        "fixed_width" => &["columns", "line_ending", "encoding"],
+        "fixed_width" => &["columns", "line_ending", "encoding", "line_breaks"],
         _ => &[],
     }
 }
@@ -117,6 +117,11 @@ pub fn validate(format: &str, options: &Map<String, Value>) -> Vec<String> {
             encoding(&mut errs);
         }
         "fixed_width" => {
+            if let Some(v) = get("line_breaks")
+                && !matches!(v.as_str(), Some("error" | "replace"))
+            {
+                errs.push("`line_breaks` must be `error` or `replace`".to_string());
+            }
             line_ending(&mut errs);
             encoding(&mut errs);
             match get("columns").and_then(Value::as_array) {

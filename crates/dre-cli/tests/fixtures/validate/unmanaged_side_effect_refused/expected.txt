@@ -2,4 +2,5 @@ exit: 1
 warning[unmanaged-report]: reports/scratch/cleanup.sql: `cleanup` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
 error[unmanaged-side-effect]: reports/scratch/cleanup.sql:3: unmanaged report `cleanup` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `delete from accounts where closed`; rewrite the statement, or give the report a YAML to declare it
 error[unmanaged-side-effect]: reports/scratch/cleanup.sql:4: unmanaged report `cleanup` may only run SELECT/WITH or CREATE [OR REPLACE] TEMP|TEMPORARY TABLE|VIEW, but found `create table keep as select 1`; rewrite the statement, or give the report a YAML to declare it
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 2 errors, 1 warning

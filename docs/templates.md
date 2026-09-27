@@ -65,7 +65,23 @@ calls it, so `dre compile` connects for reports that use it. Packages build on i
 `dre run` renders each query just before running it, so a template sees what the queries before
 it made. `dre compile`, `--dry-run` and `dre validate` run nothing, so there a temp table made by
 an earlier query doesn't exist yet: `columns()` or `run_query()` on it fails there, and works in
-`dre run`.
+`dre run`. `dre validate` reports such a report as a warning (it can only be checked by
+`dre run`) and still checks everything else.
+
+## String literals and Databricks
+
+Databricks SQL doesn't read `''` inside a string literal as an escaped quote: `'O''Brien'` is two
+adjacent literals that Databricks joins into `OBrien`. It reads backslashes as escapes
+instead: `'O\'Brien'`. Postgres and DuckDB are the other way round. A macro that writes values
+into SQL as literals should `dispatch()` a Databricks variant:
+
+```sql
+{% macro literal(v) %}{{ dispatch('literal', 'my_macros')(v) }}{% endmacro %}
+{% macro default__literal(v) %}'{{ v | replace("'", "''") }}'{% endmacro %}
+{% macro databricks__literal(v) %}'{{ v | replace("\\", "\\\\") | replace("'", "\\'") }}'{% endmacro %}
+```
+
+Lookups (`ref('countries')`) are inlined in a form every engine reads the same way.
 
 ## Dates and times
 

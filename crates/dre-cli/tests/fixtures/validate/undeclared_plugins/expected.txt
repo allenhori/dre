@@ -2,4 +2,5 @@ exit: 1
 error[undeclared-plugin]: $CASE/profiles/profiles.yml:2: `type: duckdb` used by source profile `local_dev`, but `duckdb` isn't declared as a required source plugin anywhere in the project — add it under `sources:`
 error[undeclared-plugin]: $CASE/profiles/profiles.yml:8: `type: gcs` used by destination profile `reports_gcs`, but `gcs` isn't declared as a required destination plugin anywhere in the project — add it under `destinations:`
 error[undeclared-plugin]: reports/ops/daily/daily.yml: format `csv` is used by report `daily` (csv is the built-in default output), but isn't declared anywhere in the project — add it under `formats:`
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 3 errors, 0 warnings

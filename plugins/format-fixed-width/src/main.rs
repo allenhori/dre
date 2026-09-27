@@ -1,9 +1,11 @@
 //! DRE format plugin `fixed_width`: each column at a fixed width, no header, no delimiter.
 //!
 //! Options: `columns` (required): `{name, width, align (left|right), pad, truncate}`, where
-//! `name` is a result-set column; `line_ending` (`"\r\n"`); `encoding` (`utf-8`). The pad
-//! defaults to a space when left-aligned and `0` when right-aligned. Header and trailer records
-//! are format-pack territory.
+//! `name` is a result-set column; `line_ending` (`"\r\n"`); `encoding` (`utf-8`);
+//! `line_breaks` (`error`|`replace`): a value with a line break would split its record, so it's
+//! an error unless `replace` turns each break into a space. Tabs and other characters are
+//! written as they are. The pad defaults to a space when left-aligned and `0` when
+//! right-aligned. Header and trailer records are format-pack territory.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -112,6 +114,11 @@ impl Format for FixedWidth {
         let enc = encoding_rs::Encoding::for_label(label.as_bytes())
             .filter(|e| e.output_encoding() == *e)
             .ok_or_else(|| format!("unsupported `encoding` `{label}`"))?;
+        let replace_breaks = match req.options.get("line_breaks").and_then(Value::as_str) {
+            None | Some("error") => false,
+            Some("replace") => true,
+            Some(o) => return Err(format!("`line_breaks` must be `error` or `replace`, not `{o}`").into()),
+        };
         let mut rs = sets.next_set()?.expect("one result set");
         let idx: Vec<usize> = cols
             .iter()
@@ -129,7 +136,9 @@ impl Format for FixedWidth {
             .collect::<Result<_>>()?;
         let file = File::create(&req.path).map_err(|e| format!("can't create {}: {e}", req.path))?;
         let mut w = BufWriter::new(file);
-        let opts = FormatOptions::default().with_timestamp_format(Some("%Y-%m-%d %H:%M:%S"));
+        let opts = FormatOptions::default()
+            .with_timestamp_format(Some("%Y-%m-%d %H:%M:%S"))
+            .with_timestamp_tz_format(Some("%Y-%m-%d %H:%M:%S%:z"));
         let mut row = 0u64;
         while let Some(batch) = rs.next_batch()? {
             let fmts: Vec<ArrayFormatter<'_>> = idx
@@ -144,6 +153,17 @@ impl Format for FixedWidth {
                         String::new()
                     } else {
                         fmts[k].value(r).to_string()
+                    };
+                    let v = if !v.contains(['\r', '\n']) {
+                        v
+                    } else if replace_breaks {
+                        v.replace("\r\n", " ").replace(['\r', '\n'], " ")
+                    } else {
+                        return Err(format!(
+                            "row {row}, column `{}`: the value contains a line break, which would split the record (set `line_breaks: replace` to write a space instead)",
+                            c.name
+                        )
+                        .into());
                     };
                     line.push_str(&c.cell(&v, row)?);
                 }

@@ -1,6 +1,11 @@
 exit: 0
 {
   "ok": true,
+  "profiles": {
+    "path": "$CASE/profiles/profiles.yml",
+    "exists": true,
+    "found_by": "--profiles-dir"
+  },
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],

@@ -1,0 +1,10 @@
+sources:
+  local_dev:
+    target: dev
+    targets:
+      dev: &duck
+        type: duckdb
+        path: ./dev.duckdb
+      prod:
+        <<: *duck
+        path: ./prod.duckdb

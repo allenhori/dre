@@ -199,3 +199,19 @@ fn a_git_package_that_isnt_installed_asks_for_dre_deps() {
         .failed()
         .says("the package from https://example.invalid/x.git isn't installed; run `dre deps`");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_git_package_without_git_says_git_is_missing() {
+    let p = project(&[REPORT[0], REPORT[1]]);
+    p.write(
+        "dependencies.yml",
+        &format!("{DEPS}packages:\n  - git: https://example.invalid/acme/dre_utils.git\n    revision: v1\n"),
+    );
+    // A PATH with no git on it.
+    let empty = p.root().join("../empty-path");
+    std::fs::create_dir_all(&empty).unwrap();
+    p.dre_env("deps", &[], &[("PATH", &empty.to_string_lossy())])
+        .failed()
+        .says("git isn't installed (needed for git packages)");
+}

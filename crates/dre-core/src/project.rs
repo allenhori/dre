@@ -91,7 +91,7 @@ const SET_ENTRY_KEYS: &[&str] = &[
     "schedule",
 ];
 const QUERY_ENTRY_KEYS: &[&str] = &["query", "tab", "tab_name", "anchor", "header"];
-const OUTPUT_SHARED_KEYS: &[&str] = &["format", "destination", "template"];
+const OUTPUT_SHARED_KEYS: &[&str] = &["format", "destination", "template", "extension"];
 
 // ---------------------------------------------------------------------------------------------
 // The resolved project: the stable contract every later consumer uses.
@@ -242,6 +242,10 @@ pub struct Output {
     pub destinations: Vec<Destination>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template: Option<Template>,
+    /// `extension:` replaces the format's file extension in the default file name
+    /// (`<report>.<extension>`); `Some("")` means no extension. `None`: the format's own.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extension: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -369,7 +373,7 @@ pub struct ScheduleEntry {
 
 #[derive(Debug, Clone, Default)]
 pub struct LoadOptions {
-    /// `--profiles-dir`; falls back to `DRE_PROFILES_DIR`, then `~/.dre`.
+    /// `--profiles-dir`; falls back to `DRE_PROFILES_DIR`, the project directory, then `~/.dre`.
     pub profiles_dir: Option<PathBuf>,
     /// `--target`, checked against referenced source profiles.
     pub target: Option<String>,
@@ -463,8 +467,9 @@ impl Loader {
         project.packages = packages::resolve(&self.root, &declared, &mut self.diags);
         self.check_macro_namespaces(&project);
 
-        let profiles_dir = crate::profiles::profiles_dir(self.opts.profiles_dir.as_deref());
-        project.profiles = Profiles::load(&profiles_dir, &mut self.diags);
+        let (profiles_dir, found_by) =
+            crate::profiles::locate(self.opts.profiles_dir.as_deref(), Some(&self.root));
+        project.profiles = Profiles::load(&profiles_dir, found_by, &mut self.diags);
 
         // Folder config needs the folder list to warn about folders that don't exist.
         let folder_cfg = self.parse_folder_config(&pyaml, &project.folders);
@@ -988,7 +993,12 @@ impl Loader {
                 continue;
             }
             match ext {
-                "yml" | "yaml" if rel != Path::new(PROJECT_FILE) => d.yaml.push(e.path().to_path_buf()),
+                // A profiles.yml at the root holds connections, not project config.
+                "yml" | "yaml"
+                    if rel != Path::new(PROJECT_FILE) && rel != Path::new(crate::profiles::PROFILES_FILE) =>
+                {
+                    d.yaml.push(e.path().to_path_buf())
+                }
                 "sql" if rel.starts_with(MACROS_DIR) => d.macros.push(rel),
                 "sql" if in_reports => d.sql.push(rel),
                 _ => {}
@@ -2130,11 +2140,47 @@ impl Loader {
                 self.typed_template(t, ctx, &file, queries)
             }
         };
+        let extension = match m.get("extension") {
+            None => None,
+            Some(Value::Null) | Some(Value::Bool(false)) => Some(String::new()),
+            Some(Value::String(e)) => {
+                let e = e.strip_prefix('.').unwrap_or(e);
+                if e.contains(['/', '\\']) || e.chars().any(char::is_whitespace) {
+                    self.diags.error(
+                        "invalid-output-option",
+                        file.clone(),
+                        None,
+                        format!(
+                            "{ctx}: `extension` must be a file extension like `aba` (no path, no spaces)"
+                        ),
+                    );
+                }
+                Some(e.to_string())
+            }
+            Some(_) => {
+                self.diags.error(
+                    "invalid-output-option",
+                    file.clone(),
+                    None,
+                    format!("{ctx}: `extension` must be a string (`aba`), or `\"\"`/`false` for none"),
+                );
+                None
+            }
+        };
+        if extension.is_some() && format == "xlsx" {
+            self.diags.error(
+                "invalid-output-option",
+                file.clone(),
+                None,
+                format!("{ctx}: `extension` doesn't apply to xlsx (Excel only opens .xlsx workbooks)"),
+            );
+        }
         Output {
             format,
             options: opts,
             destinations,
             template,
+            extension,
         }
     }
 
@@ -2762,10 +2808,18 @@ impl Loader {
                 "profiles-missing",
                 None,
                 None,
-                format!(
-                    "the project references profiles, but no profiles.yml was found at {}",
-                    profiles.path.display()
-                ),
+                if profiles.found_by == "~/.dre" {
+                    format!(
+                        "the project references profiles, but no profiles.yml was found in the project directory or at {}",
+                        profiles.path.display()
+                    )
+                } else {
+                    format!(
+                        "the project references profiles, but no profiles.yml was found at {} (from {})",
+                        profiles.path.display(),
+                        profiles.found_by
+                    )
+                },
             );
             return;
         }
@@ -3487,11 +3541,14 @@ fn is_one_of(k: &Value, keys: &[&str]) -> bool {
     k.as_str().is_some_and(|k| keys.contains(&k))
 }
 
+/// Every entry is a Set: a map of `profile`/`vars`, which may be empty (`plain: {}`, the
+/// report's defaults) or left blank.
 fn is_set_registry(m: &Mapping) -> bool {
-    !m.is_empty()
+    m.values().any(Value::is_mapping)
         && m.values().all(|v| {
-            v.as_mapping()
-                .is_some_and(|e| !e.is_empty() && e.keys().all(|k| is_one_of(k, &["profile", "vars"])))
+            v.is_null()
+                || v.as_mapping()
+                    .is_some_and(|e| e.keys().all(|k| is_one_of(k, &["profile", "vars"])))
         })
 }
 

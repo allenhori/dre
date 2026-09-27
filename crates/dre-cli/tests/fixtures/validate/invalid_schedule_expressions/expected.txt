@@ -16,4 +16,5 @@ error[duplicate-schedule-name]: schedules.yml:9: schedule `a_hourly` is already 
 error[invalid-schedule]: schedules.yml:10: schedule name `7days` must be letters, digits and `_`, not starting with a digit
 error[invalid-schedule]: schedules.yml:11: schedule `vars_list`: `vars` must be a map
 error[invalid-schedule]: schedules.yml:12: schedule `no_target` needs `report:` (optionally with `set:`) or `select:`
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
 Validation failed: 17 errors, 0 warnings

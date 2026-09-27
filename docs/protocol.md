@@ -32,7 +32,7 @@ Core looks in the project's `dre_deps/plugins` (or `DRE_PLUGINS_DIR`), in two la
 |---|---|---|
 | stdin | core → plugin | frames |
 | stdout | plugin → core | frames, and nothing else |
-| stderr | plugin → core | free-form UTF-8 log lines, shown in core's log and quoted in errors |
+| stderr | plugin → core | free-form UTF-8 log lines, shown in core's log and quoted in errors; a line starting `info: ` is shown to the person without `-v` (e.g. while waiting for a warehouse to start) |
 
 A plugin must never write anything but frames to stdout.
 
@@ -191,8 +191,15 @@ data frames (the first carries the schema), then `{"type":"result_set_end"}`. Af
 result set, core sends `{"type":"finish"}`. The plugin writes the file(s) and replies:
 
 ```json
-{"type": "written", "files": ["/…/monthly.xlsx"]}
+{"type": "written", "files": ["/…/monthly.xlsx"], "warnings": ["…"]}
 ```
+
+`warnings` (optional) are shown to the person, e.g. a value the format had to write as text.
+
+If the write fails part-way, the plugin replies `{"type": "error", ...}` at once, without waiting
+for `finish`, and then reads (and discards) the rest of the stream up to `finish`, sending
+nothing more. Core stops sending data when it sees the error, so a large result isn't streamed
+into a plugin that gave up. That error is the request's only reply.
 
 `options` are the report's resolved format options (see the YAML schema). `template` is present
 only for an xlsx template output: `{"file": "<absolute path>", "bindings": [...],

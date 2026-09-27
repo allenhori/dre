@@ -114,3 +114,70 @@ fn xlsx_template() {
         Some("SUM(C5:C5)")
     );
 }
+
+#[test]
+fn an_unquoted_null_option_is_the_null_marker() {
+    for format in ["csv", "delimited"] {
+        let p = project(&format!(
+            "queries: [accounts]\noutput: {{format: {format}, null: \"NULL\"}}\n"
+        ));
+        p.write("reports/fin/r/accounts.sql", "select 1 as a, null as b");
+        p.dre("run", &["r"]).ok();
+        let ext = if format == "csv" { "csv" } else { "txt" };
+        let out = p.read(&format!("target/run/r/default/r.{ext}"));
+        assert!(
+            out.contains("1,NULL") || out.contains("1\tNULL") || out.contains("1|NULL"),
+            "{format}: {out}"
+        );
+    }
+}
+
+#[test]
+fn fixed_width_refuses_line_breaks() {
+    let p = project(
+        "queries: [accounts]\noutput:\n  format: fixed_width\n  columns:\n    - {name: a, width: 20}\n",
+    );
+    p.write(
+        "reports/fin/r/accounts.sql",
+        "select 'line1' || chr(10) || 'line2' as a",
+    );
+    p.dre("run", &["r"])
+        .failed()
+        .says("row 1, column `a`")
+        .says("line break");
+}
+
+#[test]
+fn fixed_width_can_replace_line_breaks() {
+    let p = project(
+        "queries: [accounts]\noutput:\n  format: fixed_width\n  line_breaks: replace\n  line_ending: \"\\n\"\n  columns:\n    - {name: a, width: 12}\n",
+    );
+    p.write(
+        "reports/fin/r/accounts.sql",
+        "select 'l1' || chr(13) || chr(10) || 'l2' || chr(10) || 'x' as a",
+    );
+    p.dre("run", &["r"]).ok();
+    assert_eq!(p.read("target/run/r/default/r.txt"), "l1 l2 x     \n");
+}
+
+#[test]
+fn extension_override_and_no_extension() {
+    let p = project(
+        "queries: [accounts]\noutput:\n  format: fixed_width\n  extension: aba\n  columns:\n    - {name: account_id, width: 3, align: right}\n",
+    );
+    p.dre("run", &["r"]).ok();
+    assert_eq!(p.read("target/run/r/default/r.aba"), "001\r\n002\r\n003\r\n");
+
+    let p = project("queries: [total]\noutput: {format: csv, extension: \"\"}\n");
+    p.dre("run", &["r"]).ok();
+    assert_eq!(p.read("target/run/r/default/r"), "n\r\n3\r\n");
+
+    let p = project("queries: [total]\noutput: {format: delimited, extension: .dat}\n");
+    p.dre("run", &["r"]).ok();
+    assert!(p.path("target/run/r/default/r.dat").is_file());
+
+    let p = project("queries: [total]\noutput: {format: xlsx, extension: xls}\n");
+    p.dre("validate", &[])
+        .failed()
+        .says("`extension` doesn't apply to xlsx");
+}

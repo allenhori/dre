@@ -48,6 +48,14 @@ fn the_go_databricks_volumes_destination_conforms_to_the_protocol() {
 }
 
 #[test]
+fn the_go_databricks_workspace_destination_conforms_to_the_protocol() {
+    let Some(bin) = go_plugin("dre-destination-databricks_workspace") else {
+        return;
+    };
+    conformance::assert_conforms(&bin);
+}
+
+#[test]
 fn the_go_databricks_source_explains_a_missing_field() {
     let Some(bin) = go_plugin("dre-source-databricks") else {
         return;

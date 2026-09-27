@@ -249,3 +249,44 @@ fn an_ambiguous_selector_gives_the_same_error_as_validate() {
     v.failed();
     assert!(flat(&v.stdout).contains(&flat(expected)), "{}", v.stdout);
 }
+
+#[test]
+fn an_empty_set_is_a_set_and_keeps_the_others() {
+    let p = project(&[
+        (
+            "reports/ops/one/one.yml",
+            "queries: [oq]\nsets: [plain, client_a]\n",
+        ),
+        ("reports/ops/one/oq.sql", "select 1 as n\n"),
+    ]);
+    p.write(
+        "sets.yml",
+        "plain: {}\nblank:\nclient_a: {profile: warehouse, vars: {client: client_a}}\n",
+    );
+    let r = p.dre("run", &["one", "--set", "all"]);
+    r.ok();
+    assert!(!r.stdout.contains("not recognised"), "{}", r.stdout);
+    assert!(p.path("target/run/one/plain/one.csv").exists());
+    assert!(p.path("target/run/one/client_a/one.csv").exists());
+}
+
+#[test]
+fn target_warnings_only_for_what_the_run_uses() {
+    // `other` has no `prod` target but no selected report uses it: no warning on run.
+    let p = project(&[
+        ("reports/ops/one/one.yml", "queries: [oq]\n"),
+        ("reports/ops/one/oq.sql", "select name from env\n"),
+        ("reports/ops/two/two.yml", "queries: [tq]\nprofile: other\n"),
+        ("reports/ops/two/tq.sql", "select 1 as n\n"),
+    ]);
+    let profiles = p.dir.path().join("profiles/profiles.yml");
+    let text = std::fs::read_to_string(&profiles).unwrap();
+    std::fs::write(
+        &profiles,
+        text.replace("destinations:", "  other:\n    target: dev\n    targets:\n      dev: {type: duckdb, path: dev.duckdb}\ndestinations:"),
+    )
+    .unwrap();
+    let r = p.dre("run", &["one", "--target", "prod"]);
+    r.ok();
+    assert!(!r.stdout.contains("has no `prod` target"), "{}", r.stdout);
+}

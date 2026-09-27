@@ -57,6 +57,7 @@ jobs:
       DRE_TEST_GCS_ENDPOINT: http://localhost:4443
       DRE_TEST_SFTP: localhost:2222
       DRE_TEST_FTP: 127.0.0.1:2121
+      DRE_TEST_FTPS: 127.0.0.1:2990
       DRE_TEST_SMTP: localhost:1025
       DRE_TEST_MAILPIT_API: http://localhost:8025
     steps:
@@ -73,6 +74,16 @@ jobs:
             azurite-blob --blobHost 0.0.0.0 --skipApiVersionCheck
           docker run -d -p 2121:21 -p 30000-30009:30000-30009 -e USERS="dre|dre-pass" \
             -e ADDRESS=127.0.0.1 -e MIN_PORT=30000 -e MAX_PORT=30009 delfer/alpine-ftp-server
+          # Explicit FTPS with vsftpd's defaults, which require TLS session reuse on data
+          # connections, and a self-signed certificate.
+          mkdir -p "$RUNNER_TEMP/ftps"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=localhost" \
+            -keyout "$RUNNER_TEMP/ftps/server.key" -out "$RUNNER_TEMP/ftps/server.crt" 2>/dev/null
+          chmod 644 "$RUNNER_TEMP/ftps/server.key"
+          docker run -d -p 2990:21 -p 30010-30019:30010-30019 -e USERS="dre|dre-pass" \
+            -e ADDRESS=127.0.0.1 -e MIN_PORT=30010 -e MAX_PORT=30019 \
+            -e TLS_CERT=/certs/server.crt -e TLS_KEY=/certs/server.key \
+            -v "$RUNNER_TEMP/ftps:/certs:ro" delfer/alpine-ftp-server
           # Wait until each emulator answers, rather than a fixed sleep. A bare TCP connect isn't
           # enough: Docker's port proxy accepts on the host before the container listens, so read
           # each server's greeting (or make an HTTP request), and fail with its logs if it never
@@ -80,11 +91,11 @@ jobs:
           ready() {
             case $1 in
               2222) timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2222; read -r l <&3; [[ $l == SSH-* ]]' ;;
-              2121) timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/2121; read -r l <&3; [[ $l == 220* ]]' ;;
+              2121|2990) timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/$1; read -r l <&3; [[ \$l == 220* ]]" ;;
               *) curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$1/" ;;
             esac
           }
-          for port in 4443 2222 10000 2121; do
+          for port in 4443 2222 10000 2121 2990; do
             for i in $(seq 60); do
               ready "$port" 2>/dev/null && break
               if [ "$i" = 60 ]; then
@@ -127,6 +138,7 @@ jobs:
           mkdir -p "$dir"
           (cd go/databricks && go build -o "$dir/dre-source-databricks$ext" .)
           cp "$dir/dre-source-databricks$ext" "$dir/dre-destination-databricks_volumes$ext"
+          cp "$dir/dre-source-databricks$ext" "$dir/dre-destination-databricks_workspace$ext"
           echo "DRE_TEST_GO_PLUGINS=$dir" >> "$GITHUB_ENV"
       - run: cargo build --workspace --bins
       # Run every test binary even after a failure, so one failure can't hide others.

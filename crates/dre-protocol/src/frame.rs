@@ -14,10 +14,19 @@ pub const ARROW_TAG: u8 = b'A';
 /// Largest frame body accepted: 1 GiB. Larger result sets are split across batches.
 pub const MAX_FRAME: u32 = 1 << 30;
 
-#[derive(Debug)]
 pub enum Frame {
     Json(serde_json::Value),
     Arrow(Vec<u8>),
+}
+
+/// Never the raw bytes of an Arrow frame: they end up in error messages.
+impl std::fmt::Debug for Frame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Frame::Json(v) => write!(f, "Json({v})"),
+            Frame::Arrow(b) => write!(f, "Arrow frame ({} bytes)", b.len()),
+        }
+    }
 }
 
 #[derive(Debug)]

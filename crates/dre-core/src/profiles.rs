@@ -88,6 +88,8 @@ pub struct Profile {
 pub struct Profiles {
     /// Where DRE looked for the file.
     pub path: PathBuf,
+    /// Why that directory: `--profiles-dir`, `DRE_PROFILES_DIR`, `the project directory` or `~/.dre`.
+    pub found_by: &'static str,
     /// `None` when the file doesn't exist; loading problems are reported when it's needed.
     pub file: Option<YamlFile>,
     pub sources: BTreeMap<String, Profile>,
@@ -95,21 +97,33 @@ pub struct Profiles {
 }
 
 /// Resolve the profiles directory: `--profiles-dir` > `DRE_PROFILES_DIR` > `~/.dre`.
+/// `dre init` writes here; projects look in their own directory first (see [`locate`]).
 pub fn profiles_dir(cli: Option<&Path>) -> PathBuf {
+    locate(cli, None).0
+}
+
+/// Find the profiles directory for a project, with the reason it was chosen:
+/// `--profiles-dir` > `DRE_PROFILES_DIR` > the project directory (when it holds a
+/// profiles.yml) > `~/.dre`. With the default `--project-dir .` this is dbt's order.
+pub fn locate(cli: Option<&Path>, project: Option<&Path>) -> (PathBuf, &'static str) {
     if let Some(p) = cli {
-        return p.to_path_buf();
+        return (p.to_path_buf(), "--profiles-dir");
     }
     if let Some(p) = std::env::var_os("DRE_PROFILES_DIR").filter(|p| !p.is_empty()) {
-        return PathBuf::from(p);
+        return (PathBuf::from(p), "DRE_PROFILES_DIR");
     }
-    crate::dre_home()
+    if let Some(p) = project.filter(|p| p.join(PROFILES_FILE).is_file()) {
+        return (p.to_path_buf(), "the project directory");
+    }
+    (crate::dre_home(), "~/.dre")
 }
 
 impl Profiles {
-    pub fn load(dir: &Path, diags: &mut Diagnostics) -> Profiles {
+    pub fn load(dir: &Path, found_by: &'static str, diags: &mut Diagnostics) -> Profiles {
         let path = crate::slash(&dir.join(PROFILES_FILE));
         let mut out = Profiles {
             path: path.clone(),
+            found_by,
             ..Default::default()
         };
         if !path.is_file() {
