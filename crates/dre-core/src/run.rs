@@ -1063,14 +1063,14 @@ impl<'a> BindingRun<'a> {
                 for b in reader {
                     let b = b.map_err(|e| e.to_string())?;
                     any = true;
-                    p.send_batch(&b).map_err(|e| e.to_string())?;
+                    p.send_batch(&b).map_err(|e| format!("{} format: {e}", out.format))?;
                 }
                 if !any {
                     p.send_batch(&RecordBatch::new_empty(schema))
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| format!("{} format: {e}", out.format))?;
                 }
                 p.send(&dre_protocol::msg::Request::ResultSetEnd {})
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| format!("{} format: {e}", out.format))?;
             }
             let files = p
                 .write_finish()

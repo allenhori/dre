@@ -147,10 +147,18 @@ impl std::error::Error for HostError {}
 pub type Result<T> = std::result::Result<T, HostError>;
 
 /// A message from the plugin.
-#[derive(Debug)]
 pub enum Incoming {
     Json(Response),
     Arrow(Vec<u8>),
+}
+
+impl std::fmt::Debug for Incoming {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Incoming::Json(r) => write!(f, "Json({r:?})"),
+            Incoming::Arrow(b) => write!(f, "Arrow frame ({} bytes)", b.len()),
+        }
+    }
 }
 
 /// The outcome of a source `execute`.
@@ -170,6 +178,8 @@ pub struct PluginProcess {
     /// Forwards stderr; joined on close/drop so no log line is lost when the plugin exits.
     stderr_thread: Option<std::thread::JoinHandle<()>>,
     info: Option<PluginInfo>,
+    /// A reply that arrived while core was still sending (a format failing mid-stream).
+    early: Option<std::result::Result<Frame, FrameError>>,
 }
 
 impl PluginProcess {
@@ -282,6 +292,7 @@ impl PluginProcess {
             stderr,
             stderr_thread: Some(stderr_thread),
             info: None,
+            early: None,
         })
     }
 
@@ -394,6 +405,21 @@ impl PluginProcess {
     }
 
     pub fn send_batch(&mut self, batch: &RecordBatch) -> Result<()> {
+        // A plugin that fails part-way replies before reading the rest: stop sending and
+        // surface its error rather than streaming everything into a plugin that gave up.
+        if self.early.is_none()
+            && let Ok(f) = self.rx.try_recv()
+        {
+            self.early = Some(f);
+        }
+        if let Some(Ok(Frame::Json(v))) = &self.early
+            && let Ok(Response::Error { message }) = serde_json::from_value::<Response>(v.clone())
+        {
+            return Err(HostError::Plugin {
+                plugin: self.label.clone(),
+                message,
+            });
+        }
         let ipc = frame::encode_batch(batch).map_err(|e| HostError::Arrow {
             plugin: self.label.clone(),
             message: e.to_string(),
@@ -422,6 +448,7 @@ impl PluginProcess {
     /// Receive the next message. `timeout` of `None` waits as long as the plugin is alive.
     pub fn recv(&mut self, timeout: Option<Duration>, waiting_for: &'static str) -> Result<Incoming> {
         let got = match timeout {
+            _ if self.early.is_some() => self.early.take(),
             Some(t) => match self.rx.recv_timeout(t) {
                 Ok(f) => Some(f),
                 Err(RecvTimeoutError::Timeout) => {
