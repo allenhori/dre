@@ -14,6 +14,11 @@ object_store = { version = "0.14", features = ["aws", "gcp", "azure"] }
 tokio = { version = "1", features = ["rt", "fs", "io-util"] }
 bytes = "1"
 ureq = "3"
+# AWS's own credential chain (profiles, SSO, credential_process, web identity, ECS/EC2), which
+# object_store's `from_env` doesn't cover.
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-credential-types = "1"
+async-trait = "0.1"
 
 [dev-dependencies]
 tempfile.workspace = true

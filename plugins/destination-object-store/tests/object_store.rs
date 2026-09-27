@@ -210,3 +210,67 @@ fn a_path_for_another_store_is_rejected() {
     assert!(err.contains("isn't a s3:// path"), "{err}");
     let _unused: Map<String, Value> = Map::new();
 }
+
+/// `deliver` with the plugin's environment replaced for the AWS variables.
+fn deliver_env(remote: &str, conn: Value, env: &[(&str, &str)]) -> Result<String, String> {
+    let dir = tempfile::tempdir().unwrap();
+    let local = dir.path().join("report.csv");
+    std::fs::write(&local, b"a\r\n1\r\n").unwrap();
+    let log: LogSink = Arc::new(|_, _| {});
+    let mut p = PluginProcess::spawn_env(bin("s3"), log, env).unwrap();
+    p.handshake((dre_protocol::MIN_VERSION, dre_protocol::MAX_VERSION), std::time::Duration::from_secs(10))
+        .unwrap();
+    let Value::Object(c) = conn else { panic!() };
+    p.deliver(local.to_str().unwrap(), Some(remote), c)
+        .map_err(|e| e.to_string())
+}
+
+/// Every AWS variable that could find credentials, pointed away from the developer's own.
+fn no_aws(dir: &Path) -> Vec<(String, String)> {
+    let missing = dir.join("missing").to_string_lossy().to_string();
+    vec![
+        ("AWS_CONFIG_FILE".into(), missing.clone()),
+        ("AWS_SHARED_CREDENTIALS_FILE".into(), missing),
+        ("AWS_EC2_METADATA_DISABLED".into(), "true".into()),
+        ("AWS_ACCESS_KEY_ID".into(), String::new()),
+        ("AWS_SECRET_ACCESS_KEY".into(), String::new()),
+        ("AWS_PROFILE".into(), String::new()),
+        ("AWS_WEB_IDENTITY_TOKEN_FILE".into(), String::new()),
+        ("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI".into(), String::new()),
+        ("AWS_CONTAINER_CREDENTIALS_FULL_URI".into(), String::new()),
+        ("HOME".into(), dir.to_string_lossy().to_string()),
+    ]
+}
+
+#[test]
+fn s3_without_any_credentials_fails_at_once_saying_what_it_tried() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = no_aws(dir.path());
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let start = std::time::Instant::now();
+    let err = deliver_env("s3://b/x.csv", json!({"region": "us-east-1"}), &env).unwrap_err();
+    assert!(err.contains("no AWS credentials found (tried: "), "{err}");
+    assert!(start.elapsed() < std::time::Duration::from_secs(20), "{:?}", start.elapsed());
+}
+
+#[test]
+fn s3_reads_a_named_profile_from_the_shared_files() {
+    let Ok(endpoint) = std::env::var("DRE_TEST_S3_ENDPOINT") else {
+        eprintln!("skipped: set DRE_TEST_S3_ENDPOINT");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let creds = dir.path().join("credentials");
+    std::fs::write(&creds, "[reports]\naws_access_key_id = test\naws_secret_access_key = test\n").unwrap();
+    let mut env = no_aws(dir.path());
+    env.retain(|(k, _)| k != "AWS_SHARED_CREDENTIALS_FILE");
+    env.push(("AWS_SHARED_CREDENTIALS_FILE".into(), creds.to_string_lossy().to_string()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let conn = json!({"endpoint": endpoint, "region": "us-east-1", "profile": "reports"});
+    // The bucket exists from the other S3 test only sometimes; either it lands or S3 says why,
+    // but never a credentials error.
+    match deliver_env("s3://reports/profile/x.csv", conn, &env) {
+        Ok(loc) => assert_eq!(loc, "s3://reports/profile/x.csv"),
+        Err(e) => assert!(!e.contains("credentials"), "{e}"),
+    }
+}
