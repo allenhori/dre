@@ -1,8 +1,20 @@
 package main
 
-// How the plugin authenticates to the workspace: a static token, or OAuth.
+// How the plugin authenticates to the workspace.
 //
-// auth_type: oauth without a client_secret signs a person in through the browser (authorization
+// auth_type: auto (the default) finds a login without configuration, in this order:
+//   - `token` in the profile;
+//   - `client_id` + `client_secret` in the profile (a service principal, below);
+//   - Databricks' own default credentials, through Databricks' Go SDK: the environment
+//     (DATABRICKS_TOKEN, or DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET), a ~/.databrickscfg
+//     profile (`profile:` or DATABRICKS_CONFIG_PROFILE), a `databricks auth login` session, the
+//     VS Code extension, CI OIDC tokens, Azure and Google credentials — whatever the Databricks
+//     CLI and SDKs would use;
+//   - DRE's own saved sign-in, and a browser sign-in when a person is at the terminal.
+// Nothing ever waits for a browser when no one is there (DRE_INTERACTIVE, set by core, is not
+// 1, or the plugin runs on Databricks compute): it fails at once, listing what would work.
+//
+// auth_type: pat uses `token`. auth_type: oauth without a client_secret signs a person in through the browser (authorization
 // code with PKCE, redirected to a listener on localhost). The session is saved in
 // ~/.dre/oauth_sessions.json under databricks/<host>/<client_id>, the same file and format the
 // Rust databricks_volumes destination uses (crates/dre-protocol/src/sessions.rs), so both share
@@ -31,6 +43,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/databricks/databricks-sdk-go/config"
 )
 
 const (
@@ -41,7 +55,8 @@ const (
 )
 
 type auth struct {
-	token string // auth_type pat
+	token string         // a static token
+	sdk   *config.Config // Databricks' default credentials
 	oauth *oauth
 }
 
@@ -53,6 +68,7 @@ type oauth struct {
 	scopes       string
 	redirectPort int
 	sessionKey   string // empty for a service principal
+	auto         bool   // chosen by auth_type auto: explain every option when nothing works
 	tokens       *tokens
 	http         *http.Client
 }
@@ -66,9 +82,25 @@ type tokens struct {
 func authFromConn(conn map[string]any, base string) (*auth, error) {
 	t := optional(conn, "auth_type")
 	if t == "" {
-		t = "pat"
+		t = "auto"
 	}
 	switch t {
+	case "auto":
+		if tok := optional(conn, "token"); tok != "" {
+			return &auth{token: tok}, nil
+		}
+		if optional(conn, "client_secret") != "" {
+			return oauthFromConn(conn, base)
+		}
+		if cfg := defaultCredentials(base, optional(conn, "profile")); cfg != nil {
+			return &auth{sdk: cfg}, nil
+		}
+		a, err := oauthFromConn(conn, base)
+		if err != nil {
+			return nil, err
+		}
+		a.oauth.auto = true
+		return a, nil
 	case "pat", "token":
 		tok, err := required(conn, "token")
 		if err != nil {
@@ -76,48 +108,87 @@ func authFromConn(conn map[string]any, base string) (*auth, error) {
 		}
 		return &auth{token: tok}, nil
 	case "oauth":
-		secret := optional(conn, "client_secret")
-		id := optional(conn, "client_id")
-		if id == "" {
-			if secret != "" {
-				return nil, errors.New("`auth_type: oauth` with a `client_secret` also needs the service principal's `client_id`")
-			}
-			id = defaultClientID
-		}
-		scopes := optional(conn, "scopes")
-		if scopes == "" {
-			scopes = "all-apis offline_access"
-			if secret != "" {
-				scopes = "all-apis"
-			}
-		}
-		port := defaultRedirectPort
-		if v, ok := conn["redirect_port"]; ok && v != nil {
-			p, ok := number(v)
-			if !ok || p <= 0 || p > 65535 {
-				return nil, errors.New("`redirect_port` must be a port number")
-			}
-			port = p
-		}
-		o := &oauth{
-			base: base, clientID: id, clientSecret: secret, scopes: scopes, redirectPort: port,
-			http: &http.Client{Timeout: 60 * time.Second},
-		}
-		if secret == "" {
-			o.sessionKey = sessionKey(base, id)
-		}
-		return &auth{oauth: o}, nil
+		return oauthFromConn(conn, base)
 	default:
-		return nil, fmt.Errorf("unknown `auth_type` `%s`; use `pat` or `oauth`", t)
+		return nil, fmt.Errorf("unknown `auth_type` `%s`; use `auto`, `pat` or `oauth`", t)
 	}
+}
+
+func oauthFromConn(conn map[string]any, base string) (*auth, error) {
+	secret := optional(conn, "client_secret")
+	id := optional(conn, "client_id")
+	if id == "" {
+		if secret != "" {
+			return nil, errors.New("`auth_type: oauth` with a `client_secret` also needs the service principal's `client_id`")
+		}
+		id = defaultClientID
+	}
+	scopes := optional(conn, "scopes")
+	if scopes == "" {
+		scopes = "all-apis offline_access"
+		if secret != "" {
+			scopes = "all-apis"
+		}
+	}
+	port := defaultRedirectPort
+	if v, ok := conn["redirect_port"]; ok && v != nil {
+		p, ok := number(v)
+		if !ok || p <= 0 || p > 65535 {
+			return nil, errors.New("`redirect_port` must be a port number")
+		}
+		port = p
+	}
+	o := &oauth{
+		base: base, clientID: id, clientSecret: secret, scopes: scopes, redirectPort: port,
+		http: &http.Client{Timeout: 60 * time.Second},
+	}
+	if secret == "" {
+		o.sessionKey = sessionKey(base, id)
+	}
+	return &auth{oauth: o}, nil
+}
+
+// defaultCredentials is Databricks' own credential chain for host, or nil when it finds nothing.
+func defaultCredentials(base, profile string) *config.Config {
+	cfg := &config.Config{Host: base, Profile: profile}
+	req, _ := http.NewRequest("GET", base, nil)
+	if err := cfg.Authenticate(req); err != nil {
+		return nil
+	}
+	if !strings.HasPrefix(req.Header.Get("Authorization"), "Bearer ") {
+		return nil
+	}
+	return cfg
+}
+
+// interactive reports whether a person can complete a browser sign-in now.
+func interactive() bool {
+	return os.Getenv("DRE_INTERACTIVE") == "1" && os.Getenv("DATABRICKS_RUNTIME_VERSION") == ""
+}
+
+// noCredentials explains every way to give DRE a Databricks login.
+func noCredentials(host string) error {
+	return fmt.Errorf("no Databricks login found for %s, and no one is at the terminal to sign in through the browser. Any one of these works: "+
+		"`token` in the profile; DATABRICKS_TOKEN; DATABRICKS_CLIENT_ID and DATABRICKS_CLIENT_SECRET (a service principal); "+
+		"a ~/.databrickscfg profile (`profile:` in the DRE profile, or DATABRICKS_CONFIG_PROFILE); "+
+		"`databricks auth login --host %s`; or running DRE once from a terminal to sign in", host, host)
 }
 
 // bearer returns the token for the next request, renewed first when it's about to expire.
 func (a *auth) bearer() (string, error) {
-	if a.oauth == nil {
+	switch {
+	case a.sdk != nil:
+		// The SDK caches and renews its tokens itself.
+		req, _ := http.NewRequest("GET", a.sdk.Host, nil)
+		if err := a.sdk.Authenticate(req); err != nil {
+			return "", fmt.Errorf("Databricks login (%s) failed: %v", a.sdk.AuthType, err)
+		}
+		return strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "), nil
+	case a.oauth != nil:
+		return a.oauth.bearer()
+	default:
 		return a.token, nil
 	}
-	return a.oauth.bearer()
 }
 
 func (o *oauth) bearer() (string, error) {
@@ -180,6 +251,12 @@ func (o *oauth) refresh(refresh string) (*tokens, error) {
 // signIn runs the authorization code flow with PKCE: open the browser, wait for the redirect,
 // exchange the code.
 func (o *oauth) signIn() (*tokens, error) {
+	if !interactive() {
+		if o.auto {
+			return nil, noCredentials(strings.TrimPrefix(o.base, "https://"))
+		}
+		return nil, errors.New("the Databricks sign-in needs a browser, but no one is at the terminal (or this runs on Databricks compute); sign in once by running DRE from a terminal, or use a service principal (`client_id` and `client_secret`) or `token`")
+	}
 	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", o.redirectPort))
 	if err != nil {
 		return nil, fmt.Errorf("can't listen on localhost:%d for the Databricks sign-in redirect: %v", o.redirectPort, err)

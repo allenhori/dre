@@ -30,6 +30,7 @@ import (
 	"strings"
 
 	"github.com/apache/arrow/go/v12/arrow"
+	sdklog "github.com/databricks/databricks-sdk-go/logger"
 	dbsqllog "github.com/databricks/databricks-sql-go/logger"
 )
 
@@ -64,12 +65,18 @@ func roleOf(exe string) role {
 }
 
 func main() {
-	// The connector logs its own copy of every error; DRE already reports them. Set
-	// DATABRICKS_LOG_LEVEL (e.g. debug) to see its log.
+	// The connector and SDK log their own copy of every error, and warnings DRE has no use for;
+	// DRE reports errors itself. Set DATABRICKS_LOG_LEVEL (e.g. debug) to see the connector's log.
+	quietLibraries()
+	os.Exit(serve(os.Stdin, os.Stdout, roleOf(os.Args[0]), newDatabricks))
+}
+
+// quietLibraries turns off the connector's and SDK's own logs unless DATABRICKS_LOG_LEVEL is set.
+func quietLibraries() {
 	if os.Getenv("DATABRICKS_LOG_LEVEL") == "" {
 		_ = dbsqllog.SetLogLevel("disabled")
+		sdklog.DefaultLogger = &sdklog.SimpleLogger{Level: sdklog.LevelError + 1}
 	}
-	os.Exit(serve(os.Stdin, os.Stdout, roleOf(os.Args[0]), newDatabricks))
 }
 
 // backend is one database session. The Databricks one wraps databricks-sql-go; tests use a fake.

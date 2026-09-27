@@ -1,8 +1,9 @@
 package main
 
 // The databricks_volumes destination: uploads to a Unity Catalog Volume through the Databricks
-// Files API, for runs outside Databricks (a laptop, Airflow, CI). Inside a Databricks job or
-// cluster, /Volumes/... is a mounted path: use the built-in `local` destination there instead.
+// Files API from anywhere (a laptop, Airflow, CI). On Databricks compute, where /Volumes/... is a
+// mounted path, it copies the file there instead: no API call and no login, with whatever access
+// the job or cluster's identity has. The same report and profile work in both places.
 //
 // Profile target fields: host plus the source's sign-in fields (auth_type, token, client_id,
 // client_secret), so one set of credentials, and one OAuth session per workspace, serves both.
@@ -15,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -42,6 +44,10 @@ func deliverToVolume(local, remote string, conn map[string]any) (string, error) 
 	if bad {
 		return "", fmt.Errorf("`%s` must be /Volumes/<catalog>/<schema>/<volume>/<file>", remote)
 	}
+	path := "/" + strings.Join(parts, "/")
+	if loc, ok, err := copyToMountedVolume(local, parts); ok || err != nil {
+		return loc, err
+	}
 	host, err := required(conn, "host")
 	if err != nil {
 		return "", err
@@ -53,7 +59,6 @@ func deliverToVolume(local, remote string, conn map[string]any) (string, error) 
 		return "", err
 	}
 	client := &http.Client{}
-	path := "/" + strings.Join(parts, "/")
 	// Directories under the volume (the volume itself must exist).
 	if len(parts) > 5 {
 		dir := "/" + strings.Join(parts[:len(parts)-1], "/")
@@ -65,6 +70,48 @@ func deliverToVolume(local, remote string, conn map[string]any) (string, error) 
 		return "", fmt.Errorf("upload to %s failed: %v; the output is still in target/", path, err)
 	}
 	return "dbfs:" + path, nil
+}
+
+// copyToMountedVolume writes to /Volumes/... directly when this runs on Databricks compute and
+// the volume is mounted. ok is false when it doesn't apply, so the Files API is used instead.
+// DRE_VOLUMES_ROOT stands in for / in tests.
+func copyToMountedVolume(local string, parts []string) (loc string, ok bool, err error) {
+	if os.Getenv("DATABRICKS_RUNTIME_VERSION") == "" {
+		return "", false, nil
+	}
+	root := os.Getenv("DRE_VOLUMES_ROOT")
+	if root == "" {
+		root = "/"
+	}
+	volume := filepath.Join(append([]string{root}, parts[:4]...)...)
+	if st, err := os.Stat(volume); err != nil || !st.IsDir() {
+		return "", false, nil
+	}
+	dest := filepath.Join(append([]string{root}, parts...)...)
+	path := "/" + strings.Join(parts, "/")
+	fail := func(err error) (string, bool, error) {
+		return "", true, fmt.Errorf("copy to %s failed: %v; the output is still in target/", path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		return fail(err)
+	}
+	in, err := os.Open(local)
+	if err != nil {
+		return fail(err)
+	}
+	defer in.Close()
+	out, err := os.Create(dest)
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return fail(err)
+	}
+	if err := out.Close(); err != nil {
+		return fail(err)
+	}
+	return path, true, nil
 }
 
 // volumeRequest PUTs to url (with the file at local as the body, when set), retrying while the
