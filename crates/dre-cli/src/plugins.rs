@@ -11,9 +11,10 @@ use semver::VersionReq;
 use crate::output::{Printer, Tone};
 
 /// Install whatever the project declares but lacks. Returns false (after printing why) if any
-/// plugin is missing and couldn't be installed.
-pub fn ensure(project: &Project, install: bool, printer: &Printer) -> bool {
-    match manager::sync(project, install, |m| {
+/// plugin is missing and couldn't be installed. With `resolve` (`dre deps`), plugins not pinned
+/// in `dre.lock` are resolved against the registry and pinned.
+pub fn ensure(project: &Project, install: bool, resolve: bool, printer: &Printer) -> bool {
+    match manager::sync(project, install, resolve, |m| {
         printer.line(Tone::Note, "Installed", m.trim_start_matches("installed "))
     }) {
         Ok(_) => true,
@@ -49,7 +50,7 @@ pub fn check_for_validate(
     if diags.has_errors() {
         return;
     }
-    let r = manager::sync(project, install, |m| {
+    let r = manager::sync(project, install, false, |m| {
         printer.line(Tone::Note, "Installed", m.trim_start_matches("installed "))
     });
     if let Err(errors) = r {
