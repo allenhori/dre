@@ -145,7 +145,7 @@ format_options:
 | Format | Options |
 |---|---|
 | `csv`, `delimited` | `delimiter`, `quote`, `quoting`, `header`, `line_ending`, `encoding`, `null`, `byte_order_mark` |
-| `fixed_width` | `columns` (`name`, `width`, `align`, `pad`, `truncate`), `line_ending`, `encoding`, `line_breaks` |
+| `fixed_width` | `columns` (see [Fixed-width columns](#fixed-width-columns)), `header`, `line_ending`, `encoding`, `line_breaks` |
 | `parquet` | none; Arrow types are preserved |
 | `xlsx` | `header`, `max_rows_per_sheet`; per query `anchor`/`header`; `template` |
 
@@ -173,6 +173,62 @@ Every format but xlsx also takes `extension`: the output file's extension (`aba`
   with one warning per column: numbers with more than 15 significant digits (large integers,
   wide decimals), numbers beyond Excel's range, and dates or timestamps before 1900-03-01 or
   after 9999-12-31 (as ISO text).
+
+### Fixed-width columns
+
+Write the query as normal SQL; `columns:` lays each result column out, in order. Every key but
+`name` and `width` (or `picture`) is optional. By default every field is left-aligned and
+space-filled, whatever the column's type; nothing else happens unless you ask for it.
+
+| Key | Meaning |
+|---|---|
+| `name` | the result-set column; the same column can appear more than once |
+| `width` | the field's width in characters |
+| `picture` | a COBOL PIC clause in place of `width`: see below |
+| `header` | the column's label in the header record (default: `name`) |
+| `type` | `number` lays the value out as a number (below) with no other number option; `text` never does. Default: `number` when the column has `decimals`, `decimal_point`, `sign` or a 9 `picture`, otherwise `text` |
+| `align` | `left` (default) or `right` |
+| `pad` | the fill character, e.g. `"0"`. Default: a space. With `align: right` and `pad: "0"` a leading minus goes before the zeros: `-00042` |
+| `truncate` | `true` cuts a value that's too wide instead of failing. A number (a column with `type: number` or a number option) is never cut: one that doesn't fit is an error naming the row and column |
+| `decimals` | round numbers to this many decimal places, half away from zero (`2.345` → `2.35`) |
+| `decimal_point` | `.` (default), `,`, or `implied`: the digits are written without a point and the last `decimals` digits are the decimals (`123.45` with `decimals: 2` → `12345`) |
+| `sign` | `leading` (default: `-` for negatives only), `always` (`+` or `-` first), `trailing` (`+` or `-` last), `overpunch` (the last digit carries the sign, COBOL zoned decimal), `none` (unsigned: a negative number is an error) |
+| `date_format` | a strftime pattern for a date, time or timestamp column, e.g. `"%Y%m%d"` |
+| `null_fill` | the character that fills a NULL field. Default: the pad, so NULL is blank unless `pad` is set; `null_fill: " "` keeps a zero-padded column blank for NULL |
+
+The output option `header: true` writes a first record of the labels, each left-aligned and cut
+to its column's width.
+
+```yaml
+output:
+  format: fixed_width
+  header: true
+  columns:
+    - {name: account_id, width: 10, align: right, pad: "0"}   # 42 → 0000000042
+    - {name: account_name, width: 30, truncate: true}         # left-aligned, space-filled
+    - {name: amount, width: 12, align: right, pad: "0", decimals: 2, decimal_point: implied, sign: trailing}
+                                                              # -123.456 → 00000012346-
+    - {name: posted_on, width: 8, date_format: "%Y%m%d"}      # 20260928
+    - {name: discount, width: 6, align: right, pad: "0", decimals: 2, null_fill: " "}
+                                                              # 5 → 005.00; NULL → blank
+    - {name: rate, picture: "9(3)V9(4)"}                      # 1.23456 → 0012346
+```
+
+`picture` takes the COBOL layout that mainframe and bank file specs are written in:
+
+| Picture | Width | Meaning | `123.456` | `-12.3` |
+|---|---|---|---|---|
+| `X(10)` | 10 | text | | |
+| `9(5)` | 5 | unsigned whole number | `00123` | error |
+| `9(7)V99` | 9 | implied decimal point, 2 decimals | `000012346` | error |
+| `S9(5)V99` | 7 | signed; the last digit carries the sign (overpunch) | `001234F` | `000123}` |
+| `9(5).99` | 8 | a visible point | `00123.46` | error |
+
+A 9 picture is right-aligned and zero-filled, as in COBOL; `align` and `pad` still override it.
+`9(3)` is short for `999`. A `sign` beside a picture replaces its sign: `leading`, `always` or
+`trailing` adds one character to the width for the sign (COBOL `SIGN SEPARATE`). Overpunch
+writes the last digit 0–9 as `{`, `A`–`I` for positive numbers and `}`, `J`–`R` for negative
+ones. Packed decimal (`COMP-3`) is binary, not text, and isn't supported.
 
 ## Destinations
 

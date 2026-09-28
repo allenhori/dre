@@ -7,7 +7,7 @@ error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `quoting` must be
 error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `line_ending` must be "\n" or "\r\n"
 error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `byte_order_mark` must be true or false
 error[invalid-output-option]: reports/ops/c/c.yml: report `c`: `columns` is required
-error[invalid-output-option]: reports/ops/d/d.yml: report `d`: column `id` needs a positive whole-number `width`
+error[invalid-output-option]: reports/ops/d/d.yml: report `d`: column `id` needs a positive whole-number `width`, or a `picture`
 error[invalid-output-option]: reports/ops/d/d.yml: report `d`: column `id` `align` must be `left` or `right`
 error[invalid-output-option]: reports/ops/d/d.yml: report `d`: column 2 has no `name`
 error[invalid-output-option]: reports/ops/d/d.yml: report `d`: column 2 `pad` must be a single character
