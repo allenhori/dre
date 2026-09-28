@@ -22,6 +22,8 @@ use umya_spreadsheet::{Workbook as Spreadsheet, Worksheet};
 use crate::EXCEL_MAX_ROWS;
 use crate::cells::{Excel, excel_value, normalize, parse_cell};
 use crate::formats::{ColumnFormat, Formats, Kind};
+use crate::formulas::{self, SetFormulas};
+use dre_protocol::options::FormulaPart;
 
 #[derive(Debug, Deserialize)]
 struct Binding {
@@ -53,6 +55,8 @@ struct Collected {
     names: Vec<String>,
     batch: RecordBatch,
     formats: Vec<ColumnFormat>,
+    /// Row formulas per column.
+    formulas: Vec<Option<Vec<FormulaPart>>>,
 }
 
 pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
@@ -75,13 +79,23 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
         };
         let batch = arrow::compute::concat_batches(&schema, &batches)?;
         let formats = fmts.for_set(&rs.meta, &schema)?;
+        let set = SetFormulas::resolve(&rs.meta, fmts.output(), &schema)?;
+        let names: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
+        if let Some(col) = set.first_total(&names) {
+            return Err(format!(
+                "sheet `{}`: column `{col}` has a `total`, which templates don't take: put the totals row in the template under the block (a `SUM` ending on the block's row is extended over every inserted row)",
+                rs.meta.name
+            )
+            .into());
+        }
         results.push(Collected {
             query: rs.meta.query.clone(),
             index: rs.meta.result_index,
             name: rs.meta.name.clone(),
-            names: schema.fields().iter().map(|f| f.name().clone()).collect(),
+            names,
             batch,
             formats,
+            formulas: set.row,
         });
     }
     fmts.finish()?;
@@ -130,7 +144,16 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
                     .into());
                 }
             }
-            write_value(ws, coord, res.batch.column(ci).as_ref(), 0, col, &res.formats[ci]);
+            // A single cell has no row to refer to: it takes the value, not the formula.
+            write_value(
+                ws,
+                coord,
+                res.batch.column(ci).as_ref(),
+                0,
+                col,
+                &res.formats[ci],
+                None,
+            );
         }
     }
 
@@ -175,15 +198,20 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
                 }
             }
             let first = u32::from(header) + 1;
+            let col_of = |n: &str| res.names.iter().position(|x| x == n).map(|i| i as u32);
             for (k, row) in (part * max_rows..((part + 1) * max_rows).min(total)).enumerate() {
+                let r = first + k as u32;
                 for c in 0..res.names.len() {
+                    let formula = row_formula(&res.formulas[c], col_of, r - 1)
+                        .map_err(|n| format!("sheet `{name}`: column `{n}` isn't on the sheet"))?;
                     write_value(
                         ws,
-                        (c as u32 + 1, first + k as u32),
+                        (c as u32 + 1, r),
                         res.batch.column(c).as_ref(),
                         row,
                         &res.names[c],
                         &res.formats[c],
+                        formula.as_deref(),
                     );
                 }
             }
@@ -269,15 +297,30 @@ fn fill_block(book: &mut Spreadsheet, b: &Binding, r0: u32, c0: u16, res: &Colle
                     .set_value(String::new());
             }
         }
+        let col_of = |name: &str| {
+            cols.iter()
+                .position(|&ci| res.names[ci] == name)
+                .map(|k| u32::from(c0) + k as u32)
+        };
         for row in 0..n as usize {
+            let r = first + row as u32;
             for (k, &ci) in cols.iter().enumerate() {
+                let formula = row_formula(&res.formulas[ci], col_of, r - 1).map_err(|name| {
+                    format!(
+                        "template block on `{}`: column `{}`'s formula refers to `{name}`, which the block doesn't place (it places: {})",
+                        b.sheet,
+                        res.names[ci],
+                        cols.iter().map(|&c| res.names[c].as_str()).collect::<Vec<_>>().join(", ")
+                    )
+                })?;
                 write_value(
                     ws,
-                    (u32::from(c0) + 1 + k as u32, first + row as u32),
+                    (u32::from(c0) + 1 + k as u32, r),
                     res.batch.column(ci).as_ref(),
                     row,
                     &res.names[ci],
                     &res.formats[ci],
+                    formula.as_deref(),
                 );
             }
         }
@@ -336,7 +379,21 @@ fn extend_formulas(book: &mut Spreadsheet, block_sheet: &str, reserved: u32, las
     }
 }
 
-/// Write one value. An explicit YAML format replaces the cell's number format (keeping its font,
+/// A column's row formula for 0-based sheet row `row`, if it has one; `Err(name)` for a
+/// reference `col_of` can't place.
+fn row_formula(
+    parts: &Option<Vec<FormulaPart>>,
+    col_of: impl Fn(&str) -> Option<u32>,
+    row: u32,
+) -> std::result::Result<Option<String>, String> {
+    match parts {
+        Some(p) => formulas::render(p, col_of, row, (0, 0)).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Write one value, or given a row `formula`, the formula with the value as its cached result.
+/// An explicit YAML format replaces the cell's number format (keeping its font,
 /// fill and border); a type default only fills a `General` cell, so a template's own format wins.
 fn write_value(
     ws: &mut Worksheet,
@@ -345,6 +402,7 @@ fn write_value(
     i: usize,
     column: &str,
     fmt: &ColumnFormat,
+    formula: Option<&str>,
 ) {
     let cell = ws.cell_mut(coord);
     let apply = |cell: &mut umya_spreadsheet::Cell| {
@@ -375,5 +433,8 @@ fn write_value(
                 crate::cells::unformatted(column);
             }
         }
+    } // Setting the formula keeps the value just written as its cached result.
+    if let Some(f) = formula {
+        cell.set_formula(f.strip_prefix('=').unwrap_or(f));
     }
 }
