@@ -5,6 +5,9 @@
 //! `channel`, and `api_url` (default `https://slack.com/api`, for a proxy or a test fake). Destination options: exactly one of `channel` (an ID such as `C0123`, or `#name`)
 //! or `user` (a user ID such as `U0123`), and `message`.
 //!
+//! A DM needs the `chat:write` scope and the app's Messages tab on; the plugin checks both before
+//! uploading.
+//!
 //! Uses Slack's external upload flow: `files.getUploadURLExternal` per file, the bytes to the
 //! returned URL, then one `files.completeUploadExternal` that shares every file in one post.
 
@@ -180,9 +183,19 @@ impl Api {
         Ok(Api { base, token, agent })
     }
 
-    /// Call a Web API method with form parameters. A rate-limited call is retried once, after
-    /// Slack's `Retry-After`.
+    /// Call a Web API method with form parameters; an `ok: false` reply is an error.
     fn call(&self, method: &str, form: &[(&str, String)], target: &Target) -> Result<Value> {
+        let v = self.send(method, form)?;
+        if v["ok"] == Value::Bool(true) {
+            Ok(v)
+        } else {
+            Err(explain(method, &v, target).into())
+        }
+    }
+
+    /// Call a Web API method and return its JSON reply, `ok: false` included. A rate-limited call
+    /// is retried once, after Slack's `Retry-After`.
+    fn send(&self, method: &str, form: &[(&str, String)]) -> Result<Value> {
         let url = format!("{}/{method}", self.base);
         for attempt in 0..2 {
             let mut resp = self
@@ -213,12 +226,8 @@ impl Api {
             if !(200..300).contains(&status) {
                 return Err(format!("Slack {method} returned HTTP {status}").into());
             }
-            let v: Value = serde_json::from_str(&body)
-                .map_err(|e| format!("Slack {method} returned something that isn't JSON: {e}"))?;
-            if v["ok"] == Value::Bool(true) {
-                return Ok(v);
-            }
-            return Err(explain(method, &v, target).into());
+            return serde_json::from_str(&body)
+                .map_err(|e| format!("Slack {method} returned something that isn't JSON: {e}").into());
         }
         unreachable!("the loop returns on its second attempt")
     }
@@ -273,14 +282,22 @@ impl Api {
         }
     }
 
-    /// The DM channel with a user.
+    /// The DM channel with a user, checked to accept messages.
     fn open_dm(&self, user: &str) -> Result<String> {
         let target = Target::User(user.to_string());
         let r = self.call("conversations.open", &[("users", user.to_string())], &target)?;
-        r["channel"]["id"]
+        let id = r["channel"]["id"]
             .as_str()
             .map(str::to_string)
-            .ok_or_else(|| "Slack's conversations.open reply had no channel ID".into())
+            .ok_or("Slack's conversations.open reply had no channel ID")?;
+        // With the app's Messages tab off, Slack accepts a file shared into the DM and then drops
+        // it. A post with no text shows whether the DM takes messages, without posting anything:
+        // `no_text` means it does.
+        let v = self.send("chat.postMessage", &[("channel", id.clone())])?;
+        match v["error"].as_str() {
+            Some("no_text") => Ok(id),
+            _ => Err(explain("chat.postMessage", &v, &target).into()),
+        }
     }
 }
 
@@ -302,6 +319,9 @@ fn explain(method: &str, v: &Value, target: &Target) -> String {
         "channel_not_found" => format!("Slack can't find {to}, or the bot can't see it"),
         "user_not_found" | "users_not_found" => format!("Slack can't find {to}"),
         "is_archived" => format!("{to} is archived"),
+        "messages_tab_disabled" => format!(
+            "the Slack app can't message {to}: turn on App Home > Messages Tab in the app's settings, then reinstall the app"
+        ),
         _ => format!("Slack {method} failed for {to}: {error}"),
     }
 }

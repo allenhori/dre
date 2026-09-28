@@ -476,7 +476,12 @@ Slack app setup: create an app, add a bot user, install it to the workspace, and
 token. Bot scopes:
 - `files:write`: always needed.
 - `channels:read` and `groups:read`: needed to post to a `#name`.
-- `im:write`: needed for `user`.
+- `im:write` and `chat:write`: needed for `user`.
+
+A DM also needs the app's Messages tab turned on (App Home > Show Tabs > Messages Tab). With it
+off, Slack accepts a file for the DM and then silently drops it, so before uploading the plugin
+checks that the DM accepts messages. The check posts nothing, and if the tab is off the delivery
+fails and says what to change.
 
 The bot must be a member of the channel. Invite it with `/invite @your-bot`.
 
