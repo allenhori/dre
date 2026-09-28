@@ -48,6 +48,12 @@ func newDatabricks(conn map[string]any) (backend, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Sign in before connecting. A sign-in that fails (no one at the terminal for the browser, a
+	// revoked token) won't succeed by retrying, and inside the connector it would be retried for
+	// as long as a starting warehouse is waited for.
+	if _, err := auth.bearer(); err != nil {
+		return nil, err
+	}
 	retry := 900
 	if v, ok := number(conn["retry_timeout"]); ok {
 		retry = v
