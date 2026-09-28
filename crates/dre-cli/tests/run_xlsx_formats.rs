@@ -115,7 +115,7 @@ fn every_set_gets_the_formats() {
             ("sets.yml", "a: {}\nb: {}\n"),
         ],
     );
-    p.dre("run", &["r"]).ok();
+    p.dre("run", &["r", "--set", "all"]).ok();
     for set in ["a", "b"] {
         assert_eq!(
             numfmt(&p, &format!("target/run/r/{set}/r.xlsx"), "sales", "B2"),
