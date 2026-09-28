@@ -15,10 +15,20 @@ name: Release
 # It uploads them to TestPyPI and then PyPI only when the repository variable PYPI_PUBLISH is
 # `true`, through trusted publishing (no token): register this workflow (`release.yml`) as a
 # trusted publisher for `dre-cli` on both indexes, with the environments `testpypi` and `pypi`.
+#
+# Run by hand (Actions > Release > Run workflow, or `gh workflow run release.yml -f tag=v…`), it
+# uploads the wheels already attached to that release to TestPyPI and PyPI, and builds and
+# publishes nothing else: the release's binaries, and the checksums dre.lock files pin, stay as
+# they are.
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "An existing release whose attached wheels to upload to PyPI, e.g. v0.0.1-alpha-5"
+        required: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,6 +36,7 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.platform }})
+    if: github.event_name == 'push'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -191,10 +202,32 @@ jobs:
           name: wheels
           path: wheels/*.whl
 
+  release-wheels:
+    name: Wheels from ${{ inputs.tag }}
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Download the release's wheels
+        run: |
+          mkdir wheels
+          gh release download "${{ inputs.tag }}" -R "$GITHUB_REPOSITORY" -p 'dre_cli-*.whl' -D wheels
+          ls -l wheels
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels
+          path: wheels/*.whl
+
   testpypi:
     name: Upload to TestPyPI
-    needs: pypi
-    if: vars.PYPI_PUBLISH == 'true'
+    needs: [pypi, release-wheels]
+    # `always()`: on a manual run `pypi` is skipped, which would otherwise skip this too.
+    if: >-
+      always() && vars.PYPI_PUBLISH == 'true' &&
+      (needs.pypi.result == 'success' || needs.release-wheels.result == 'success')
     runs-on: ubuntu-latest
     environment: testpypi
     permissions:
@@ -212,7 +245,7 @@ jobs:
   pypi-upload:
     name: Upload to PyPI
     needs: testpypi
-    if: vars.PYPI_PUBLISH == 'true'
+    if: always() && vars.PYPI_PUBLISH == 'true' && needs.testpypi.result == 'success'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
