@@ -52,7 +52,19 @@ fn fixed_width() {
     p.dre("run", &["r"]).ok();
     assert_eq!(
         p.read("target/run/r/default/r.txt"),
-        "001Client 1  \r\n002Client 2  \r\n003Client 3  \r\n"
+        "  1Client 1  \r\n  2Client 2  \r\n  3Client 3  \r\n"
+    );
+}
+
+#[test]
+fn fixed_width_header_implied_decimals_and_pictures() {
+    let p = project(
+        "queries: [accounts]\noutput:\n  format: fixed_width\n  header: true\n  line_ending: \"\\n\"\n  columns:\n    - {name: account_id, picture: \"9(2)\", header: ID}\n    - {name: account_name, width: 9, header: NAME}\n    - {name: balance, width: 8, decimals: 2, decimal_point: implied, header: BALANCE}\n    - {name: balance, picture: \"S9(3)V9\", header: Z}\n",
+    );
+    p.dre("run", &["r"]).ok();
+    assert_eq!(
+        p.read("target/run/r/default/r.txt"),
+        "IDNAME     BALANCE Z   \n01Client 1 10000   100{\n02Client 2 20000   200{\n03Client 3 30000   300{\n"
     );
 }
 
@@ -163,7 +175,7 @@ fn fixed_width_can_replace_line_breaks() {
 #[test]
 fn extension_override_and_no_extension() {
     let p = project(
-        "queries: [accounts]\noutput:\n  format: fixed_width\n  extension: aba\n  columns:\n    - {name: account_id, width: 3, align: right}\n",
+        "queries: [accounts]\noutput:\n  format: fixed_width\n  extension: aba\n  columns:\n    - {name: account_id, width: 3, align: right, pad: \"0\"}\n",
     );
     p.dre("run", &["r"]).ok();
     assert_eq!(p.read("target/run/r/default/r.aba"), "001\r\n002\r\n003\r\n");
