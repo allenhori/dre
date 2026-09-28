@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "dre-cli"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "dre-core"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-csv"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1703,7 +1703,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-duckdb"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1714,7 +1714,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-email"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "dre-protocol",
  "lettre",
@@ -1726,7 +1726,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-fixed_width"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "arrow",
  "chrono",
@@ -1738,7 +1738,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-ftp"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "dre-protocol",
  "rustls",
@@ -1750,7 +1750,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-object_store"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1770,7 +1770,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-parquet"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1781,7 +1781,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-postgres"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "arrow",
  "chrono",
@@ -1795,7 +1795,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-sftp"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "dre-protocol",
  "russh",
@@ -1807,7 +1807,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-slack"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "dre-protocol",
  "form_urlencoded",
@@ -1818,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-xlsx"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "arrow",
  "calamine",
@@ -1834,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "dre-protocol"
-version = "0.0.1-alpha-7"
+version = "0.0.1-alpha-8"
 dependencies = [
  "arrow",
  "serde",
