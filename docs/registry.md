@@ -65,7 +65,9 @@ updated any more.)
 - `version` is semver. A pre-release is installed when asked for explicitly
   (`dre plugin install duckdb@=1.3.0-rc.1`), or when no stable version matches: a package whose
   only releases are `0.0.1-alpha` installs that, and one with a stable `0.1.0` ignores a later
-  `0.2.0-rc.1` until asked.
+  `0.2.0-rc.1` until asked. Newest means semver order, except that numbers inside a pre-release
+  label compare as numbers: `0.0.1-alpha-10` is newer than `0.0.1-alpha-9` (plain semver
+  compares `alpha-10` as text and puts it first).
 - `protocol` is the plugin protocol version the release speaks (see [protocol.md](protocol.md)).
   DRE skips versions it can't talk to.
 - Artifacts are keyed by platform, `<os>-<arch>`, using Rust's names: `macos`, `linux` or

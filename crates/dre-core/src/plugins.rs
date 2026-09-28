@@ -204,7 +204,7 @@ fn scan(dir: &Path, only: Option<&str>) -> Vec<InstalledPackage> {
                 })
             })
             .collect();
-        found.sort_by(|a, b| a.0.cmp(&b.0));
+        found.sort_by(|a, b| crate::manager::version_order(&a.0, &b.0));
         out.extend(found.into_iter().map(|(_, p)| p));
     }
     out

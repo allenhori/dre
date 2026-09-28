@@ -269,7 +269,7 @@ pub fn prefer_stable<T>(items: Vec<T>, req: &VersionReq, version: impl Fn(&T) ->
         items
             .into_iter()
             .filter(|i| ok(version(i)))
-            .max_by(|a, b| version(a).cmp(version(b)))
+            .max_by(|a, b| version_order(version(a), version(b)))
     };
     let exact = |v: &Version| req.matches(v);
     if items.iter().any(|i| exact(version(i))) {
@@ -279,6 +279,69 @@ pub fn prefer_stable<T>(items: Vec<T>, req: &VersionReq, version: impl Fn(&T) ->
         &|v: &Version| !v.pre.is_empty() && req.matches(&Version::new(v.major, v.minor, v.patch)),
         items,
     )
+}
+
+/// Which version is newer: semver precedence, except that numbers inside a pre-release
+/// identifier compare as numbers. Semver compares `alpha-10` and `alpha-9` as text, which puts
+/// `0.0.1-alpha-10` before `0.0.1-alpha-9`; DRE's own pre-releases are named `0.0.1-alpha-<n>`.
+pub fn version_order(a: &Version, b: &Version) -> std::cmp::Ordering {
+    use std::cmp::Ordering::*;
+    (a.major, a.minor, a.patch)
+        .cmp(&(b.major, b.minor, b.patch))
+        .then_with(|| match (a.pre.is_empty(), b.pre.is_empty()) {
+            (true, true) => Equal,
+            (true, false) => Greater,
+            (false, true) => Less,
+            (false, false) => {
+                let (mut x, mut y) = (a.pre.split('.'), b.pre.split('.'));
+                loop {
+                    match (x.next(), y.next()) {
+                        (None, None) => break Equal,
+                        (None, Some(_)) => break Less,
+                        (Some(_), None) => break Greater,
+                        (Some(p), Some(q)) => match natural_order(p, q) {
+                            Equal => {}
+                            o => break o,
+                        },
+                    }
+                }
+            }
+        })
+        .then_with(|| a.cmp(b))
+}
+
+/// Compare two identifiers run by run: digit runs as numbers (below text, as in semver), the
+/// rest as text.
+fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    fn runs(s: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut start = 0;
+        let bytes = s.as_bytes();
+        for i in 1..=bytes.len() {
+            if i == bytes.len() || bytes[i].is_ascii_digit() != bytes[start].is_ascii_digit() {
+                out.push(&s[start..i]);
+                start = i;
+            }
+        }
+        out
+    }
+    let (ra, rb) = (runs(a), runs(b));
+    for (p, q) in ra.iter().zip(&rb) {
+        let digits = |s: &str| s.bytes().all(|c| c.is_ascii_digit());
+        let o = match (digits(p), digits(q)) {
+            (true, true) => {
+                let (p, q) = (p.trim_start_matches('0'), q.trim_start_matches('0'));
+                p.len().cmp(&q.len()).then_with(|| p.cmp(q))
+            }
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            (false, false) => p.cmp(q),
+        };
+        if o != std::cmp::Ordering::Equal {
+            return o;
+        }
+    }
+    ra.len().cmp(&rb.len())
 }
 
 #[derive(Deserialize)]
@@ -785,5 +848,44 @@ mod tests {
         );
         assert_eq!(pick(&["0.0.1-alpha"], "^1").as_deref(), None);
         assert_eq!(pick(&[], "*").as_deref(), None);
+    }
+
+    #[test]
+    fn alpha_10_is_newer_than_alpha_9() {
+        assert_eq!(
+            pick(&["0.0.1-alpha-8", "0.0.1-alpha-10", "0.0.1-alpha-9"], "*").as_deref(),
+            Some("0.0.1-alpha-10")
+        );
+        let v = |s: &str| Version::parse(s).unwrap();
+        let mut vs: Vec<Version> = [
+            "0.0.1",
+            "0.0.1-alpha-10",
+            "0.0.1-beta-1",
+            "0.0.1-alpha",
+            "0.0.1-alpha-9",
+            "0.0.1-alpha-2",
+            "0.0.1-rc.10",
+            "0.0.1-rc.9",
+            "0.0.2-alpha-1",
+        ]
+        .iter()
+        .map(|s| v(s))
+        .collect();
+        vs.sort_by(version_order);
+        let got: Vec<String> = vs.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            got,
+            [
+                "0.0.1-alpha",
+                "0.0.1-alpha-2",
+                "0.0.1-alpha-9",
+                "0.0.1-alpha-10",
+                "0.0.1-beta-1",
+                "0.0.1-rc.9",
+                "0.0.1-rc.10",
+                "0.0.1",
+                "0.0.2-alpha-1"
+            ]
+        );
     }
 }
