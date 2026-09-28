@@ -28,15 +28,16 @@ This puts `dre` in `~/.local/bin`, after checking the download against the relea
 newest, pre-releases included):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha-6 DRE_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.0.1-alpha-7 DRE_INSTALL_DIR=/usr/local/bin sh
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
 container build. On Windows, download `dre-<version>-windows-x86_64.zip` from
 [Releases](https://github.com/allenhori/dre/releases) and put `dre.exe` on your `PATH`.
 
-Only `dre` itself is installed. Plugins come from the same releases, on demand: `dre init` and
-`dre deps` download the ones a project uses (see [the registry docs](docs/registry.md)).
+Only `dre` itself is installed. Plugins come from the same releases, on demand: `dre init`,
+`dre run`, `dre validate` and `dre compile` download the ones a project declares (see
+[the registry docs](docs/registry.md)).
 
 ### With pip
 
@@ -73,8 +74,10 @@ notebook. The bundled plugins are used unless `DRE_PLUGINS_DIR` is set.
   are inlined into the SQL, larger ones (over 200 rows by default) are loaded into a temp table
   by the source plugin. `lookup('countries')` hands the rows to Jinja. Values are text unless a
   `lookups/<name>.yml` config gives columns types; see [lookups](docs/lookups.md).
-- **Plugins**: every source, format and destination is a separate executable that speaks DRE's
-  [plugin protocol](docs/protocol.md). Plugins are declared per project and installed on demand.
+- **Plugins**: every source, format and destination is a plugin that speaks DRE's
+  [plugin protocol](docs/protocol.md). Plugins ship in packages, one per system: `databricks`
+  is the Databricks source and destination, `object_store` is S3, GCS and Azure Blob. A project
+  declares each package once and DRE installs it on demand.
 - **Delivery**: one output can go to several destinations in a single run, e.g. object storage
   (S3, GCS, Azure Blob), SFTP/FTP, Databricks Volumes or workspace files, an email with the file
   attached, or a Slack channel. See [plugins](docs/plugins.md).
@@ -183,9 +186,23 @@ sources:
         database: shop_prod
 ```
 
-Plugins and macro packages are declared in `dependencies.yml` (or `packages.yml`, or both) and
-installed into the project's `dre_deps/` folder by `dre deps`. Their exact versions and commits
-are pinned in `dre.lock`. Package macros are called through the package's name
+Plugin packages and macro packages are declared in `dependencies.yml` (or `packages.yml`, or
+both):
+
+```yaml
+plugins:
+  - duckdb
+  - xlsx
+  - object_store      # the s3, gcs and azure_blob destinations
+packages:
+  - git: https://github.com/acme/finance_macros.git
+    revision: v2.3.0
+```
+
+`dre run`, `dre validate` and `dre compile` install what's missing into the project's
+`dre_deps/` folder before they start, so there's nothing to run first. `dre deps` installs
+everything and refreshes the lock on purpose, e.g. as a separate CI step. Exact versions and
+commits are pinned in `dre.lock`. Package macros are called through the package's name
 (`{{ dre_utils.star(ref('customers'), except=['ssn']) }}`), and `dispatch()` lets a package offer per-database variants
 that a project can override. See [the registry docs](docs/registry.md).
 
@@ -223,7 +240,7 @@ vars, every var the run used and the command's parameters.
 |---|---|
 | `DRE_PROFILES_DIR` | Directory holding `profiles.yml` (default: the project directory if it has one, else `~/.dre`). `--profiles-dir` overrides it. |
 | `DRE_PLUGINS_DIR` | One plugins directory for every project, instead of each project's `dre_deps/plugins`. |
-| `DRE_REGISTRY_URL` | The plugin registry index (a URL or a local path). |
+| `DRE_REGISTRY_URL` | The plugin package registry index (a URL or a local path). |
 | `DRE_RUN_DATE` | The run date (`YYYY-MM-DD`) behind `run.date`, instead of today. |
 | `DRE_TIMEZONE` | The run's timezone (IANA name), above every `timezone:` setting. `--timezone` overrides it. |
 | `DRE_LOG_MAX_LINES` | Lines per `logs/dre.log` before it rotates (default 10,000). |
@@ -237,26 +254,23 @@ vars, every var the run used and the command's parameters.
 - [Lookups: files, typed columns, inline or temp table](docs/lookups.md)
 - [Plugins and their profile fields](docs/plugins.md)
 - [Plugin protocol](docs/protocol.md), for writing a plugin in any language
-- [Plugin registry and `dre.lock`](docs/registry.md)
+- [Plugin packages, the registry and `dre.lock`](docs/registry.md)
 
 ## Building from source
 
-Requires a recent stable Rust toolchain, and Go for the Databricks adapter.
+Requires a recent stable Rust toolchain, and Go for the Databricks package.
 
 ```bash
 cargo build --release
 ./target/release/dre --help
 ```
 
-The first-party plugins are built from the same workspace (`target/release/dre-*`), except the
-Databricks adapter in `go/databricks`, which is one Go program installed under each of its plugin
-names:
+The first-party plugin packages are built from the same workspace
+(`target/release/dre-plugin-*`), except the Databricks package in `go/databricks`:
 
 ```bash
 cd go/databricks
-go build -o ../../target/release/dre-source-databricks .
-cp ../../target/release/dre-source-databricks ../../target/release/dre-destination-databricks_volumes
-cp ../../target/release/dre-source-databricks ../../target/release/dre-destination-databricks_workspace
+go build -o ../../target/release/dre-plugin-databricks .
 ```
 
 Put them in a project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them

@@ -1,0 +1,20 @@
+{
+  "duckdb": {"description": "DuckDB database files", "provides": ["source/duckdb"]},
+  "postgres": {"description": "PostgreSQL", "provides": ["source/postgres"]},
+  "databricks": {
+    "description": "Databricks SQL warehouses, Unity Catalog Volumes and workspace files",
+    "provides": ["source/databricks", "destination/databricks"]
+  },
+  "csv": {"description": "Comma-separated and other delimited text", "provides": ["format/csv", "format/delimited"]},
+  "fixed_width": {"description": "Fixed-width text", "provides": ["format/fixed_width"]},
+  "parquet": {"description": "Parquet", "provides": ["format/parquet"]},
+  "xlsx": {"description": "Excel workbooks, including templates", "provides": ["format/xlsx"]},
+  "object_store": {
+    "description": "Amazon S3 (and S3-compatible), Google Cloud Storage and Azure Blob Storage",
+    "provides": ["destination/s3", "destination/gcs", "destination/azure_blob"]
+  },
+  "sftp": {"description": "SFTP servers", "provides": ["destination/sftp"]},
+  "ftp": {"description": "FTP and FTPS servers", "provides": ["destination/ftp"]},
+  "email": {"description": "Email, with the output attached", "provides": ["destination/email"]},
+  "slack": {"description": "A Slack channel or DM", "provides": ["destination/slack"]}
+}

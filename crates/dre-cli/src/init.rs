@@ -4,9 +4,9 @@ use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use dre_core::manager::{self, Index, IndexPlugin};
+use dre_core::manager::{self, Index, IndexPackage};
 use dre_core::profiles::Role;
-use dre_core::project::PluginKind;
+use dre_core::project::{PluginId, PluginKind};
 use dre_protocol::host::PluginProcess;
 use dre_protocol::msg::ConnectionField;
 use serde_yaml_ng::{Mapping, Value};
@@ -17,8 +17,10 @@ use crate::output::{Printer, Tone};
 pub struct Scaffold {
     pub name: String,
     pub profile: String,
-    pub source: String,
+    /// Destination plugin names and their profiles.
     pub destinations: Vec<(String, String)>,
+    /// The plugin packages to declare, besides `csv` (the default output format's).
+    pub packages: Vec<String>,
 }
 
 /// Write a starter project into `dir`, which must be missing or empty.
@@ -31,14 +33,12 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
     {
         return Err(format!("{} already exists and isn't empty", dir.display()));
     }
-    let mut plugins = format!("sources:\n  - {}\nformats:\n  - csv\n", s.source);
-    if !s.destinations.is_empty() {
-        plugins.push_str("destinations:\n");
-        let mut kinds: Vec<&str> = s.destinations.iter().map(|(t, _)| t.as_str()).collect();
-        kinds.dedup();
-        for k in kinds {
-            plugins.push_str(&format!("  - {k}\n"));
-        }
+    let mut packages: Vec<&str> = s.packages.iter().map(String::as_str).collect();
+    packages.push("csv");
+    let mut plugins = String::from("plugins:\n");
+    let mut seen = std::collections::BTreeSet::new();
+    for p in packages.into_iter().filter(|p| seen.insert(*p)) {
+        plugins.push_str(&format!("  - {p}\n"));
     }
     let output = if s.destinations.is_empty() {
         String::new()
@@ -53,11 +53,8 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
             o.push_str(match kind.as_str() {
                 "email" => "      to: someone@example.com\n      subject: \"{{ run.report }} {{ run.date.iso }}\"\n",
                 "slack" => "      channel: \"#reports\"\n      message: \"{{ run.report }} for {{ run.date.iso }}\"\n",
-                "databricks_volumes" => {
+                "databricks" => {
                     "      path: \"/Volumes/<catalog>/<schema>/<volume>/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n"
-                }
-                "databricks_workspace" => {
-                    "      path: \"/Workspace/Shared/reports/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n"
                 }
                 _ => "      path: \"reports/{{ run.report }}-{{ run.date.yyyymmdd }}.csv\"\n",
             });
@@ -74,7 +71,7 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
         ),
         (
             "dependencies.yml",
-            format!("# Plugins this project needs. `dre deps` installs them.\n{plugins}"),
+            format!("# Plugin packages this project needs. `dre deps` installs them.\n{plugins}"),
         ),
         (
             "reports/examples/hello/hello.yml",
@@ -112,7 +109,8 @@ pub fn new(dir: PathBuf, profile: String, source: String, printer: &Printer) -> 
         &Scaffold {
             name,
             profile,
-            source,
+            // First-party sources come in a package of the same name.
+            packages: vec![source],
             destinations: Vec::new(),
         },
     ) {
@@ -192,11 +190,11 @@ impl<R: BufRead> Prompter<R> {
     fn pick<'a>(
         &mut self,
         q: &str,
-        options: &[&'a IndexPlugin],
+        options: &[Choice<'a>],
         allow_none: bool,
-    ) -> Result<Vec<&'a IndexPlugin>, String> {
-        for (i, p) in options.iter().enumerate() {
-            eprintln!("  {}) {:<18} {}", i + 1, p.name, p.description);
+    ) -> Result<Vec<Choice<'a>>, String> {
+        for (i, c) in options.iter().enumerate() {
+            eprintln!("  {}) {:<18} {}", i + 1, c.name(), c.package.description);
         }
         loop {
             let a = self.ask(q, if allow_none { Some("") } else { None })?;
@@ -210,7 +208,7 @@ impl<R: BufRead> Prompter<R> {
                     .parse::<usize>()
                     .ok()
                     .and_then(|n| options.get(n.wrapping_sub(1)).copied())
-                    .or_else(|| options.iter().find(|p| p.name == part).copied());
+                    .or_else(|| options.iter().find(|c| c.name() == part).copied());
                 match found {
                     Some(p) => picked.push(p),
                     None => ok = false,
@@ -222,6 +220,36 @@ impl<R: BufRead> Prompter<R> {
             eprintln!("Please choose from the list.");
         }
     }
+}
+
+/// A plugin to offer in `dre init`, and the package it comes in.
+#[derive(Clone, Copy)]
+struct Choice<'a> {
+    package: &'a IndexPackage,
+    plugin: &'a PluginId,
+}
+
+impl Choice<'_> {
+    fn name(&self) -> &str {
+        &self.plugin.name
+    }
+}
+
+/// Every plugin of `kind` the registry offers, by name.
+fn choices(index: &Index, kind: PluginKind) -> Vec<Choice<'_>> {
+    let mut out: Vec<Choice> = index
+        .plugins
+        .iter()
+        .flat_map(|package| {
+            package
+                .provides
+                .iter()
+                .filter(move |p| p.kind == kind)
+                .map(move |plugin| Choice { package, plugin })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name().cmp(b.name()));
+    out
 }
 
 /// The environment variable a secret defaults to: `dre-demo` + `token` → `DRE_DEMO_TOKEN`.
@@ -297,31 +325,32 @@ fn connection<R: BufRead>(
     Ok(m)
 }
 
-fn install_and_describe(
-    index_plugin: &IndexPlugin,
-    printer: &Printer,
-) -> Result<Vec<ConnectionField>, String> {
-    let v = index_plugin.best(&semver::VersionReq::STAR).ok_or_else(|| {
+fn install_and_describe(choice: Choice, printer: &Printer) -> Result<Vec<ConnectionField>, String> {
+    let package = choice.package;
+    let v = package.best(&semver::VersionReq::STAR).ok_or_else(|| {
         format!(
-            "no release of `{}` for {}",
-            index_plugin.name,
+            "no release of the plugin package `{}` for {}",
+            package.name,
             manager::platform()
         )
     })?;
     let dir = dre_core::plugins::plugins_dir(None);
-    let locked = manager::install(&dir, index_plugin, v, None)?;
-    printer.line(
-        Tone::Good,
-        "Installed",
-        &format!(
-            "{} plugin `{}` {}",
-            index_plugin.kind.as_str(),
-            index_plugin.name,
-            locked.version
-        ),
-    );
-    let path = manager::install_path(&dir, index_plugin.kind, &index_plugin.name, &locked.version);
-    let mut proc_ = PluginProcess::start(&path, std::sync::Arc::new(|_, _| {})).map_err(|e| e.to_string())?;
+    let vdir = dre_core::plugins::version_dir(&dir, &package.name, &v.version);
+    // A package already installed for an earlier choice isn't downloaded again.
+    if dre_core::plugins::read_manifest(&vdir).is_none() {
+        let locked = manager::install(&dir, package, v, None)?;
+        printer.line(
+            Tone::Good,
+            "Installed",
+            &format!("plugin package `{}` {}", package.name, locked.version),
+        );
+    }
+    let m = dre_core::plugins::read_manifest(&vdir)
+        .ok_or_else(|| format!("{} has no plugin manifest after installing", vdir.display()))?;
+    let path = vdir.join(&m.executable);
+    let mut proc_ =
+        PluginProcess::start_for(&path, Some(choice.plugin), std::sync::Arc::new(|_, _| {}), None)
+            .map_err(|e| e.to_string())?;
     let fields = proc_.describe().map_err(|e| e.to_string())?;
     let _ = proc_.close();
     Ok(fields)
@@ -419,11 +448,7 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
         dre_core::profiles::profiles_dir(profiles_dir.as_deref()).join(dre_core::profiles::PROFILES_FILE);
     eprintln!("Welcome to DRE. This sets up a connection, installs its plugin and can start a project.\n");
 
-    let sources: Vec<&IndexPlugin> = index
-        .plugins
-        .iter()
-        .filter(|x| x.kind == PluginKind::Source)
-        .collect();
+    let sources = choices(&index, PluginKind::Source);
     if sources.is_empty() {
         return Err("the plugin registry lists no sources".into());
     }
@@ -432,7 +457,7 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
     let fields = install_and_describe(source, printer)?;
     let profile = p.ask("Name for this connection profile", Some("warehouse"))?;
     let target = p.ask("Target (environment) name", Some("dev"))?;
-    eprintln!("\nConnection details for `{}`.", source.name);
+    eprintln!("\nConnection details for `{}`.", source.name());
     eprintln!("Secrets default to an env_var() reference; type a value to store it instead.\n");
     let conn = connection(&mut p, &profile, &fields, None)?;
     add_profile(
@@ -440,11 +465,11 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
         Role::Source,
         &profile,
         &target,
-        &source.name,
+        source.name(),
         conn.clone(),
     )?;
     let source_conn = SourceConn {
-        kind: &source.name,
+        kind: source.name(),
         profile: &profile,
         fields: &conn,
     };
@@ -454,12 +479,9 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
         &format!("profile `{profile}` to {}", profiles_path.display()),
     );
 
-    let dests: Vec<&IndexPlugin> = index
-        .plugins
-        .iter()
-        .filter(|x| x.kind == PluginKind::Destination)
-        .collect();
+    let dests = choices(&index, PluginKind::Destination);
     let mut destinations = Vec::new();
+    let mut packages = vec![source.package.name.clone()];
     if !dests.is_empty() {
         eprintln!(
             "\nWhere should reports be delivered? A copy always stays in target/.\n\
@@ -468,18 +490,19 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
         for d in p.pick("Destinations", &dests, true)? {
             let fields = install_and_describe(d, printer)?;
             let name = p.ask(
-                &format!("Profile name for `{}`", d.name),
-                Some(&format!("{}_{}", d.name, "out")),
+                &format!("Profile name for `{}`", d.name()),
+                Some(&format!("{}_{}", d.name(), "out")),
             )?;
-            eprintln!("\nConnection details for `{}`.\n", d.name);
+            eprintln!("\nConnection details for `{}`.\n", d.name());
             let conn = connection(&mut p, &name, &fields, Some(&source_conn))?;
-            add_profile(&profiles_path, Role::Destination, &name, &target, &d.name, conn)?;
+            add_profile(&profiles_path, Role::Destination, &name, &target, d.name(), conn)?;
             printer.line(
                 Tone::Good,
                 "Saved",
                 &format!("profile `{name}` to {}", profiles_path.display()),
             );
-            destinations.push((d.name.clone(), name));
+            destinations.push((d.name().to_string(), name));
+            packages.push(d.package.name.clone());
         }
     }
 
@@ -489,8 +512,8 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
         let s = Scaffold {
             name: project_name(&dir),
             profile,
-            source: source.name.clone(),
             destinations,
+            packages,
         };
         let files = scaffold(&dir, &s)?;
         printer.line(

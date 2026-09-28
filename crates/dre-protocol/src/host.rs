@@ -19,7 +19,7 @@ use serde_json::{Map, Value};
 use crate::frame::{self, Frame, FrameError};
 use crate::msg::{ConnectionField, DeliveryFile, Request, Response, ResultSetMeta};
 use crate::options::OptionField;
-use crate::{Kind, MAX_VERSION, MIN_VERSION};
+use crate::{Kind, MAX_VERSION, MIN_VERSION, PluginId, parse_executable_name};
 
 /// Receives each stderr line a plugin writes.
 pub type LogSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
@@ -42,6 +42,8 @@ pub struct PluginInfo {
     pub name: String,
     pub version: String,
     pub capabilities: Vec<String>,
+    /// Every plugin the executable serves (at least the one it's serving now).
+    pub provides: Vec<PluginId>,
 }
 
 #[derive(Debug)]
@@ -181,6 +183,9 @@ pub struct PluginProcess {
     info: Option<PluginInfo>,
     /// A reply that arrived while core was still sending (a format failing mid-stream).
     early: Option<std::result::Result<Frame, FrameError>>,
+    /// The plugin asked for in the handshake. By default the one a `dre-<kind>-<name>` file name
+    /// names; none for a package executable, which then serves its first plugin.
+    serve: Option<PluginId>,
 }
 
 impl PluginProcess {
@@ -191,12 +196,25 @@ impl PluginProcess {
 
     /// Like `start`, running the plugin in `cwd` (core uses the project directory).
     pub fn start_in(path: &Path, log: LogSink, cwd: Option<&Path>) -> Result<PluginProcess> {
+        Self::start_for(path, None, log, cwd)
+    }
+
+    /// Like `start_in`, asking the executable for `plugin` (one of a package's plugins).
+    pub fn start_for(
+        path: &Path,
+        plugin: Option<&PluginId>,
+        log: LogSink,
+        cwd: Option<&Path>,
+    ) -> Result<PluginProcess> {
         let timeout = std::env::var("DRE_PLUGIN_HANDSHAKE_TIMEOUT_MS")
             .ok()
             .and_then(|v| v.parse().ok())
             .map(Duration::from_millis)
             .unwrap_or(DEFAULT_HANDSHAKE_TIMEOUT);
         let mut p = Self::spawn_in(path, log, &[], cwd)?;
+        if let Some(id) = plugin {
+            p.serve = Some(id.clone());
+        }
         p.handshake((MIN_VERSION, MAX_VERSION), timeout)?;
         Ok(p)
     }
@@ -284,6 +302,7 @@ impl PluginProcess {
                 t.push_back(line);
             }
         });
+        let serve = parse_executable_name(&label).map(|(k, n)| PluginId::new(k, n));
         Ok(PluginProcess {
             label,
             path: path.to_path_buf(),
@@ -294,7 +313,13 @@ impl PluginProcess {
             stderr_thread: Some(stderr_thread),
             info: None,
             early: None,
+            serve,
         })
+    }
+
+    /// Name the plugin to ask for in the handshake (`None`: a package's first).
+    pub fn ask_for(&mut self, plugin: Option<PluginId>) {
+        self.serve = plugin;
     }
 
     /// Complete the handshake on a process from `spawn`/`spawn_env`.
@@ -303,6 +328,7 @@ impl PluginProcess {
             min_version: min,
             max_version: max,
             core_version: core_version(),
+            plugin: self.serve.clone(),
         })?;
         match self.recv(Some(timeout), "the hello reply")? {
             Incoming::Json(Response::Hello {
@@ -311,6 +337,7 @@ impl PluginProcess {
                 name,
                 version,
                 capabilities,
+                mut provides,
             }) => {
                 if protocol_version < min || protocol_version > max {
                     return Err(HostError::Incompatible {
@@ -319,12 +346,27 @@ impl PluginProcess {
                         plugin_range: (protocol_version, protocol_version),
                     });
                 }
+                if let Some(want) = &self.serve
+                    && (want.kind != kind || want.name != name)
+                {
+                    return Err(HostError::Plugin {
+                        plugin: self.label.clone(),
+                        message: format!(
+                            "`{}` was asked for the {want} plugin but serves {kind}/{name}",
+                            self.label
+                        ),
+                    });
+                }
+                if provides.is_empty() {
+                    provides.push(PluginId::new(kind, name.clone()));
+                }
                 self.info = Some(PluginInfo {
                     protocol_version,
                     kind,
                     name,
                     version,
                     capabilities,
+                    provides,
                 });
                 Ok(())
             }

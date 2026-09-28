@@ -1,6 +1,6 @@
-//! First-party plugins built outside Cargo (the Go Databricks adapter, installed as
-//! `dre-source-databricks` and `dre-destination-databricks_volumes`), checked through the same
-//! host code core uses. CI builds them and sets `DRE_TEST_GO_PLUGINS` to their directory; the
+//! First-party plugins built outside Cargo (the Go Databricks package, `dre-plugin-databricks`,
+//! serving the `databricks` source and destination), checked through the same host code core
+//! uses. CI builds them and sets `DRE_TEST_GO_PLUGINS` to their directory; the
 //! tests skip themselves when it's unset. The real-warehouse test also needs
 //! `DRE_TEST_DATABRICKS_HOST`, `_HTTP_PATH` and `_TOKEN`.
 
@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use dre_protocol::host::{Execution, LogSink, PluginProcess};
-use dre_protocol::{CAP_CHECK, CAP_LOAD, CAP_SESSIONS, conformance};
+use dre_protocol::{CAP_CHECK, CAP_LOAD, CAP_SESSIONS, Kind, PluginId, conformance};
 use serde_json::json;
 
 fn go_plugin(name: &str) -> Option<PathBuf> {
@@ -27,41 +27,43 @@ fn go_plugin(name: &str) -> Option<PathBuf> {
     Some(p)
 }
 
+const PACKAGE: &str = "dre-plugin-databricks";
+
+fn source() -> PluginId {
+    PluginId::new(Kind::Source, "databricks")
+}
+
+/// Start the package as the `databricks` source.
+fn start_source(bin: &std::path::Path, log: LogSink) -> PluginProcess {
+    PluginProcess::start_for(bin, Some(&source()), log, None).unwrap()
+}
+
 #[test]
-fn the_go_databricks_source_conforms_to_the_protocol() {
-    let Some(bin) = go_plugin("dre-source-databricks") else {
+fn the_go_databricks_package_conforms_to_the_protocol() {
+    let Some(bin) = go_plugin(PACKAGE) else {
         eprintln!("skipped: set DRE_TEST_GO_PLUGINS to the built Go plugins");
         return;
     };
     conformance::assert_conforms(&bin);
     let log: LogSink = Arc::new(|_, _| {});
-    let p = PluginProcess::start(&bin, log).unwrap();
+    let p = start_source(&bin, log.clone());
     assert!(p.has(CAP_SESSIONS) && p.has(CAP_CHECK) && p.has(CAP_LOAD));
-}
-
-#[test]
-fn the_go_databricks_volumes_destination_conforms_to_the_protocol() {
-    let Some(bin) = go_plugin("dre-destination-databricks_volumes") else {
-        return;
-    };
-    conformance::assert_conforms(&bin);
-}
-
-#[test]
-fn the_go_databricks_workspace_destination_conforms_to_the_protocol() {
-    let Some(bin) = go_plugin("dre-destination-databricks_workspace") else {
-        return;
-    };
-    conformance::assert_conforms(&bin);
+    assert_eq!(
+        p.info().provides,
+        vec![source(), PluginId::new(Kind::Destination, "databricks")]
+    );
+    let dest = PluginId::new(Kind::Destination, "databricks");
+    let p = PluginProcess::start_for(&bin, Some(&dest), log, None).unwrap();
+    assert_eq!(p.info().kind, Kind::Destination);
 }
 
 #[test]
 fn the_go_databricks_source_explains_a_missing_field() {
-    let Some(bin) = go_plugin("dre-source-databricks") else {
+    let Some(bin) = go_plugin(PACKAGE) else {
         return;
     };
     let log: LogSink = Arc::new(|_, _| {});
-    let mut p = PluginProcess::start(&bin, log).unwrap();
+    let mut p = start_source(&bin, log);
     let conn = json!({"host": "dbc-1.cloud.databricks.com"});
     let err = p
         .open(conn.as_object().unwrap().clone(), false)
@@ -79,7 +81,7 @@ fn the_go_databricks_source_explains_a_missing_field() {
 /// A real warehouse: one session across statements, typed Arrow results, `check`, `load`.
 #[test]
 fn the_go_databricks_source_holds_one_session_on_a_real_warehouse() {
-    let Some(bin) = go_plugin("dre-source-databricks") else {
+    let Some(bin) = go_plugin(PACKAGE) else {
         return;
     };
     let (Ok(host), Ok(path), Ok(token)) = (
@@ -91,7 +93,7 @@ fn the_go_databricks_source_holds_one_session_on_a_real_warehouse() {
         return;
     };
     let log: LogSink = Arc::new(|_, l| eprintln!("[plugin] {l}"));
-    let mut p = PluginProcess::start(&bin, log).unwrap();
+    let mut p = start_source(&bin, log);
     let conn = json!({"host": host, "http_path": path, "token": token});
     p.open(conn.as_object().unwrap().clone(), false).unwrap();
     let mut run = |sql: &str, limit: Option<u64>| {

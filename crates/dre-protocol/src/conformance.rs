@@ -1,6 +1,7 @@
 //! The protocol conformance suite. Every first-party plugin runs it in its tests; third-party
 //! plugin authors can run it too. It only checks protocol behaviour common to every plugin kind;
-//! each plugin's own tests cover what it does with real data.
+//! each plugin's own tests cover what it does with real data. A package executable
+//! (`dre-plugin-<package>`) is checked once per plugin it provides.
 
 // Each check is an immediately-invoked closure so `?` works inside it.
 #![allow(clippy::redundant_closure_call)]
@@ -13,12 +14,14 @@ use crate::host::{HostError, Incoming, LogSink, PluginProcess};
 use serde_json::{Map, json};
 
 use crate::msg::{DeliveryFile, Request, Response};
-use crate::{MAX_VERSION, MIN_VERSION, parse_executable_name};
+use crate::{MAX_VERSION, MIN_VERSION, PluginId, parse_executable_name, parse_package_executable_name};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Debug)]
 pub struct Check {
+    /// The plugin checked (`<kind>/<name>`), or the package for checks of the package itself.
+    pub plugin: String,
     pub name: &'static str,
     pub passed: bool,
     pub detail: String,
@@ -30,10 +33,14 @@ fn quiet() -> LogSink {
 
 fn start_versions(
     path: &Path,
+    plugin: Option<&PluginId>,
     env: &[(&str, &str)],
     versions: (u32, u32),
 ) -> Result<PluginProcess, HostError> {
     let mut p = PluginProcess::spawn_env(path, quiet(), env)?;
+    if plugin.is_some() {
+        p.ask_for(plugin.cloned());
+    }
     p.handshake(versions, TIMEOUT)?;
     Ok(p)
 }
@@ -46,10 +53,56 @@ pub fn run(path: &Path) -> Vec<Check> {
 /// Like [`run`], with extra environment variables for every plugin process (for plugins whose
 /// capabilities depend on their environment).
 pub fn run_with_env(path: &Path, env: &[(&str, &str)]) -> Vec<Check> {
-    let start = |path: &Path| start_versions(path, env, (MIN_VERSION, MAX_VERSION));
+    let file = path.file_name().unwrap().to_string_lossy().to_string();
+    if let Some((kind, name)) = parse_executable_name(&file) {
+        return run_plugin(path, &PluginId::new(kind, name), false, env);
+    }
+    let fail = |detail: String| {
+        vec![Check {
+            plugin: file.clone(),
+            name: "the executable is named dre-plugin-<package> or dre-<kind>-<name>",
+            passed: false,
+            detail,
+        }]
+    };
+    let Some(package) = parse_package_executable_name(&file) else {
+        return fail(format!("`{file}` is neither"));
+    };
+    let provides = match start_versions(path, None, env, (MIN_VERSION, MAX_VERSION)) {
+        Ok(p) => {
+            let provides = p.info().provides.clone();
+            let _ = p.close();
+            provides
+        }
+        Err(e) => return fail(format!("the handshake failed: {e}")),
+    };
+    let mut out = Vec::new();
+    let unknown = PluginId::new(crate::Kind::Format, "dre_conformance_unknown");
+    let refused = match start_versions(path, Some(&unknown), env, (MIN_VERSION, MAX_VERSION)) {
+        Err(HostError::Plugin { .. }) => Ok(()),
+        Err(e) => Err(format!("expected an error reply, got: {e}")),
+        Ok(_) => Err(format!("the package served {unknown}, which it doesn't provide")),
+    };
+    out.push(Check {
+        plugin: package,
+        name: "asking for a plugin the package doesn't provide gets an error reply",
+        passed: refused.is_ok(),
+        detail: refused.err().unwrap_or_default(),
+    });
+    for id in &provides {
+        out.extend(run_plugin(path, id, true, env));
+    }
+    out
+}
+
+/// Every check, for one plugin. `ask`: name it in the handshake (a package's plugins).
+fn run_plugin(path: &Path, id: &PluginId, ask: bool, env: &[(&str, &str)]) -> Vec<Check> {
+    let asked = ask.then_some(id);
+    let start = |path: &Path| start_versions(path, asked, env, (MIN_VERSION, MAX_VERSION));
     let mut out = Vec::new();
     let mut check = |name: &'static str, r: Result<(), String>| {
         out.push(Check {
+            plugin: id.to_string(),
             name,
             passed: r.is_ok(),
             detail: r.err().unwrap_or_default(),
@@ -61,14 +114,14 @@ pub fn run_with_env(path: &Path, env: &[(&str, &str)]) -> Vec<Check> {
         (|| {
             let p = start(path).map_err(|e| e.to_string())?;
             let info = p.info().clone();
-            let file = path.file_name().unwrap().to_string_lossy().to_string();
-            let (kind, name) =
-                parse_executable_name(&file).ok_or(format!("`{file}` isn't named dre-<kind>-<name>"))?;
-            if info.kind != kind || info.name != name {
+            if info.kind != id.kind || info.name != id.name {
                 return Err(format!(
-                    "file says {kind}/{name}, handshake says {}/{}",
+                    "expected {id}, handshake says {}/{}",
                     info.kind, info.name
                 ));
+            }
+            if !info.provides.contains(id) {
+                return Err(format!("`provides` doesn't list {id}: {:?}", info.provides));
             }
             if info.version.is_empty() {
                 return Err("empty plugin version".into());
@@ -81,7 +134,7 @@ pub fn run_with_env(path: &Path, env: &[(&str, &str)]) -> Vec<Check> {
         "an unsupported protocol range is refused, not hung on",
         (|| {
             let far = MAX_VERSION + 1000;
-            match start_versions(path, env, (far, far)) {
+            match start_versions(path, asked, env, (far, far)) {
                 Err(HostError::Incompatible { plugin_range, .. }) if plugin_range.1 < far => Ok(()),
                 Err(e) => Err(format!("expected a version mismatch, got: {e}")),
                 Ok(_) => Err("the plugin accepted a protocol version it can't speak".into()),
@@ -265,7 +318,7 @@ pub fn assert_conforms(path: &Path) {
     let failed: Vec<String> = checks
         .iter()
         .filter(|c| !c.passed)
-        .map(|c| format!("  ✗ {}: {}", c.name, c.detail))
+        .map(|c| format!("  ✗ {}: {}: {}", c.plugin, c.name, c.detail))
         .collect();
     assert!(
         failed.is_empty(),

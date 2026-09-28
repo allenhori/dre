@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use dre_core::lock::Lock;
-use dre_core::manager::{self, Index};
-use dre_core::project::{self, LoadOptions, PluginKind, PluginSource, Project};
+use dre_core::manager::{self, Index, IndexPackage};
+use dre_core::project::{self, LoadOptions, PluginSource, Project};
 use semver::VersionReq;
 
 use crate::output::{Printer, Tone};
@@ -64,30 +64,14 @@ pub fn check_for_validate(
     }
 }
 
-/// Parse `name`, `kind/name`, with an optional `@req`.
-fn parse(spec: &str, index: &Index) -> Result<(PluginKind, String, Option<VersionReq>), String> {
-    let (id, req) = match spec.split_once('@') {
-        Some((i, r)) => (
-            i,
+/// Parse `package[@req]`.
+fn parse(spec: &str) -> Result<(String, Option<VersionReq>), String> {
+    match spec.split_once('@') {
+        Some((i, r)) => Ok((
+            i.to_string(),
             Some(VersionReq::parse(r).map_err(|e| format!("invalid version `{r}`: {e}"))?),
-        ),
-        None => (spec, None),
-    };
-    if let Some((k, n)) = id.split_once('/') {
-        let kind = PluginKind::parse(k)
-            .ok_or_else(|| format!("unknown plugin kind `{k}` (source, format, destination)"))?;
-        return Ok((kind, n.to_string(), req));
-    }
-    match index.by_name(id).as_slice() {
-        [] => Err(format!("the registry has no plugin called `{id}`")),
-        [p] => Ok((p.kind, id.to_string(), req)),
-        many => Err(format!(
-            "`{id}` is ambiguous; use one of: {}",
-            many.iter()
-                .map(|p| format!("{}/{id}", p.kind.as_str()))
-                .collect::<Vec<_>>()
-                .join(", ")
         )),
+        None => Ok((spec.to_string(), None)),
     }
 }
 
@@ -98,57 +82,70 @@ fn project_at(dir: &std::path::Path) -> Option<Project> {
     project::load(dir, &LoadOptions::default()).0
 }
 
+/// The package called `name` in `index`, or why there isn't one.
+fn package<'a>(index: &'a Index, name: &str) -> Result<&'a IndexPackage, String> {
+    if let Some(p) = index.package(name) {
+        return Ok(p);
+    }
+    let inside: Vec<String> = index
+        .providers_of_name(name)
+        .iter()
+        .map(|p| format!("`{}`", p.name))
+        .collect();
+    Err(if inside.is_empty() {
+        format!("the registry has no plugin package `{name}`")
+    } else {
+        format!(
+            "the registry has no plugin package `{name}`; the `{name}` plugin comes in {}",
+            inside.join(", ")
+        )
+    })
+}
+
 /// `dre plugin install` / `dre plugin update`.
 pub fn install(spec: String, project_dir: PathBuf, update: bool, printer: &Printer) -> ExitCode {
-    let project = project_at(&project_dir);
-    // A plugin the project declares installs from wherever it's declared to come from.
-    let id = spec.split_once('@').map_or(spec.as_str(), |(i, _)| i);
-    let from_project: Vec<&dre_core::project::PluginRequirement> = project
-        .iter()
-        .flat_map(|p| &p.plugins)
-        .filter(|r| r.name == id || format!("{}/{}", r.kind.as_str(), r.name) == id)
-        .collect();
-    let source = match from_project.as_slice() {
-        [r] => Some((r.source.clone(), r.kind, r.name.clone())),
-        _ => None,
-    };
-    if let Some((PluginSource::Local(path), kind, name)) = &source {
-        printer.line(
-            Tone::Note,
-            "Local",
-            &format!(
-                "{} plugin `{name}` is used from {path}; there's nothing to install",
-                kind.as_str()
-            ),
-        );
-        return ExitCode::SUCCESS;
-    }
-    let index = match &source {
-        Some((s, kind, name)) => Index::for_source(s, *kind, name),
-        None => Index::load(),
-    };
-    let index = match index {
-        Ok(i) => i,
-        Err(e) => {
-            printer.error(&e);
-            return ExitCode::FAILURE;
-        }
-    };
-    let (kind, name, cli_req) = match parse(&spec, &index) {
+    let (name, cli_req) = match parse(&spec) {
         Ok(x) => x,
         Err(e) => {
             printer.error(&e);
             return ExitCode::FAILURE;
         }
     };
-    let source_key = source.as_ref().and_then(|(s, _, _)| s.lock_key());
+    let project = project_at(&project_dir);
+    // A package the project declares installs from wherever it's declared to come from.
     let declared = project
-        .as_ref()
-        .and_then(|p| p.plugins.iter().find(|r| r.kind == kind && r.name == name))
-        .map(|r| r.req());
+        .iter()
+        .flat_map(|p| &p.plugins)
+        .find(|r| r.name == name)
+        .cloned();
+    let source = declared.as_ref().map(|r| r.source.clone()).unwrap_or_default();
+    if let PluginSource::Local(path) = &source {
+        printer.line(
+            Tone::Note,
+            "Local",
+            &format!("plugin package `{name}` is used from {path}; there's nothing to install"),
+        );
+        return ExitCode::SUCCESS;
+    }
+    let index = match Index::for_source(&source, &name) {
+        Ok(i) => i,
+        Err(e) => {
+            printer.error(&e);
+            return ExitCode::FAILURE;
+        }
+    };
+    let package = match package(&index, &name) {
+        Ok(p) => p,
+        Err(e) => {
+            printer.error(&e);
+            return ExitCode::FAILURE;
+        }
+    };
+    let source_key = source.lock_key();
+    let declared_req = declared.as_ref().map(|r| r.req());
     let mut lock = project.as_ref().map(|p| Lock::load(&p.root).unwrap_or_default());
     // The declared constraint always applies; a CLI constraint narrows it further.
-    let req = match (&declared, &cli_req) {
+    let req = match (&declared_req, &cli_req) {
         (Some(d), Some(c)) => {
             if !dre_core::constraints::compatible(&[d, c]) {
                 printer.error(&format!(
@@ -162,39 +159,44 @@ pub fn install(spec: String, project_dir: PathBuf, update: bool, printer: &Print
         (None, Some(c)) => c.clone(),
         (None, None) => VersionReq::STAR,
     };
-    let Some(plugin) = index.plugin(kind, &name) else {
-        printer.error(&format!("the registry has no {} plugin `{name}`", kind.as_str()));
-        return ExitCode::FAILURE;
-    };
     let pinned = lock
         .as_ref()
-        .and_then(|l| l.get(kind, &name).cloned())
+        .and_then(|l| l.get(&name).cloned())
         .filter(|l| l.from == source_key);
     let version = match (&pinned, update, &cli_req) {
-        (Some(l), false, None) => plugin.exact(&l.version),
-        _ => plugin.best(&req),
+        (Some(l), false, None) => package.exact(&l.version),
+        _ => package.best(&req),
     };
     let Some(version) = version else {
         printer.error(&format!(
-            "no version of {} `{name}` matches `{req}` for {}",
-            kind.as_str(),
+            "no version of the plugin package `{name}` matches `{req}` for {}",
             manager::platform()
         ));
         return ExitCode::FAILURE;
     };
     let dir = dre_core::plugins::plugins_dir(project.as_ref().map(|p| p.root.as_path()));
-    match manager::install_linked(&dir, plugin, version, None) {
+    let installed = if source.is_default() {
+        manager::install_linked(&dir, package, version, None)
+    } else {
+        manager::install(&dir, package, version, None)
+    };
+    match installed {
         Ok(mut locked) => {
             locked.from = source_key.clone();
+            let provides: Vec<String> = locked.provides.iter().map(|p| p.to_string()).collect();
             printer.line(
                 Tone::Good,
                 "Installed",
-                &format!("{} plugin `{name}` {}", kind.as_str(), locked.version),
+                &format!(
+                    "plugin package `{name}` {} ({})",
+                    locked.version,
+                    provides.join(", ")
+                ),
             );
             if let (Some(p), Some(l)) = (&project, lock.as_mut())
                 && declared.is_some()
             {
-                l.map_mut(kind).insert(name.clone(), locked);
+                l.plugins.insert(name.clone(), locked);
                 if let Err(e) = l.save(&p.root) {
                     printer.error(&e);
                     return ExitCode::FAILURE;
@@ -216,7 +218,7 @@ pub fn install(spec: String, project_dir: PathBuf, update: bool, printer: &Print
 
 /// `dre plugin remove`.
 pub fn remove(spec: String, project_dir: PathBuf, printer: &Printer) -> ExitCode {
-    let (id, version) = match spec.split_once('@') {
+    let (name, version) = match spec.split_once('@') {
         Some((i, v)) => match semver::Version::parse(v) {
             Ok(v) => (i.to_string(), Some(v)),
             Err(e) => {
@@ -228,27 +230,18 @@ pub fn remove(spec: String, project_dir: PathBuf, printer: &Printer) -> ExitCode
     };
     let in_project = project_dir.join(project::PROJECT_FILE).is_file();
     let dir = dre_core::plugins::plugins_dir(in_project.then_some(project_dir.as_path()));
-    let (kind_filter, name) = match id.split_once('/') {
-        Some((k, n)) => (PluginKind::parse(k), n.to_string()),
-        None => (None, id),
-    };
     let targets: Vec<_> = dre_core::plugins::discover(&dir)
         .into_iter()
-        .filter(|p| p.name == name && kind_filter.is_none_or(|k| k == p.kind))
+        .filter(|p| p.name == name)
         .filter(|p| version.is_none() || p.version == version)
         .collect();
     if targets.is_empty() {
-        printer.error(&format!("no installed plugin matches `{spec}`"));
+        printer.error(&format!("no installed plugin package matches `{spec}`"));
         return ExitCode::FAILURE;
     }
     for t in &targets {
-        let dir_to_remove = if t.version.is_some() {
-            t.path.parent().map(|p| p.to_path_buf())
-        } else {
-            None
-        };
-        let r = match dir_to_remove {
-            Some(d) => std::fs::remove_dir_all(&d),
+        let r = match &t.version {
+            Some(_) => t.path.parent().map_or(Ok(()), std::fs::remove_dir_all),
             None => std::fs::remove_file(&t.path),
         };
         if let Err(e) = r {
@@ -260,27 +253,19 @@ pub fn remove(spec: String, project_dir: PathBuf, printer: &Printer) -> ExitCode
             .as_ref()
             .map(|v| v.to_string())
             .unwrap_or_else(|| "(unversioned)".into());
-        printer.line(
-            Tone::Good,
-            "Removed",
-            &format!("{} plugin `{}` {v}", t.kind, t.name),
-        );
+        printer.line(Tone::Good, "Removed", &format!("plugin package `{}` {v}", t.name));
     }
     // Drop the lock pin if the pinned version is gone.
     if let Some(p) = project_at(&project_dir)
         && let Ok(mut lock) = Lock::load(&p.root)
     {
-        let mut changed = false;
-        for t in &targets {
-            let kind = t.kind;
-            if let Some(l) = lock.get(kind, &t.name)
-                && (t.version.is_none() || t.version.as_ref() == Some(&l.version))
-            {
-                lock.map_mut(kind).remove(&t.name);
-                changed = true;
-            }
-        }
-        if changed {
+        let gone = lock.get(&name).is_some_and(|l| {
+            targets
+                .iter()
+                .any(|t| t.version.is_none() || t.version.as_ref() == Some(&l.version))
+        });
+        if gone {
+            lock.plugins.remove(&name);
             if let Err(e) = lock.save(&p.root) {
                 printer.error(&e);
                 return ExitCode::FAILURE;

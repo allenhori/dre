@@ -13,7 +13,7 @@ use serde_json::{Map as JsonMap, Value as Json};
 use serde_yaml_ng::{Mapping, Value};
 
 use crate::dates::{WeekNumbering, WeekStart};
-use crate::diag::{Diagnostic, Diagnostics, Severity};
+use crate::diag::Diagnostics;
 use crate::lookups::{self, DEFAULT_INLINE_MAX_ROWS, LOOKUPS_DIR, Lookup};
 use crate::packages::{self, DispatchOrder, Package};
 
@@ -63,7 +63,11 @@ const REPORT_KEYS: &[&str] = &[
     "vars",
     "timezone",
 ];
-const PLUGIN_KEYS: &[&str] = &["sources", "destinations", "formats"];
+/// Declares the project's plugin packages, in any project YAML file.
+const PLUGINS_KEY: &str = "plugins";
+const PLUGIN_KEYS: &[&str] = &[PLUGINS_KEY];
+/// Where plugins were declared before packages; now an error pointing at `plugins:`.
+const OLD_PLUGIN_KEYS: &[&str] = &["sources", "destinations", "formats"];
 const PROJECT_KEYS: &[&str] = &[
     "name",
     "default_profile",
@@ -114,7 +118,15 @@ pub struct Project {
     pub format_options: BTreeMap<String, JsonMap<String, Json>>,
     pub reports: Vec<Report>,
     pub sets: BTreeMap<String, SetDef>,
+    /// The declared plugin packages.
     pub plugins: Vec<PluginRequirement>,
+    /// Every plugin the project uses, checked against the declared packages once they're
+    /// installed ([`crate::plugins::check_uses`]).
+    #[serde(skip)]
+    pub plugin_uses: Vec<PluginUse>,
+    /// Some package's declarations conflict, so it's missing from `plugins`.
+    #[serde(skip)]
+    pub plugins_incomplete: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub schedules: Vec<ScheduleEntry>,
     /// Macro files under `macros/`, relative to the root.
@@ -299,10 +311,12 @@ pub struct SetDef {
 
 /// A plugin's kind; the same type the protocol uses.
 pub use dre_protocol::Kind as PluginKind;
+pub use dre_protocol::PluginId;
 
+/// A declared plugin package.
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginRequirement {
-    pub kind: PluginKind,
+    /// The package's name.
     pub name: String,
     /// The intersection of every declared constraint.
     pub version: String,
@@ -311,6 +325,16 @@ pub struct PluginRequirement {
     /// Where it's installed from.
     #[serde(skip_serializing_if = "PluginSource::is_default")]
     pub source: PluginSource,
+}
+
+/// A plugin the project uses: a profile's `type:` or an output's `format:`.
+#[derive(Debug, Clone, Serialize)]
+pub struct PluginUse {
+    pub plugin: PluginId,
+    pub file: Option<PathBuf>,
+    pub line: Option<usize>,
+    /// What uses it, for messages: "`type: s3` used by destination profile `reports`".
+    pub what: String,
 }
 
 /// Where a plugin comes from: `dependencies.yml`'s `registry:`, `github:` or `local:`.
@@ -588,7 +612,7 @@ impl Loader {
         project.reports = resolved;
 
         self.check_profiles(&project, &used);
-        project.plugins = self.check_plugins(&plugin_decls, &project, &used);
+        self.check_plugins(&plugin_decls, &mut project, &used);
         project.schedules = self.parse_schedules(&schedule_files, &project);
         self.apply_schedules(&mut project);
         self.preflight(&project, &used);
@@ -611,7 +635,9 @@ impl Loader {
             return None;
         };
         for k in m.keys().filter_map(Value::as_str) {
-            if !PROJECT_KEYS.contains(&k) && !PLUGIN_KEYS.contains(&k) {
+            if OLD_PLUGIN_KEYS.contains(&k) {
+                self.old_plugin_key(yf, k);
+            } else if !PROJECT_KEYS.contains(&k) && !PLUGIN_KEYS.contains(&k) {
                 self.diags.error(
                     "unknown-key",
                     file.clone(),
@@ -736,6 +762,8 @@ impl Loader {
             reports: Vec::new(),
             sets: BTreeMap::new(),
             plugins: Vec::new(),
+            plugin_uses: Vec::new(),
+            plugins_incomplete: false,
             schedules: Vec::new(),
             macros: Vec::new(),
             packages: Vec::new(),
@@ -1065,9 +1093,17 @@ impl Loader {
                         "`packages:` goes in dependencies.yml or packages.yml at the project root",
                     );
                 }
+                if dependency_file {
+                    for k in m.keys().filter_map(Value::as_str) {
+                        if OLD_PLUGIN_KEYS.contains(&k) {
+                            self.old_plugin_key(&yf, k);
+                        }
+                    }
+                }
                 let rest: Mapping = m
                     .iter()
                     .filter(|(k, _)| !is_one_of(k, PLUGIN_KEYS) && k.as_str() != Some("packages"))
+                    .filter(|(k, _)| !(dependency_file && is_one_of(k, OLD_PLUGIN_KEYS)))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 if rest.is_empty() {
@@ -2914,11 +2950,10 @@ impl Loader {
         }
     }
 
-    /// A plugin entry in its map form: `{name: foo, github: acme/dre-source-foo, version: "^1"}`.
+    /// A `plugins:` entry in its map form: `{name: foo, github: acme/dre-foo, version: "^1"}`.
     fn plugin_entry(
         &mut self,
         m: &Mapping,
-        kind: PluginKind,
         yf: &YamlFile,
         line: Option<usize>,
     ) -> Option<(String, Option<Value>, PluginSource)> {
@@ -2934,7 +2969,7 @@ impl Loader {
                 "invalid-plugin-declaration",
                 file.clone(),
                 line,
-                format!("{} plugin `{name}`: {msg}", kind.as_str()),
+                format!("plugin package `{name}`: {msg}"),
             );
         };
         if name.is_empty() {
@@ -2974,7 +3009,7 @@ impl Loader {
                 if m.get("version").is_some() {
                     err(
                         self,
-                        "a `local` plugin has no `version`: it's used as it is".into(),
+                        "a `local` package has no `version`: it's used as it is".into(),
                     );
                     return None;
                 }
@@ -2989,34 +3024,29 @@ impl Loader {
         Some((name, m.get("version").cloned(), source))
     }
 
-    fn check_plugins(
-        &mut self,
-        decls: &[(Rc<YamlFile>, Mapping)],
-        project: &Project,
-        used: &Usage,
-    ) -> Vec<PluginRequirement> {
+    /// The `plugins:` declarations, merged across files; and every plugin the project uses, for
+    /// [`crate::plugins::check_uses`] to check against what the declared packages provide.
+    fn check_plugins(&mut self, decls: &[(Rc<YamlFile>, Mapping)], project: &mut Project, used: &Usage) {
         struct Decl {
             req: semver::VersionReq,
             raw: String,
             file: PathBuf,
             source: PluginSource,
         }
-        let mut by_plugin: BTreeMap<(PluginKind, String), Vec<Decl>> = BTreeMap::new();
+        let mut by_package: BTreeMap<String, Vec<Decl>> = BTreeMap::new();
         for (yf, m) in decls {
             for (block, v) in m {
-                let Some(kind) = block.as_str().and_then(PluginKind::parse) else {
+                if block.as_str() != Some(PLUGINS_KEY) {
                     continue;
-                };
-                let line = yf.line_of(kind.block(), None);
+                }
+                let line = yf.line_of(PLUGINS_KEY, None);
                 let file = Some(yf.display.clone());
                 let entries: Vec<(String, Option<Value>, PluginSource)> = match v {
                     Value::Sequence(items) => items
                         .iter()
                         .filter_map(|i| match i {
                             Value::String(s) => Some((s.clone(), None, PluginSource::Default)),
-                            Value::Mapping(m) if m.get("name").is_some() => {
-                                self.plugin_entry(m, kind, yf, line)
-                            }
+                            Value::Mapping(m) if m.get("name").is_some() => self.plugin_entry(m, yf, line),
                             Value::Mapping(m) if m.len() == 1 => {
                                 let (k, v) = m.iter().next().unwrap();
                                 k.as_str()
@@ -3027,10 +3057,7 @@ impl Loader {
                                     "invalid-plugin-declaration",
                                     file.clone(),
                                     line,
-                                    format!(
-                                        "each `{}` entry is a name, `name: \"<version>\"`, or a map with `name:` and one of `github:`, `local:`, `registry:`",
-                                        kind.block()
-                                    ),
+                                    "each `plugins` entry is a package name, `name: \"<version>\"`, or a map with `name:` and one of `github:`, `local:`, `registry:`",
                                 );
                                 None
                             }
@@ -3048,18 +3075,29 @@ impl Loader {
                             "invalid-plugin-declaration",
                             file.clone(),
                             line,
-                            format!("`{}` must be a list like `- duckdb: \">=1.0\"`", kind.block()),
+                            "`plugins` must be a list like `- duckdb: \">=1.0\"`",
                         );
                         continue;
                     }
                 };
                 for (name, c, source) in entries {
+                    if !dre_protocol::valid_name(&name) {
+                        self.diags.error(
+                            "invalid-plugin-declaration",
+                            file.clone(),
+                            yf.line_of(&name, line),
+                            format!(
+                                "plugin package `{name}`: a package name is lowercase letters, digits and `_`"
+                            ),
+                        );
+                        continue;
+                    }
                     let raw = match &c {
                         None | Some(Value::Null) => "*".to_string(),
                         Some(v) => crate::yaml::scalar_str(v).unwrap_or_default(),
                     };
                     match semver::VersionReq::parse(&raw) {
-                        Ok(req) => by_plugin.entry((kind, name)).or_default().push(Decl {
+                        Ok(req) => by_package.entry(name).or_default().push(Decl {
                             req,
                             raw,
                             file: yf.display.clone(),
@@ -3069,18 +3107,15 @@ impl Loader {
                             "invalid-version-constraint",
                             file.clone(),
                             yf.line_of(&name, line),
-                            format!(
-                                "{} plugin `{name}`: invalid version constraint `{raw}`: {e}",
-                                kind.as_str()
-                            ),
+                            format!("plugin package `{name}`: invalid version constraint `{raw}`: {e}"),
                         ),
                     }
                 }
             }
         }
         let mut out = Vec::new();
-        for ((kind, name), ds) in &by_plugin {
-            // Every declaration of one plugin must agree on where it comes from.
+        for (name, ds) in &by_package {
+            // Every declaration of one package must agree on where it comes from.
             let source = ds
                 .iter()
                 .map(|d| &d.source)
@@ -3093,12 +3128,12 @@ impl Loader {
                     Some(other.file.clone()),
                     None,
                     format!(
-                        "{} plugin `{name}` is declared with two sources: {} and {}",
-                        kind.as_str(),
+                        "plugin package `{name}` is declared with two sources: {} and {}",
                         source.lock_key().unwrap_or_default(),
                         other.source.lock_key().unwrap_or_default()
                     ),
                 );
+                project.plugins_incomplete = true;
                 continue;
             }
             let reqs: Vec<&semver::VersionReq> = ds.iter().map(|d| &d.req).collect();
@@ -3111,8 +3146,7 @@ impl Loader {
                                 Some(b.file.clone()),
                                 None,
                                 format!(
-                                    "{} plugin `{name}` is declared `{}` in {} and `{}` in {}; no version satisfies both",
-                                    kind.as_str(),
+                                    "plugin package `{name}` is declared `{}` in {} and `{}` in {}; no version satisfies both",
                                     a.raw,
                                     a.file.display(),
                                     b.raw,
@@ -3122,21 +3156,22 @@ impl Loader {
                         }
                     }
                 }
+                project.plugins_incomplete = true;
                 continue;
             }
             let combined = constraints::combine(&reqs);
             let mut files: Vec<PathBuf> = ds.iter().map(|d| d.file.clone()).collect();
             files.dedup();
             out.push(PluginRequirement {
-                kind: *kind,
                 name: name.clone(),
                 version: combined.to_string(),
                 declared_in: files,
                 source,
             });
         }
+        project.plugins = out;
 
-        let declared = |k: PluginKind, n: &str| by_plugin.contains_key(&(k, n.to_string()));
+        let mut uses = Vec::new();
         let profiles = &project.profiles;
         for (role, kind, refs) in [
             (Role::Source, PluginKind::Source, &used.sources),
@@ -3151,62 +3186,45 @@ impl Loader {
                     if kind == PluginKind::Destination && out_.kind == LOCAL_TYPE {
                         continue;
                     }
-                    if !declared(kind, &out_.kind) {
-                        self.undeclared(
-                            kind,
-                            &out_.kind,
-                            profiles.file.as_ref().map(|f| f.display.clone()),
-                            profiles.line_of(role, name),
-                            format!(
-                                "`type: {t}` used by {role_name} profile `{name}`, but `{t}` isn't declared as a required {role_name} plugin anywhere in the project",
-                                t = out_.kind
-                            ),
-                        );
+                    let id = PluginId::new(kind, out_.kind.clone());
+                    if uses.iter().any(|u: &PluginUse| u.plugin == id) {
+                        continue;
                     }
+                    uses.push(PluginUse {
+                        plugin: id,
+                        file: profiles.file.as_ref().map(|f| f.display.clone()),
+                        line: profiles.line_of(role, name),
+                        what: format!("`type: {}` used by {role_name} profile `{name}`", out_.kind),
+                    });
                 }
             }
         }
         for (fmt, (ctx, file)) in &used.formats {
-            if !declared(PluginKind::Format, fmt) {
-                let note = if fmt == "csv" {
-                    " (csv is the built-in default output)"
-                } else {
-                    ""
-                };
-                self.undeclared(
-                    PluginKind::Format,
-                    fmt,
-                    Some(file.clone()),
-                    None,
-                    format!(
-                        "format `{fmt}` is used by {ctx}{note}, but isn't declared anywhere in the project"
-                    ),
-                );
-            }
+            let note = if fmt == "csv" {
+                " (csv is the built-in default output)"
+            } else {
+                ""
+            };
+            uses.push(PluginUse {
+                plugin: PluginId::new(PluginKind::Format, fmt.clone()),
+                file: Some(file.clone()),
+                line: None,
+                what: format!("format `{fmt}` is used by {ctx}{note}"),
+            });
         }
-        out
+        project.plugin_uses = uses;
     }
 
-    /// An `undeclared-plugin` error: `what`, then how to declare and install the plugin.
-    fn undeclared(
-        &mut self,
-        kind: PluginKind,
-        name: &str,
-        file: Option<PathBuf>,
-        line: Option<usize>,
-        what: String,
-    ) {
-        self.diags.push(Diagnostic {
-            severity: Severity::Error,
-            code: "undeclared-plugin",
-            message: format!(
-                "{what} — add `{name}` under `{}:` in dependencies.yml, then run `dre deps`",
-                kind.block()
+    /// `sources:`, `formats:` or `destinations:` where plugins were once declared.
+    fn old_plugin_key(&mut self, yf: &YamlFile, key: &str) {
+        self.diags.error(
+            "moved-plugin-declaration",
+            Some(yf.display.clone()),
+            yf.line_of(key, None),
+            format!(
+                "`{key}:` no longer declares plugins: list plugin packages under `plugins:` instead (e.g. `plugins: [duckdb, object_store]`)"
             ),
-            file,
-            line,
-            plugin: Some((kind, name.to_string())),
-        });
+        );
     }
 
     // -- Jinja pre-flight ---------------------------------------------------------------------

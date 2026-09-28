@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -346,5 +347,39 @@ func TestFramesRoundTripAndRejectBadLengths(t *testing.T) {
 	}
 	if _, err := readFrame(bytes.NewReader([]byte{0, 0, 0, 9, 'J', '{'})); err == nil || err == errEOF {
 		t.Fatalf("truncated body: %v", err)
+	}
+}
+
+func TestHelloServesThePluginCoreAsksFor(t *testing.T) {
+	c := start(t)
+	c.send(map[string]any{"type": "hello", "min_version": 0, "max_version": 0, "core_version": "t"})
+	r := c.reply()
+	if r["kind"] != "source" || r["name"] != "databricks" || fmt.Sprint(r["provides"]) != "[source/databricks destination/databricks]" {
+		t.Fatalf("%v", r)
+	}
+	c = startAs(t, sourceRole)
+	c.send(map[string]any{"type": "hello", "min_version": 0, "max_version": 0, "core_version": "t", "plugin": "destination/databricks"})
+	if r := c.reply(); r["kind"] != "destination" {
+		t.Fatalf("%v", r)
+	}
+	c = startAs(t, sourceRole)
+	c.send(map[string]any{"type": "hello", "min_version": 0, "max_version": 0, "core_version": "t", "plugin": "destination/databricks_volumes"})
+	expectError(t, c.reply(), "this executable provides source/databricks, destination/databricks, not destination/databricks_volumes")
+	if code := <-c.code; code != 1 {
+		t.Fatalf("exit code %d", code)
+	}
+}
+
+func TestTheDestinationRoutesByPath(t *testing.T) {
+	for _, bad := range []string{"", "/tmp/x.csv", "Volumez/c/s/v/x"} {
+		if _, err := deliver("/x", bad, map[string]any{}); err == nil {
+			t.Fatalf("%q was accepted", bad)
+		}
+	}
+	if _, err := deliver("/x", "/Volumes/c/s", map[string]any{}); err == nil || !strings.Contains(err.Error(), "/Volumes/<catalog>") {
+		t.Fatalf("%v", err)
+	}
+	if _, err := deliver("/x", "/Workspace/Nope/x", map[string]any{}); err == nil || !strings.Contains(err.Error(), "workspace file path") {
+		t.Fatalf("%v", err)
 	}
 }

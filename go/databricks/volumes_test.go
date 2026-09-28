@@ -1,6 +1,6 @@
 package main
 
-// The databricks_volumes destination against a fake Files API (there's no emulator).
+// The databricks destination's Volume paths, against a fake Files API (there's no emulator).
 
 import (
 	"encoding/json"
@@ -135,12 +135,13 @@ func TestRESTErrorsShowTheCodeAndMessage(t *testing.T) {
 }
 
 func TestTheDestinationRoleSpeaksTheProtocol(t *testing.T) {
-	if roleOf("/x/dre-destination-databricks_volumes.exe").name != "databricks_volumes" || roleOf("dre-source-databricks").name != "databricks" {
+	if roleOf("/x/dre-destination-databricks.exe").id() != destinationRole.id() || roleOf("dre-source-databricks").id() != sourceRole.id() ||
+		roleOf("dre-plugin-databricks").id() != sourceRole.id() {
 		t.Fatal("roleOf")
 	}
 	c := startAs(t, destinationRole)
 	c.send(map[string]any{"type": "hello", "min_version": 0, "max_version": 0, "core_version": "t"})
-	if r := c.reply(); r["kind"] != "destination" || r["name"] != "databricks_volumes" {
+	if r := c.reply(); r["kind"] != "destination" || r["name"] != "databricks" {
 		t.Fatalf("%v", r)
 	}
 	c.send(map[string]any{"type": "describe"})
@@ -152,7 +153,7 @@ func TestTheDestinationRoleSpeaksTheProtocol(t *testing.T) {
 		t.Fatalf("%v", names)
 	}
 	c.send(map[string]any{"type": "deliver", "local_path": "/x", "remote_path": "/Volumes/c/s/v/x", "connection": map[string]any{}, "options": map[string]any{"to": "x"}})
-	expectError(t, c.reply(), "the `databricks_volumes` destination takes no options, but got `to`")
+	expectError(t, c.reply(), "the `databricks` destination takes no options, but got `to`")
 	c.send(map[string]any{"type": "validate", "options": map[string]any{"to": "x"}})
 	if r := c.reply(); r["type"] != "validated" || len(r["errors"].([]any)) != 1 {
 		t.Fatalf("%v", r)

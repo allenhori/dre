@@ -1,10 +1,9 @@
 package main
 
-// The databricks_workspace destination: writes the output as a workspace file
+// The databricks destination's workspace paths: writes the output as a workspace file
 // (/Workspace/Users/..., /Workspace/Shared/..., /Workspace/Repos/...) through the Workspace API,
 // creating missing folders. On Databricks compute, where /Workspace is mounted, it copies the
-// file there instead, with the job or cluster's own access. Sign-in is the same as the source's
-// and databricks_volumes'.
+// file there instead, with the job or cluster's own access. Sign-in is the same as the source's.
 //
 // Files are imported as plain files (format RAW), never converted to notebooks, and replace
 // an existing file at the path.
@@ -41,7 +40,7 @@ func workspacePath(remote string) (api, shown string, err error) {
 
 func deliverToWorkspace(local, remote string, conn map[string]any) (string, error) {
 	if remote == "" {
-		return "", fmt.Errorf("databricks_workspace needs `output.destination.path`")
+		return "", fmt.Errorf("the databricks destination needs `output.destination.path`")
 	}
 	api, shown, err := workspacePath(remote)
 	if err != nil {

@@ -294,15 +294,13 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     }
     let selector = selection(&a.select, &a.selector);
     let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
-    if !a.project.no_auto_install {
-        dre_core::manager::explain_undeclared(&mut diags);
-    }
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
         // Plugins aren't installed when the project already has errors, so a missing one is then
         // only a warning; the option checks run either way, so every problem shows in one pass.
         let offline = a.project.no_auto_install || diags.has_errors();
         plugins::check_for_validate(p, !a.project.no_auto_install, &mut diags, printer);
+        check_plugin_uses(p, &a.project, &mut diags);
         dre_core::options::check(p, a.project.target.as_deref(), offline, &mut diags);
     }
     // Only a project that checks out gets compiled.
@@ -455,6 +453,16 @@ fn compile(a: CompileArgs, mut printer: output::Printer) -> ExitCode {
         return ExitCode::FAILURE;
     };
     printer.log_to(&project.root);
+    // Compiling only needs the source plugin for templates that query; with installing off, a
+    // missing plugin is reported by the Binding that needs it.
+    if !a.project.no_auto_install && !plugins::ensure(&project, true, false, &printer) {
+        return ExitCode::FAILURE;
+    }
+    let mut diags = dre_core::Diagnostics::default();
+    check_plugin_uses(&project, &a.project, &mut diags);
+    if !report_diags(&diags, &printer) {
+        return ExitCode::FAILURE;
+    }
     let opts = dre_core::run::RunOptions {
         selector: selection(&a.select, &a.selector),
         set: a.set,
@@ -522,39 +530,42 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-/// The project's plugins when run inside a project, otherwise the shared cache.
+/// The project's plugin packages when run inside a project, otherwise the shared cache.
 fn plugin_list() -> ExitCode {
     let here = std::path::Path::new(".");
     let in_project = here.join(dre_core::project::PROJECT_FILE).is_file();
     let dir = dre_core::plugins::plugins_dir(in_project.then_some(here));
     let found = dre_core::plugins::discover(&dir);
     if found.is_empty() {
-        println!("No plugins installed in {}", dir.display());
+        println!("No plugin packages installed in {}", dir.display());
         return ExitCode::SUCCESS;
     }
     let quiet: dre_protocol::host::LogSink = std::sync::Arc::new(|_, _| {});
     let mut rows = vec![[
-        "KIND".to_string(),
-        "NAME".into(),
+        "PACKAGE".to_string(),
+        "PROVIDES".into(),
         "VERSION".into(),
         "PROTOCOL".into(),
         "PATH".into(),
     ]];
     for p in found {
-        let (version, protocol) = match dre_protocol::host::PluginProcess::start(&p.path, quiet.clone()) {
-            Ok(proc_) => {
-                let info = proc_.info().clone();
-                let _ = proc_.close();
-                (info.version, format!("v{}", info.protocol_version))
-            }
-            Err(e) => (
-                p.version.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
-                format!("error: {e}"),
-            ),
-        };
+        let first = p.provides.first();
+        let (version, protocol) =
+            match dre_protocol::host::PluginProcess::start_for(&p.path, first, quiet.clone(), None) {
+                Ok(proc_) => {
+                    let info = proc_.info().clone();
+                    let _ = proc_.close();
+                    (info.version, format!("v{}", info.protocol_version))
+                }
+                Err(e) => (
+                    p.version.map(|v| v.to_string()).unwrap_or_else(|| "?".into()),
+                    format!("error: {e}"),
+                ),
+            };
+        let provides: Vec<String> = p.provides.iter().map(|i| i.to_string()).collect();
         rows.push([
-            p.kind.to_string(),
             p.name,
+            provides.join(", "),
             version,
             protocol,
             p.path.display().to_string(),
@@ -582,10 +593,7 @@ fn profiles_line(p: &dre_core::profiles::Profiles) -> String {
 }
 
 fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::project::Project> {
-    let (project, mut diags) = project::load(&p.project_dir, &p.load_options());
-    if !p.no_auto_install {
-        dre_core::manager::explain_undeclared(&mut diags);
-    }
+    let (project, diags) = project::load(&p.project_dir, &p.load_options());
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
     }
@@ -609,6 +617,34 @@ fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::
     project
 }
 
+/// Check that the declared plugin packages provide every plugin the project uses, naming the
+/// package to add from DRE's registry (unless installing is off, which also means offline).
+fn check_plugin_uses(
+    project: &dre_core::project::Project,
+    p: &ProjectArgs,
+    diags: &mut dre_core::Diagnostics,
+) {
+    dre_core::plugins::check_uses(project, diags);
+    if !p.no_auto_install {
+        dre_core::manager::explain_undeclared(diags);
+    }
+}
+
+/// Print `diags`; false (after saying so) when there are errors.
+fn report_diags(diags: &dre_core::Diagnostics, printer: &output::Printer) -> bool {
+    for d in diags.sorted() {
+        printer.diag(d);
+    }
+    if diags.has_errors() {
+        printer.error(&format!(
+            "the project has {} error(s); fix them before running (see `dre validate`)",
+            diags.error_count()
+        ));
+        return false;
+    }
+    true
+}
+
 fn run_date() -> Option<chrono::NaiveDate> {
     std::env::var("DRE_RUN_DATE")
         .ok()
@@ -628,15 +664,11 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         return ExitCode::FAILURE;
     }
     let mut diags = dre_core::Diagnostics::default();
-    dre_core::options::check(&project, a.project.target.as_deref(), false, &mut diags);
-    for d in diags.sorted() {
-        printer.diag(d);
+    check_plugin_uses(&project, &a.project, &mut diags);
+    if !diags.has_errors() {
+        dre_core::options::check(&project, a.project.target.as_deref(), false, &mut diags);
     }
-    if diags.has_errors() {
-        printer.error(&format!(
-            "the project has {} error(s); fix them before running (see `dre validate`)",
-            diags.error_count()
-        ));
+    if !report_diags(&diags, &printer) {
         return ExitCode::FAILURE;
     }
     let opts = dre_core::run::RunOptions {

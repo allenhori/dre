@@ -89,7 +89,7 @@ fn a_source_that_cant_load_gets_the_lookup_inlined_with_a_warning() {
                 "dre_project.yml",
                 "name: acme\ndefault_profile: fx\nlookup_inline_max_rows: 1\n",
             ),
-            ("dependencies.yml", "sources: [fixture]\nformats: [csv]\n"),
+            ("dependencies.yml", "plugins: [fixture, csv]\n"),
             ("lookups/countries.csv", COUNTRIES),
             ("reports/r/r.yml", "queries: [q]\n"),
             // The fixture only understands its own commands, so the ref is rendered but unused.

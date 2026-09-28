@@ -22,7 +22,7 @@ fn project(files: &[(&str, &str)]) -> TestProject {
             "dre_project.yml",
             "name: acme_reports\ndefault_profile: warehouse\n",
         ),
-        ("dependencies.yml", "sources: [duckdb, fixture]\nformats: [csv]\n"),
+        ("dependencies.yml", "plugins: [duckdb, fixture, csv]\n"),
     ];
     all.extend_from_slice(files);
     let p = TestProject::new(&all, PROFILES);

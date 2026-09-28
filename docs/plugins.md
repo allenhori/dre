@@ -1,8 +1,32 @@
 # First-party plugins
 
-Every plugin is declared in the project (`sources:`, `formats:`, `destinations:`) and configured
-through a profile in `profiles.yml` (under `sources:` or `destinations:`) whose target has its
-`type`. Fields holding secrets can use `env_var()`.
+Plugins come in packages, declared once each under `plugins:` in `dependencies.yml` (see
+[the registry docs](registry.md)). A source or destination is configured through a profile in
+`profiles.yml` (under `sources:` or `destinations:`) whose target has its `type`. Fields holding
+secrets can use `env_var()`.
+
+| Package | Provides |
+|---|---|
+| `duckdb` | the `duckdb` source |
+| `postgres` | the `postgres` source |
+| `databricks` | the `databricks` source, and the `databricks` destination (Volumes and workspace files) |
+| `csv` | the `csv` and `delimited` formats |
+| `fixed_width` | the `fixed_width` format |
+| `parquet` | the `parquet` format |
+| `xlsx` | the `xlsx` format |
+| `object_store` | the `s3`, `gcs` and `azure_blob` destinations |
+| `sftp` | the `sftp` destination |
+| `ftp` | the `ftp` destination |
+| `email` | the `email` destination |
+| `slack` | the `slack` destination |
+
+```yaml
+# dependencies.yml
+plugins:
+  - databricks
+  - xlsx
+  - object_store
+```
 
 ## Sources
 
@@ -98,9 +122,8 @@ a destination when it delivers.
 Browser sign-in opens your browser the first time and saves the session in
 `~/.dre/oauth_sessions.json`, which only you can read. The file has one entry per workspace and
 OAuth client, so a report can read from one workspace and deliver to another, and the `databricks`
-source and the `databricks_volumes` and `databricks_workspace` destinations share one sign-in per
-workspace. After that the
-refresh token renews the session, and the browser only opens again once the refresh token stops
+source and destination share one sign-in per workspace. After that the refresh token renews the
+session, and the browser only opens again once the refresh token stops
 working. Delete the file (or its entry) to sign out. Set `DRE_NO_BROWSER=1` to only print the
 sign-in URL.
 
@@ -112,12 +135,10 @@ Capabilities: `sessions`, `check` (via `EXPLAIN`), `load`. The plugin holds a re
 session, so temp views and `SET`s last for the whole Binding. The session runs in UTC. Warehouses
 have no read-only mode.
 
-The Databricks adapter is written in Go, on Databricks' official Go connector
+The `databricks` package is written in Go, on Databricks' official Go connector
 (`databricks-sql-go`): SQL warehouses only hold sessions for Databricks' own clients, and the
 connector identifies itself with `dre` appended. One program serves as this source and the
-`databricks_volumes` and `databricks_workspace` destinations; it's installed under each plugin
-name. Set
-`DATABRICKS_LOG_LEVEL=debug` to see the connector's own log.
+`databricks` destination. Set `DATABRICKS_LOG_LEVEL=debug` to see the connector's own log.
 
 Databricks SQL reads backslashes as escapes in string literals and doesn't read `''` as an
 escaped quote: `'O''Brien'` is two literals, `'O'` and `'Brien'`, which Databricks joins into
@@ -128,9 +149,9 @@ escaped quote: `'O''Brien'` is two literals, `'O'` and `'Brien'`, which Databric
 
 Each format plugin declares and checks its own options: `dre validate` and `dre run` send every
 report's `output:` keys to the plugin before anything runs, and report each problem with the
-report it came from. A format that isn't declared or isn't installed is an error. For one that
-isn't declared, `dre validate` and `dre run` look the name up in DRE's plugin registry: when it's
-there, add it under `formats:` in `dependencies.yml` and run `dre deps`.
+report it came from. A format no declared package provides, or whose package isn't installed, is
+an error. For one no declared package provides, `dre validate` and `dre run` look it up in DRE's
+plugin registry and name the package to add under `plugins:` in `dependencies.yml`.
 
 Project-wide defaults for a format go in `dre_project.yml` under `format_options`, keyed by
 format. They apply under every output of that format, whatever folder or report chose it, and a
@@ -313,30 +334,33 @@ which on many servers isn't the login folder (`/reports/x.csv` vs `reports/x.csv
 connections reuse the control connection's TLS session, which vsftpd, ProFTPD and FileZilla
 Server require by default. A failed upload removes the partial file from the server when it can.
 
-### `databricks_volumes`
+### `databricks`
 
-`host` and the same sign-in fields as the `databricks` source (`auth_type`, `token`, `client_id`,
-`client_secret`), so one set of credentials, and one OAuth session per workspace, can serve both.
-It's the same program as the `databricks` source. Paths are
-`/Volumes/<catalog>/<schema>/<volume>/...`, uploaded through the Files API. On Databricks compute,
-where the volume is mounted, the file is copied to `/Volumes/...` directly instead: no API call and
-no sign-in, with the job's own access. The same report works in both places.
+Unity Catalog Volumes and workspace files, chosen by the path. `host` and the same sign-in fields
+as the `databricks` source (`auth_type`, `token`, `client_id`, `client_secret`), so one set of
+credentials, and one OAuth session per workspace, serves both. It's the same program as the
+source.
 
-**When to use it**: anywhere. Outside Databricks (a laptop, Airflow, CI) it uploads; inside a
-Databricks job or cluster it writes to the mounted volume.
+```yaml
+destinations:
+  lakehouse:
+    target: prod
+    targets:
+      prod: {type: databricks, host: dbc-123.cloud.databricks.com}
+```
 
-### `databricks_workspace`
+- **`/Volumes/<catalog>/<schema>/<volume>/...`**: uploaded to the Volume through the Files API.
+  Missing directories under the volume are created. Use it anywhere, for any size of file.
+- **`/Workspace/Users/<user>/...`, `/Workspace/Shared/...` or `/Workspace/Repos/...`** (the
+  `/Workspace` prefix is optional): a workspace file, for outputs people open from the workspace
+  browser, next to notebooks and dashboards. Missing folders are created, the file replaces one
+  already at the path, and it's always a plain file: a `.sql` or `.py` output isn't turned into a
+  notebook. Workspace files are meant for small files (the import API takes up to about 10 MB);
+  use a Volume for large outputs.
 
-Workspace files: `/Workspace/Users/<user>/...`, `/Workspace/Shared/...` or
-`/Workspace/Repos/...` (the `/Workspace` prefix is optional). `host` and the same sign-in fields as
-the `databricks` source and `databricks_volumes`. Missing folders are created, the file replaces
-one already at the path, and it's always a plain file: a `.sql` or `.py` output isn't turned into
-a notebook. On Databricks compute, where `/Workspace` is mounted, the file is copied there
-directly with the job's own access.
-
-**When to use it**: outputs people open from the workspace browser, next to notebooks and
-dashboards. Workspace files are meant for small files (the import API takes up to about 10 MB);
-use a Volume for large outputs.
+On Databricks compute, where `/Volumes` and `/Workspace` are mounted, the file is copied there
+directly instead: no API call and no sign-in, with the job's own access. The same report works
+outside Databricks (a laptop, Airflow, CI), where it uploads, and in a Databricks job or cluster.
 
 ### `email`
 

@@ -22,7 +22,7 @@ destinations:
     targets:
       dev: {type: local}
 ";
-const PLUGINS: &str = "sources:\n  - duckdb\n  - fixture\nformats:\n  - csv\n  - xlsx\n";
+const PLUGINS: &str = "plugins:\n  - duckdb\n  - fixture\n  - csv\n  - xlsx\n";
 
 fn project(files: &[(&str, &str)]) -> TestProject {
     let mut all = vec![

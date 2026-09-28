@@ -1,0 +1,18 @@
+[package]
+name = "dre-plugin-sftp"
+description = "DRE destination plugin: SFTP"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dre-protocol = { path = "../../crates/dre-protocol" }
+serde_json.workspace = true
+russh = "0.63"
+russh-sftp = "3"
+tokio = { version = "1", features = ["rt", "fs", "io-util", "net", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true

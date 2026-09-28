@@ -1,7 +1,10 @@
 # DRE plugin protocol, version 0
 
-Every source, format and destination in DRE is a plugin: a separate executable that DRE core
-starts and talks to over stdin and stdout. Plugins can be written in any language. This document
+Every source, format and destination in DRE is a plugin, served by a separate executable that
+DRE core starts and talks to over stdin and stdout. Plugins ship in packages: one executable can
+serve several plugins (the `databricks` package is a source and a destination; `object_store`
+is three destinations), and core names the one it wants in the handshake. Plugins can be written
+in any language. This document
 is the contract between core and a plugin. Any change to it means a new protocol version.
 
 The reference implementation is the `dre-protocol` crate. It has three parts:
@@ -42,7 +45,8 @@ Rules for option messages. Each problem is one sentence that names the key in ba
 declare, so a misspelt key is an error rather than silently ignored.
 
 In Rust, the `dre_protocol::plugin` SDK does all of this. A plugin implements one trait
-(`Source`, `Format` or `Destination`), declares its options as `OptionField`s (name, type,
+(`Source`, `Format` or `Destination`) and is served with `serve_source`, `serve_format` or
+`serve_destination`; a package of several passes them all to `serve_package`. A plugin declares its options as `OptionField`s (name, type,
 allowed values, bounds, default, description), and adds any rule a declaration can't express in
 `validate()`. The SDK answers `describe` and `validate` from those declarations, advertises
 `validate`, and checks the options again before every `write` and `deliver`, so plugin code only
@@ -50,19 +54,24 @@ sees options that passed. The conformance suite checks every part of the interfa
 
 ## Naming and location
 
-A plugin executable is named `dre-<kind>-<name>` (plus `.exe` on Windows).
+A plugin is identified by its kind and name, written `<kind>/<name>`:
 
 - `kind` is `source`, `format` or `destination`.
 - `name` matches `[a-z0-9_]+`. It is the value used in `profiles.yml` (`type: duckdb`) and in
   `output.format` (`format: xlsx`).
 
-Examples: `dre-source-duckdb`, `dre-format-xlsx`, `dre-destination-azure_blob`.
+A package's executable is named `dre-plugin-<package>` (plus `.exe` on Windows), e.g.
+`dre-plugin-object_store`. An executable serving one plugin may instead be named
+`dre-<kind>-<name>`, e.g. `dre-source-duckdb`; it is then a package of that one plugin, called
+`<name>`.
 
 Core looks in the project's `dre_deps/plugins` (or `DRE_PLUGINS_DIR`), in two layouts:
 
-- `<dir>/<kind>/<name>/<version>/dre-<kind>-<name>`: versioned installs, side by side, as the
-  plugin manager lays them out.
-- `<dir>/dre-<kind>-<name>`: a plugin placed by hand, for development.
+- `<dir>/<package>/<version>/`: versioned installs, side by side, as the plugin manager lays
+  them out. `plugin.json` there names the executable and the plugins it provides:
+  `{"executable": "dre-plugin-object_store", "provides": ["destination/s3", ...]}`.
+- `<dir>/dre-plugin-<package>` or `<dir>/dre-<kind>-<name>`: placed by hand, for development.
+  Core asks a `dre-plugin-<package>` executable what it provides with a handshake.
 
 ## Streams
 
@@ -97,18 +106,29 @@ reports it and stops.
 
 ## Handshake
 
-The first message core sends is `hello`:
+The first message core sends is `hello`, naming the plugin it wants served:
 
 ```json
-{"type": "hello", "min_version": 0, "max_version": 0, "core_version": "…"}
+{"type": "hello", "min_version": 0, "max_version": 0, "core_version": "…",
+ "plugin": "destination/s3"}
 ```
 
-The plugin picks the highest protocol version both sides support and replies:
+The plugin picks the highest protocol version both sides support and replies as that plugin:
 
 ```json
-{"type": "hello", "protocol_version": 0, "kind": "source", "name": "duckdb",
- "version": "1.2.0", "capabilities": ["sessions", "read_only", "check"]}
+{"type": "hello", "protocol_version": 0, "kind": "destination", "name": "s3",
+ "version": "1.2.0", "capabilities": ["validate"],
+ "provides": ["destination/s3", "destination/gcs", "destination/azure_blob"]}
 ```
+
+- `plugin` is optional. Without it, an executable serves its first plugin (core leaves it out
+  only to ask a hand-placed package what it provides).
+- An executable that doesn't provide the plugin asked for replies `error` and exits non-zero.
+  Core also refuses a reply whose `kind` and `name` aren't the plugin it asked for.
+- `provides` lists every plugin the executable serves. It may be left out by an executable
+  serving one plugin; that plugin is then its `kind` and `name`.
+- An executable serving one plugin may ignore `plugin`, so plugins written before packages keep
+  working unchanged.
 
 If the ranges don't overlap, it replies with its own range and exits non-zero:
 

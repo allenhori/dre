@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "dre-cli"
-version = "0.0.1-alpha-6"
+version = "0.0.1-alpha-7"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "dre-core"
-version = "0.0.1-alpha-6"
+version = "0.0.1-alpha-7"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1691,8 +1691,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "dre-destination-email"
-version = "0.0.1-alpha-6"
+name = "dre-plugin-csv"
+version = "0.0.1-alpha-7"
+dependencies = [
+ "arrow",
+ "dre-protocol",
+ "encoding_rs",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "dre-plugin-duckdb"
+version = "0.0.1-alpha-7"
+dependencies = [
+ "arrow",
+ "dre-protocol",
+ "duckdb",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "dre-plugin-email"
+version = "0.0.1-alpha-7"
 dependencies = [
  "dre-protocol",
  "lettre",
@@ -1703,8 +1725,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "dre-destination-ftp"
-version = "0.0.1-alpha-6"
+name = "dre-plugin-fixed_width"
+version = "0.0.1-alpha-7"
+dependencies = [
+ "arrow",
+ "chrono",
+ "dre-protocol",
+ "encoding_rs",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "dre-plugin-ftp"
+version = "0.0.1-alpha-7"
 dependencies = [
  "dre-protocol",
  "rustls",
@@ -1715,8 +1749,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "dre-destination-object_store"
-version = "0.0.1-alpha-6"
+name = "dre-plugin-object_store"
+version = "0.0.1-alpha-7"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1735,8 +1769,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "dre-destination-sftp"
-version = "0.0.1-alpha-6"
+name = "dre-plugin-parquet"
+version = "0.0.1-alpha-7"
+dependencies = [
+ "arrow",
+ "dre-protocol",
+ "parquet",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "dre-plugin-postgres"
+version = "0.0.1-alpha-7"
+dependencies = [
+ "arrow",
+ "chrono",
+ "dre-protocol",
+ "native-tls",
+ "postgres",
+ "postgres-native-tls",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "dre-plugin-sftp"
+version = "0.0.1-alpha-7"
 dependencies = [
  "dre-protocol",
  "russh",
@@ -1747,8 +1806,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "dre-destination-slack"
-version = "0.0.1-alpha-6"
+name = "dre-plugin-slack"
+version = "0.0.1-alpha-7"
 dependencies = [
  "dre-protocol",
  "form_urlencoded",
@@ -1758,42 +1817,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "dre-format-csv"
-version = "0.0.1-alpha-6"
-dependencies = [
- "arrow",
- "dre-protocol",
- "encoding_rs",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "dre-format-fixed_width"
-version = "0.0.1-alpha-6"
-dependencies = [
- "arrow",
- "chrono",
- "dre-protocol",
- "encoding_rs",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "dre-format-parquet"
-version = "0.0.1-alpha-6"
-dependencies = [
- "arrow",
- "dre-protocol",
- "parquet",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "dre-format-xlsx"
-version = "0.0.1-alpha-6"
+name = "dre-plugin-xlsx"
+version = "0.0.1-alpha-7"
 dependencies = [
  "arrow",
  "calamine",
@@ -1809,37 +1834,12 @@ dependencies = [
 
 [[package]]
 name = "dre-protocol"
-version = "0.0.1-alpha-6"
+version = "0.0.1-alpha-7"
 dependencies = [
  "arrow",
  "serde",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "dre-source-duckdb"
-version = "0.0.1-alpha-6"
-dependencies = [
- "arrow",
- "dre-protocol",
- "duckdb",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "dre-source-postgres"
-version = "0.0.1-alpha-6"
-dependencies = [
- "arrow",
- "chrono",
- "dre-protocol",
- "native-tls",
- "postgres",
- "postgres-native-tls",
- "serde_json",
- "uuid",
 ]
 
 [[package]]

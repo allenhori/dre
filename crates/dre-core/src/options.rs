@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use dre_protocol::host::{LogSink, PluginProcess};
+use dre_protocol::host::LogSink;
 use serde_json::{Map, Value};
 
 use crate::Diagnostics;
@@ -98,11 +98,6 @@ pub fn check(project: &Project, target: Option<&str>, offline: bool, diags: &mut
             };
             diags.error(code, Some(u.file.clone()), None, msg);
         };
-        // An undeclared plugin is already an error (`undeclared-plugin`).
-        let local = kind == PluginKind::Destination && name == LOCAL_TYPE;
-        if !local && !project.plugins.iter().any(|r| r.kind == kind && r.name == name) {
-            continue;
-        }
         // Core's own destination.
         if kind == PluginKind::Destination && name == LOCAL_TYPE {
             for (options, uses) in blocks.values() {
@@ -120,8 +115,10 @@ pub fn check(project: &Project, target: Option<&str>, offline: bool, diags: &mut
             }
             continue;
         }
-        let path = match find_plugin(project, kind, &name) {
+        let plugin = match find_plugin(project, kind, &name) {
             Ok(p) => p,
+            // Already an error (`undeclared-plugin`).
+            Err(crate::plugins::LocateError::NotProvided(_)) => continue,
             Err(e) => {
                 let first = blocks.values().flat_map(|(_, u)| u).next();
                 let file = first.map(|u| u.file.clone());
@@ -144,7 +141,7 @@ pub fn check(project: &Project, target: Option<&str>, offline: bool, diags: &mut
                 continue;
             }
         };
-        let mut p = match PluginProcess::start_in(&path, log.clone(), Some(&project.root)) {
+        let mut p = match plugin.start(log.clone(), Some(&project.root)) {
             Ok(p) => p,
             Err(e) => {
                 diags.warning(

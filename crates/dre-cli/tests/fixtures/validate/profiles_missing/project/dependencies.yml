@@ -1,4 +1,3 @@
-sources:
+plugins:
   - duckdb: ">=0.0"
-formats:
   - csv

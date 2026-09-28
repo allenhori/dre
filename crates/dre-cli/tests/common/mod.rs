@@ -16,7 +16,6 @@ pub fn bin_dir() -> PathBuf {
 fn package_of(bin: &str) -> &str {
     match bin {
         "dre-source-fixture" | "dre-destination-fixture" => "dre-protocol",
-        "dre-format-delimited" => "dre-format-csv",
         b => b,
     }
 }
@@ -75,7 +74,7 @@ pub fn place_plugin(dir: &Path, bin: &str) -> PathBuf {
 pub fn test_plugins(bins: &[&str]) -> PathBuf {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = bin_dir().join("test-plugins");
+    let dir = bin_dir().join("test-plugin-packages");
     std::fs::create_dir_all(&dir).unwrap();
     build_bins(bins);
     for bin in bins {
@@ -103,14 +102,13 @@ pub struct TestProject {
 }
 
 pub const ALL_PLUGINS: &[&str] = &[
-    "dre-source-duckdb",
+    "dre-plugin-duckdb",
     "dre-source-fixture",
-    "dre-format-csv",
-    "dre-format-delimited",
-    "dre-format-xlsx",
-    "dre-format-parquet",
-    "dre-format-fixed_width",
-    "dre-destination-sftp",
+    "dre-plugin-csv",
+    "dre-plugin-xlsx",
+    "dre-plugin-parquet",
+    "dre-plugin-fixed_width",
+    "dre-plugin-sftp",
     "dre-destination-fixture",
 ];
 
@@ -225,4 +223,4 @@ impl Run {
 }
 
 pub const DUCK_PROFILES: &str = "sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {type: duckdb, path: data.duckdb}\n      prod: {type: duckdb, path: prod.duckdb}\n";
-pub const PLUGINS_YML: &str = "sources:\n  - duckdb\nformats:\n  - csv\n  - delimited\n";
+pub const PLUGINS_YML: &str = "plugins:\n  - duckdb\n  - csv\n";

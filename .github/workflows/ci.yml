@@ -109,8 +109,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: >
-          cargo test --no-fail-fast -p dre-source-postgres -p dre-destination-object_store
-          -p dre-destination-sftp -p dre-destination-ftp -p dre-destination-email
+          cargo test --no-fail-fast -p dre-plugin-postgres -p dre-plugin-object_store
+          -p dre-plugin-sftp -p dre-plugin-ftp -p dre-plugin-email
 
   test:
     strategy:
@@ -128,17 +128,15 @@ jobs:
           cache-dependency-path: go/databricks/go.sum
       - run: go test ./...
         working-directory: go/databricks
-      # One Go program, installed as both Databricks plugins; the Rust tests check it through
-      # the same host code core uses.
-      - name: Build the Databricks adapter
+      # The Databricks package, one Go program; the Rust tests check it through the same host
+      # code core uses.
+      - name: Build the Databricks package
         shell: bash
         run: |
           ext=""; [[ "$RUNNER_OS" == "Windows" ]] && ext=".exe"
           dir="$RUNNER_TEMP/go-plugins"
           mkdir -p "$dir"
-          (cd go/databricks && go build -o "$dir/dre-source-databricks$ext" .)
-          cp "$dir/dre-source-databricks$ext" "$dir/dre-destination-databricks_volumes$ext"
-          cp "$dir/dre-source-databricks$ext" "$dir/dre-destination-databricks_workspace$ext"
+          (cd go/databricks && go build -o "$dir/dre-plugin-databricks$ext" .)
           echo "DRE_TEST_GO_PLUGINS=$dir" >> "$GITHUB_ENV"
       - run: cargo build --workspace --bins
       # Run every test binary even after a failure, so one failure can't hide others.
