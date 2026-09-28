@@ -1,12 +1,11 @@
 package main
 
-// The databricks_volumes destination: uploads to a Unity Catalog Volume through the Databricks
-// Files API from anywhere (a laptop, Airflow, CI). On Databricks compute, where /Volumes/... is a
-// mounted path, it copies the file there instead: no API call and no login, with whatever access
-// the job or cluster's identity has. The same report and profile work in both places.
+// The databricks destination's Volume paths: uploads to a Unity Catalog Volume through the
+// Databricks Files API from anywhere (a laptop, Airflow, CI). On Databricks compute, where
+// /Volumes/... is a mounted path, it copies the file there instead: no API call and no login, with
+// whatever access the job or cluster's identity has. The same report and profile work in both
+// places.
 //
-// Profile target fields: host plus the source's sign-in fields (auth_type, token, client_id,
-// client_secret), so one set of credentials, and one OAuth session per workspace, serves both.
 // The remote path must be /Volumes/<catalog>/<schema>/<volume>/...; missing directories are
 // created. Retries while the workspace answers 429/503.
 
@@ -34,7 +33,7 @@ func volumesFields() []connectionField {
 
 func deliverToVolume(local, remote string, conn map[string]any) (string, error) {
 	if remote == "" {
-		return "", fmt.Errorf("databricks_volumes needs `output.destination.path`")
+		return "", fmt.Errorf("the databricks destination needs `output.destination.path`")
 	}
 	parts := strings.Split(strings.TrimLeft(remote, "/"), "/")
 	bad := len(parts) < 5 || parts[0] != "Volumes"

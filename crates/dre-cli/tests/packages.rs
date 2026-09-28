@@ -8,7 +8,7 @@ use std::process::Command;
 
 use common::{DUCK_PROFILES, TestProject};
 
-const DEPS: &str = "sources: [duckdb]\nformats: [csv]\n";
+const DEPS: &str = "plugins: [duckdb, csv]\n";
 
 /// A `dre_utils` package: a plain macro, and a dispatched one with a DuckDB variant.
 fn write_package(dir: &Path) {

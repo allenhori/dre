@@ -135,8 +135,8 @@ impl Env {
         // csv is placed by hand, so only the fixture source is resolved.
         let plugins = dir.path().join("plugins");
         std::fs::create_dir_all(&plugins).unwrap();
-        let csv = format!("dre-format-csv{}", std::env::consts::EXE_SUFFIX);
-        std::fs::copy(test_plugins(&["dre-format-csv"]).join(&csv), plugins.join(&csv)).unwrap();
+        let csv = format!("dre-plugin-csv{}", std::env::consts::EXE_SUFFIX);
+        std::fs::copy(test_plugins(&["dre-plugin-csv"]).join(&csv), plugins.join(&csv)).unwrap();
         std::fs::create_dir_all(dir.path().join("profiles")).unwrap();
         std::fs::write(
             dir.path().join("profiles/profiles.yml"),
@@ -181,27 +181,24 @@ impl Env {
     }
 
     fn installed(&self, version: &str) -> bool {
-        self.p("plugins/source/fixture")
-            .join(version)
-            .join(exe())
-            .exists()
+        self.p("plugins/fixture").join(version).join(exe()).exists()
     }
 }
 
 const GITHUB: &str =
-    "sources:\n  - {name: fixture, github: acme/dre-source-fixture, version: \">=1.0\"}\nformats:\n  - csv\n";
+    "plugins:\n  - {name: fixture, github: acme/dre-source-fixture, version: \">=1.0\"}\n  - csv\n";
 
 #[test]
 fn github_releases_install_the_newest_match_and_pin_it() {
     let e = Env::new(GITHUB);
     let bin = fixture_bin();
     e.server.github_releases(&bin, true);
-    e.dre(&["deps"]).ok().says("source plugin `fixture` 1.1.0");
+    e.dre(&["deps"]).ok().says("plugin package `fixture` 1.1.0");
     assert!(e.installed("1.1.0") && !e.installed("1.0.0"));
     let lock = e.lock();
     assert!(
         lock.contains(&format!(
-            "sources:\n  fixture:\n    version: 1.1.0\n    sha256:\n      {}: {}\n    from: github:acme/dre-source-fixture\n",
+            "plugins:\n  fixture:\n    version: 1.1.0\n    sha256:\n      {}: {}\n    from: github:acme/dre-source-fixture\n",
             platform(),
             sha(&bin)
         )),
@@ -218,7 +215,7 @@ fn github_releases_install_the_newest_match_and_pin_it() {
     // Narrower constraint, fresh resolve.
     e.write("project/dependencies.yml", &GITHUB.replace(">=1.0", "<1.1"));
     std::fs::remove_file(e.p("project/dre.lock")).unwrap();
-    e.dre(&["deps"]).ok().says("source plugin `fixture` 1.0.0");
+    e.dre(&["deps"]).ok().says("plugin package `fixture` 1.0.0");
 }
 
 #[test]
@@ -250,7 +247,7 @@ fn github_without_published_checksums_pins_the_first_download() {
         e.lock()
     );
     // The same release now serves different bytes: the pin catches it.
-    std::fs::remove_dir_all(e.p("plugins/source")).unwrap();
+    std::fs::remove_dir_all(e.p("plugins/fixture")).unwrap();
     std::fs::remove_dir_all(e.p("home")).ok();
     let asset = format!("dre-source-fixture-1.1.0-{}", platform());
     e.server.route(&asset_path("1.1.0", &asset), b"tampered".to_vec());
@@ -259,7 +256,7 @@ fn github_without_published_checksums_pins_the_first_download() {
 
 #[test]
 fn local_plugins_are_used_in_place_and_recorded() {
-    let e = Env::new("sources:\n  - {name: fixture, local: bin/my-fixture}\nformats:\n  - csv\n");
+    let e = Env::new("plugins:\n  - {name: fixture, local: bin/my-fixture}\n  - csv\n");
     std::fs::create_dir_all(e.p("project/bin")).unwrap();
     let dst = e.p("project/bin/my-fixture");
     std::fs::write(&dst, fixture_bin()).unwrap();
@@ -270,11 +267,11 @@ fn local_plugins_are_used_in_place_and_recorded() {
     }
     e.dre(&["deps"]).ok();
     assert!(
-        e.lock().contains("local:\n  source/fixture: bin/my-fixture\n"),
+        e.lock().contains("local:\n  fixture: bin/my-fixture\n"),
         "{}",
         e.lock()
     );
-    assert!(!e.p("plugins/source").exists(), "nothing is installed");
+    assert!(!e.p("plugins/fixture").exists(), "nothing is installed");
     e.dre(&["run"]).ok();
     e.dre(&["plugin", "update", "fixture"])
         .ok()
@@ -287,7 +284,7 @@ fn local_plugins_are_used_in_place_and_recorded() {
 
 #[test]
 fn a_per_plugin_registry_is_used_for_that_plugin_only() {
-    let e = Env::new("sources:\n  - {name: fixture, registry: REG}\nformats:\n  - csv\n");
+    let e = Env::new("plugins:\n  - {name: fixture, registry: REG}\n  - csv\n");
     let reg = e.p("other-registry");
     std::fs::create_dir_all(&reg).unwrap();
     let bin = fixture_bin();
@@ -299,11 +296,11 @@ fn a_per_plugin_registry_is_used_for_that_plugin_only() {
     e.write(
         "project/dependencies.yml",
         &format!(
-            "sources:\n  - {{name: fixture, registry: '{}'}}\nformats:\n  - csv\n",
+            "plugins:\n  - {{name: fixture, registry: '{}'}}\n  - csv\n",
             reg.join("index.json").display()
         ),
     );
-    e.dre(&["deps"]).ok().says("source plugin `fixture` 2.0.0");
+    e.dre(&["deps"]).ok().says("plugin package `fixture` 2.0.0");
     assert!(e.lock().contains("from: registry:"), "{}", e.lock());
     e.dre(&["run"]).ok();
 }
@@ -324,12 +321,12 @@ fn changing_the_source_resolves_the_plugin_again() {
     }
     e.write(
         "project/dependencies.yml",
-        "sources:\n  - {name: fixture, local: bin/fx}\nformats:\n  - csv\n",
+        "plugins:\n  - {name: fixture, local: bin/fx}\n  - csv\n",
     );
     e.dre(&["deps"]).ok();
     let lock = e.lock();
     assert!(
-        lock.contains("source/fixture: bin/fx") && !lock.contains("from: github:"),
+        lock.contains("fixture: bin/fx") && !lock.contains("from: github:"),
         "{lock}"
     );
     e.write("project/dependencies.yml", GITHUB);
@@ -345,34 +342,37 @@ fn changing_the_source_resolves_the_plugin_again() {
 fn bad_entries_are_validate_errors() {
     for (deps, msg) in [
         (
-            "sources:\n  - {name: fixture, github: nope}\n",
+            "plugins:\n  - {name: fixture, github: nope}\n",
             "`github: nope` must be `owner/repo`",
         ),
         (
-            "sources:\n  - {name: fixture, github: a/b, local: x}\n",
+            "plugins:\n  - {name: fixture, github: a/b, local: x}\n",
             "give only one of `github`, `local` and `registry`",
         ),
         (
-            "sources:\n  - {name: fixture, gitlab: a/b}\n",
+            "plugins:\n  - {name: fixture, gitlab: a/b}\n",
             "unknown key `gitlab`",
         ),
         (
-            "sources:\n  - {name: fixture, local: x, version: '1'}\n",
-            "a `local` plugin has no `version`",
+            "plugins:\n  - {name: fixture, local: x, version: '1'}\n",
+            "a `local` package has no `version`",
         ),
         (
-            "sources:\n  - {name: '', local: x}\n",
+            "plugins:\n  - {name: '', local: x}\n",
             "`name` must be a non-empty string",
         ),
-        ("sources:\n  - [fixture]\n", "each `sources` entry is a name"),
+        (
+            "plugins:\n  - [fixture]\n",
+            "each `plugins` entry is a package name",
+        ),
     ] {
         let e = Env::new(deps);
         e.dre(&["validate", "--no-auto-install"]).failed().says(msg);
     }
-    let e = Env::new("sources:\n  - {name: fixture, github: a/b}\n");
+    let e = Env::new("plugins:\n  - {name: fixture, github: a/b}\n");
     e.write(
         "project/packages.yml",
-        "sources:\n  - {name: fixture, local: bin/x}\n",
+        "plugins:\n  - {name: fixture, local: bin/x}\n",
     );
     e.dre(&["validate", "--no-auto-install"])
         .failed()
@@ -383,7 +383,7 @@ fn bad_entries_are_validate_errors() {
 fn a_run_notices_a_changed_source_without_dre_deps() {
     // First from a registry, then the entry moves to GitHub: `dre run` must reinstall, not keep
     // using the registry's copy.
-    let e = Env::new("sources:\n  - fixture\nformats:\n  - csv\n");
+    let e = Env::new("plugins:\n  - fixture\n  - csv\n");
     let reg = e.p("registry");
     std::fs::create_dir_all(&reg).unwrap();
     let bin = fixture_bin();
@@ -406,7 +406,7 @@ fn a_run_notices_a_changed_source_without_dre_deps() {
     e.dre(&["run"])
         .ok()
         .says("Installed")
-        .says("source plugin `fixture` 1.1.0");
+        .says("plugin package `fixture` 1.1.0");
     assert!(
         e.lock().contains("from: github:acme/dre-source-fixture"),
         "{}",

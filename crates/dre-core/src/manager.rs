@@ -1,35 +1,78 @@
-//! The plugin manager: a static JSON registry index, checksum-verified downloads, side-by-side
-//! versioned installs, and `dre.lock`.
+//! The plugin manager: a static JSON registry index of plugin packages, checksum-verified
+//! downloads, side-by-side versioned installs, and `dre.lock`.
 //!
 //! Index location: `DRE_REGISTRY_URL`, default [`DEFAULT_REGISTRY`]. It may be an `https://`
 //! URL, a `file://` URL or a plain path. Format: `docs/registry.md`.
 
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use dre_protocol::executable_name;
+use dre_protocol::{
+    Kind, PluginId, package_executable_name, parse_executable_name, parse_package_executable_name,
+};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::lock::{Checksums, Lock, Locked};
-use crate::project::{PluginKind, PluginRequirement, PluginSource, Project};
+use crate::plugins::{Manifest, version_dir};
+use crate::project::{PluginRequirement, PluginSource, Project};
 
-pub const DEFAULT_REGISTRY: &str = "https://github.com/allenhori/dre/releases/download/registry/index.json";
+pub const DEFAULT_REGISTRY: &str =
+    "https://github.com/allenhori/dre/releases/download/registry/packages.json";
+
+/// The index's current schema. Schema 1 listed single plugins (`kind` and `name`); each still
+/// reads as a package of that one plugin.
+pub const INDEX_SCHEMA: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Index {
     pub schema: u32,
-    pub plugins: Vec<IndexPlugin>,
+    pub plugins: Vec<IndexPackage>,
 }
 
+/// A plugin package: one executable per platform, serving every plugin in `provides`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexPlugin {
-    pub kind: PluginKind,
+#[serde(from = "RawPackage")]
+pub struct IndexPackage {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Empty when the source doesn't say (a GitHub release): the executable is asked once
+    /// installed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<PluginId>,
     pub versions: Vec<IndexVersion>,
+}
+
+#[derive(Deserialize)]
+struct RawPackage {
+    name: String,
+    /// Schema 1: the one plugin's kind.
+    #[serde(default)]
+    kind: Option<Kind>,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    provides: Vec<PluginId>,
+    versions: Vec<IndexVersion>,
+}
+
+impl From<RawPackage> for IndexPackage {
+    fn from(r: RawPackage) -> IndexPackage {
+        let mut provides = r.provides;
+        if provides.is_empty()
+            && let Some(kind) = r.kind
+        {
+            provides.push(PluginId::new(kind, r.name.clone()));
+        }
+        IndexPackage {
+            name: r.name,
+            description: r.description,
+            provides,
+            versions: r.versions,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,9 +96,9 @@ pub struct Artifact {
     pub sha256_url: Option<String>,
 }
 
-/// Check each `undeclared-plugin` error's plugin against DRE's registry, so a name the registry
-/// doesn't have isn't answered with "declare it and run `dre deps`". The registry is fetched
-/// now, so a newly published plugin is known without a new `dre`. Unreachable: unchanged.
+/// Name the package to declare for each `undeclared-plugin` error, from DRE's registry, or say
+/// that the registry has no such plugin. The registry is fetched now, so a newly published
+/// package is known without a new `dre`. Unreachable: unchanged.
 pub fn explain_undeclared(diags: &mut crate::Diagnostics) {
     if !diags.iter_mut().any(|d| d.plugin.is_some()) {
         return;
@@ -63,18 +106,39 @@ pub fn explain_undeclared(diags: &mut crate::Diagnostics) {
     let Ok(index) = Index::load() else { return };
     for d in diags.iter_mut() {
         let Some((kind, name)) = &d.plugin else { continue };
-        if index.plugin(*kind, name).is_some() {
-            continue;
-        }
+        let id = PluginId::new(*kind, name.clone());
         let what = d.message.split(" — ").next().unwrap_or_default().to_string();
-        let others: Vec<&str> = index.by_name(name).iter().map(|p| p.kind.as_str()).collect();
-        d.message = if others.is_empty() {
-            format!("{what} — DRE's plugin registry has no {kind} plugin called `{name}`; check the spelling")
-        } else {
-            format!(
+        let providers: Vec<&str> = index.providers(&id).iter().map(|p| p.name.as_str()).collect();
+        let others: Vec<String> = index
+            .plugins
+            .iter()
+            .flat_map(|p| &p.provides)
+            .filter(|p| &p.name == name && p.kind != *kind)
+            .map(|p| p.kind.to_string())
+            .collect();
+        d.message = match (providers.as_slice(), others.is_empty()) {
+            ([p], _) if *p == name => {
+                format!("{what} — add `{p}` under `plugins:` in dependencies.yml, then run `dre deps`")
+            }
+            ([p], _) => format!(
+                "{what} — the `{name}` {kind} is in the `{p}` package: add `{p}` under `plugins:` in dependencies.yml, then run `dre deps`"
+            ),
+            ([], true) => {
+                format!(
+                    "{what} — DRE's plugin registry has no {kind} plugin called `{name}`; check the spelling"
+                )
+            }
+            ([], false) => format!(
                 "{what} — `{name}` in DRE's plugin registry is a {} plugin, not a {kind}",
                 others.join(" and ")
-            )
+            ),
+            (many, _) => format!(
+                "{what} — add one of the packages that provide it under `plugins:` in dependencies.yml ({}), then run `dre deps`",
+                many.iter()
+                    .map(|p| format!("`{p}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         };
     }
 }
@@ -147,30 +211,37 @@ impl Index {
             .map_err(|e| format!("the plugin registry at {url} isn't a valid index: {e}"))
     }
 
-    /// The index a plugin installs from, given where the project declares it comes from.
-    pub fn for_source(source: &PluginSource, kind: PluginKind, name: &str) -> Result<Index, String> {
+    /// The index a package installs from, given where the project declares it comes from.
+    pub fn for_source(source: &PluginSource, name: &str) -> Result<Index, String> {
         match source {
             PluginSource::Default => Index::load(),
             PluginSource::Registry(u) => Index::load_from(u),
-            PluginSource::Github(repo) => github_index(repo, kind, name),
+            PluginSource::Github(repo) => github_index(repo, name),
             PluginSource::Local(p) => Err(format!(
-                "{} plugin `{name}` is used from {p}; there's nothing to install",
-                kind.as_str()
+                "plugin package `{name}` is used from {p}; there's nothing to install"
             )),
         }
     }
 
-    pub fn plugin(&self, kind: PluginKind, name: &str) -> Option<&IndexPlugin> {
-        self.plugins.iter().find(|p| p.kind == kind && p.name == name)
+    pub fn package(&self, name: &str) -> Option<&IndexPackage> {
+        self.plugins.iter().find(|p| p.name == name)
     }
 
-    /// Plugins called `name`, of any kind.
-    pub fn by_name(&self, name: &str) -> Vec<&IndexPlugin> {
-        self.plugins.iter().filter(|p| p.name == name).collect()
+    /// The packages that provide `id`.
+    pub fn providers(&self, id: &PluginId) -> Vec<&IndexPackage> {
+        self.plugins.iter().filter(|p| p.provides.contains(id)).collect()
+    }
+
+    /// Packages providing a plugin called `name`, of any kind.
+    pub fn providers_of_name(&self, name: &str) -> Vec<&IndexPackage> {
+        self.plugins
+            .iter()
+            .filter(|p| p.provides.iter().any(|i| i.name == name))
+            .collect()
     }
 }
 
-impl IndexPlugin {
+impl IndexPackage {
     /// The highest version matching `req` that has an artifact for this platform and speaks a
     /// protocol this core supports. Pre-releases only when no stable version matches (see
     /// [`prefer_stable`]).
@@ -227,27 +298,39 @@ struct GithubAsset {
     url: String,
 }
 
-/// A one-plugin index built from `owner/repo`'s GitHub Releases. A release tagged `v1.2.0` (or
+/// A one-package index built from `owner/repo`'s GitHub Releases. A release tagged `v1.2.0` (or
 /// `1.2.0`) offers version 1.2.0 for each platform it has an asset for, named like the
-/// registry's: `dre-<kind>-<name>-<version>-<platform>.tar.gz`, or the bare executable.
-fn github_index(repo: &str, kind: PluginKind, name: &str) -> Result<Index, String> {
+/// registry's: `dre-plugin-<name>-<version>-<platform>.tar.gz`, or the bare executable. A
+/// single plugin's release named `dre-<kind>-<name>-<version>-<platform>` works too.
+fn github_index(repo: &str, name: &str) -> Result<Index, String> {
     let url = format!("{}/repos/{repo}/releases?per_page=100", github_api());
     let body = fetch(&url)?;
     let releases: Vec<GithubRelease> =
         serde_json::from_slice(&body).map_err(|e| format!("{url}: unexpected reply from GitHub: {e}"))?;
-    let exe = executable_name(kind, name);
-    let stem = exe.trim_end_matches(".exe").to_string();
+    let package_stem = format!("dre-plugin-{name}");
+    let mut provides: Vec<PluginId> = Vec::new();
     let mut versions = Vec::new();
     for r in releases.iter().filter(|r| !r.draft) {
         let Ok(version) = Version::parse(r.tag_name.trim_start_matches('v')) else {
             continue;
         };
-        let prefix = format!("{stem}-{version}-");
+        let suffix = format!("-{version}-");
         let mut artifacts = std::collections::BTreeMap::new();
         for a in &r.assets {
-            let Some(rest) = a.name.strip_prefix(&prefix) else {
+            let Some((stem, rest)) = a.name.split_once(&suffix) else {
                 continue;
             };
+            if stem != package_stem {
+                match parse_executable_name(&format!("{stem}{}", std::env::consts::EXE_SUFFIX)) {
+                    Some((kind, n)) if n == name => {
+                        let id = PluginId::new(kind, n);
+                        if !provides.contains(&id) {
+                            provides.push(id);
+                        }
+                    }
+                    _ => continue,
+                }
+            }
             let plat = rest
                 .trim_end_matches(".tar.gz")
                 .trim_end_matches(".tgz")
@@ -279,44 +362,38 @@ fn github_index(repo: &str, kind: PluginKind, name: &str) -> Result<Index, Strin
     }
     if versions.is_empty() {
         return Err(format!(
-            "no release of github.com/{repo} has a `{stem}-<version>-<platform>` asset for any platform"
+            "no release of github.com/{repo} has a `{package_stem}-<version>-<platform>` asset for any platform"
         ));
     }
+    // A package of several plugins says what it provides once installed.
+    if provides.len() > 1 {
+        provides.clear();
+    }
     Ok(Index {
-        schema: 1,
-        plugins: vec![IndexPlugin {
-            kind,
+        schema: INDEX_SCHEMA,
+        plugins: vec![IndexPackage {
             name: name.to_string(),
             description: format!("from github.com/{repo}"),
+            provides,
             versions,
         }],
     })
 }
 
-/// Where a version is installed.
-pub fn install_path(dir: &Path, kind: PluginKind, name: &str, version: &Version) -> PathBuf {
-    dir.join(kind.as_str())
-        .join(name)
-        .join(version.to_string())
-        .join(executable_name(kind, name))
-}
-
-/// Download, verify and install one version. Returns its lock entry.
+/// Download, verify and install one version into `<dir>/<package>/<version>/`. Returns its lock
+/// entry.
 pub fn install(
     dir: &Path,
-    plugin: &IndexPlugin,
+    package: &IndexPackage,
     v: &IndexVersion,
     pin: Option<&Checksums>,
 ) -> Result<Locked, String> {
     let plat = platform();
-    let art = v.artifacts.get(&plat).ok_or_else(|| {
-        format!(
-            "{} `{}` {} has no build for {plat}",
-            plugin.kind.as_str(),
-            plugin.name,
-            v.version
-        )
-    })?;
+    let what = format!("plugin package `{}` {}", package.name, v.version);
+    let art = v
+        .artifacts
+        .get(&plat)
+        .ok_or_else(|| format!("{what} has no build for {plat}"))?;
     // The published checksum: the index's, a `.sha256` file's, or none yet.
     let published = if !art.sha256.is_empty() {
         Some(art.sha256.clone())
@@ -326,14 +403,7 @@ pub fn install(
     } else {
         None
     };
-    let refuse = || {
-        format!(
-            "{} `{}` {}: the registry's checksum doesn't match dre.lock; refusing to install",
-            plugin.kind.as_str(),
-            plugin.name,
-            v.version
-        )
-    };
+    let refuse = || format!("{what}: the registry's checksum doesn't match dre.lock; refusing to install");
     // What the lock expects on this platform. A lock that doesn't name platforms (from an older
     // DRE) was written on one of them: its checksum must be one the registry publishes for
     // this version, whichever platform that is.
@@ -361,21 +431,20 @@ pub fn install(
         && !got.eq_ignore_ascii_case(want)
     {
         return Err(format!(
-            "checksum mismatch for {} `{}` {} (expected {want}, got {got}); the download was discarded",
-            plugin.kind.as_str(),
-            plugin.name,
-            v.version,
+            "checksum mismatch for {what} (expected {want}, got {got}); the download was discarded"
         ));
     }
-    let exe = if art.url.ends_with(".tar.gz") || art.url.ends_with(".tgz") {
-        extract_tar_gz(&bytes, &executable_name(plugin.kind, &plugin.name))?
+    let (exe_name, exe) = if art.url.ends_with(".tar.gz") || art.url.ends_with(".tgz") {
+        extract_tar_gz(&bytes, &package.name)?
     } else {
-        bytes
+        let name = crate::plugins::legacy_executable(&package.provides)
+            .unwrap_or_else(|| package_executable_name(&package.name));
+        (name, bytes)
     };
-    let dst = install_path(dir, plugin.kind, &plugin.name, &v.version);
-    let parent = dst.parent().unwrap();
-    std::fs::create_dir_all(parent).map_err(|e| format!("can't create {}: {e}", parent.display()))?;
-    let tmp = parent.join(format!(".download-{}", std::process::id()));
+    let vdir = version_dir(dir, &package.name, &v.version);
+    std::fs::create_dir_all(&vdir).map_err(|e| format!("can't create {}: {e}", vdir.display()))?;
+    let dst = vdir.join(&exe_name);
+    let tmp = vdir.join(format!(".download-{}", std::process::id()));
     std::fs::write(&tmp, &exe).map_err(|e| format!("can't write {}: {e}", tmp.display()))?;
     #[cfg(unix)]
     {
@@ -383,6 +452,19 @@ pub fn install(
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     }
     std::fs::rename(&tmp, &dst).map_err(|e| format!("can't install {}: {e}", dst.display()))?;
+    // A source that doesn't list what the package provides: ask the executable.
+    let provides = if package.provides.is_empty() {
+        crate::plugins::probe(&dst)?
+    } else {
+        package.provides.clone()
+    };
+    crate::plugins::write_manifest(
+        &vdir,
+        &Manifest {
+            executable: exe_name,
+            provides: provides.clone(),
+        },
+    )?;
     let mut sha256 = published_checksums(v);
     if let Some(p) = pin {
         sha256.merge(p);
@@ -392,6 +474,7 @@ pub fn install(
         version: v.version.clone(),
         sha256,
         from: None,
+        provides,
     })
 }
 
@@ -406,43 +489,45 @@ fn published_checksums(v: &IndexVersion) -> Checksums {
     c
 }
 
-fn extract_tar_gz(bytes: &[u8], exe: &str) -> Result<Vec<u8>, String> {
+/// The package's executable in an archive: `dre-plugin-<package>`, or a single plugin's
+/// `dre-<kind>-<package>`. Returns its file name and bytes.
+fn extract_tar_gz(bytes: &[u8], package: &str) -> Result<(String, Vec<u8>), String> {
     let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
     for entry in archive.entries().map_err(|e| e.to_string())? {
         let mut entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path().map_err(|e| e.to_string())?.to_path_buf();
-        if path.file_name().is_some_and(|f| f == exe) {
+        let Some(file) = path.file_name().map(|f| f.to_string_lossy().to_string()) else {
+            continue;
+        };
+        let ours = parse_package_executable_name(&file).is_some_and(|n| n == package)
+            || parse_executable_name(&file).is_some_and(|(_, n)| n == package);
+        if ours {
             let mut out = Vec::new();
             entry.read_to_end(&mut out).map_err(|e| e.to_string())?;
-            return Ok(out);
+            return Ok((file, out));
         }
     }
-    Err(format!("the archive doesn't contain `{exe}`"))
+    Err(format!(
+        "the archive doesn't contain `{}`",
+        package_executable_name(package)
+    ))
 }
 
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// What `sync` did for one plugin.
+/// What `sync` did for one package.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Synced {
-    AlreadyInstalled {
-        kind: PluginKind,
-        name: String,
-        version: Option<Version>,
-    },
-    Installed {
-        kind: PluginKind,
-        name: String,
-        version: Version,
-    },
+    AlreadyInstalled { name: String, version: Option<Version> },
+    Installed { name: String, version: Version },
 }
 
-/// Make every declared plugin available, installing what's missing (unless `install` is false,
-/// in which case missing plugins are errors). Honours `dre.lock` pins, writes new pins.
+/// Make every declared package available, installing what's missing (unless `install` is
+/// false, in which case missing packages are errors). Honours `dre.lock` pins, writes new pins.
 ///
-/// With `resolve` (`dre deps`), a plugin that `dre.lock` doesn't pin is resolved against the
+/// With `resolve` (`dre deps`), a package that `dre.lock` doesn't pin is resolved against the
 /// registry even when some matching version is already installed, so deleting `dre.lock` picks
 /// up the newest allowed release. Without it (auto-install before run/validate), any installed
 /// match will do and the registry is only consulted for what's missing.
@@ -459,48 +544,40 @@ pub fn sync(
     let mut errors = Vec::new();
     let mut lock_changed = false;
     for req in &project.plugins {
-        let key = format!("{}/{}", req.kind.as_str(), req.name);
+        let name = &req.name;
         if let PluginSource::Local(p) = &req.source {
             if !project.root.join(p).is_file() {
                 errors.push(format!(
-                    "the {} plugin `{}` is declared `local: {p}`, but there's no file there",
-                    req.kind.as_str(),
-                    req.name
+                    "the plugin package `{name}` is declared `local: {p}`, but there's no file there"
                 ));
                 continue;
             }
-            if lock.local.get(&key) != Some(p) {
-                lock.local.insert(key, p.clone());
+            if lock.local.get(name) != Some(p) {
+                lock.local.insert(name.clone(), p.clone());
                 lock_changed = true;
             }
-            lock_changed |= lock.map_mut(req.kind).remove(&req.name).is_some();
+            lock_changed |= lock.plugins.remove(name).is_some();
             out.push(Synced::AlreadyInstalled {
-                kind: req.kind,
-                name: req.name.clone(),
+                name: name.clone(),
                 version: None,
             });
             continue;
         }
-        lock_changed |= lock.local.remove(&key).is_some();
-        // A pin from another source doesn't count: the plugin is resolved again, and an
+        lock_changed |= lock.local.remove(name).is_some();
+        // A pin from another source doesn't count: the package is resolved again, and an
         // installed copy (from the old source) isn't reused.
-        let moved = lock
-            .get(req.kind, &req.name)
-            .is_some_and(|l| l.from != req.source.lock_key());
+        let moved = lock.get(name).is_some_and(|l| l.from != req.source.lock_key());
         let pin = lock
-            .get(req.kind, &req.name)
+            .get(name)
             .filter(|l| l.from == req.source.lock_key())
             .cloned();
         if !moved
-            && let Some(p) = crate::plugins::find(
-                &dir,
-                req.kind,
-                &req.name,
-                Some(&req.req()),
-                pin.as_ref().map(|l| &l.version),
-            )
+            && let Some(p) =
+                crate::plugins::find(&dir, name, Some(&req.req()), pin.as_ref().map(|l| &l.version))
+                    .into_iter()
+                    .next()
         {
-            // A hand-placed (flat) plugin satisfies any pin; versioned installs must match it,
+            // A hand-placed (flat) package satisfies any pin; versioned installs must match it,
             // and when resolving, an unpinned versioned install goes back to the registry.
             let ok = match (&pin, &p.version) {
                 (Some(l), Some(v)) => &l.version == v,
@@ -508,9 +585,16 @@ pub fn sync(
                 _ => true,
             };
             if ok {
+                // A lock from before `provides` was recorded learns it from the install.
+                if let (Some(l), Some(_)) = (lock.plugins.get_mut(name), &p.version)
+                    && l.provides.is_empty()
+                    && !p.provides.is_empty()
+                {
+                    l.provides = p.provides.clone();
+                    lock_changed = true;
+                }
                 out.push(Synced::AlreadyInstalled {
-                    kind: req.kind,
-                    name: req.name.clone(),
+                    name: name.clone(),
                     version: p.version,
                 });
                 continue;
@@ -522,14 +606,12 @@ pub fn sync(
             && req.source.is_default()
             && dir != crate::plugins::cache_dir()
         {
-            let cached = install_path(&crate::plugins::cache_dir(), req.kind, &req.name, &l.version);
-            if cached.is_file()
-                && crate::plugins::link_or_copy(&cached, &install_path(&dir, req.kind, &req.name, &l.version))
-                    .is_ok()
+            let cached = version_dir(&crate::plugins::cache_dir(), name, &l.version);
+            if crate::plugins::read_manifest(&cached).is_some()
+                && crate::plugins::link_version(&cached, &version_dir(&dir, name, &l.version)).is_ok()
             {
                 out.push(Synced::AlreadyInstalled {
-                    kind: req.kind,
-                    name: req.name.clone(),
+                    name: name.clone(),
                     version: Some(l.version.clone()),
                 });
                 continue;
@@ -537,22 +619,20 @@ pub fn sync(
         }
         if !install_missing {
             errors.push(format!(
-                "the {} plugin `{}` ({}) isn't installed and auto-install is off; run `dre deps`",
-                req.kind.as_str(),
-                req.name,
+                "the plugin package `{name}` ({}) isn't installed and auto-install is off; run `dre deps`",
                 pin.as_ref()
                     .map(|l| format!("locked at {}", l.version))
                     .unwrap_or_else(|| req.version.clone())
             ));
             continue;
         }
-        // One index per source; a GitHub repo's covers just the plugin it was built for.
+        // One index per source; a GitHub repo's covers just the package it was built for.
         let ikey = match &req.source {
-            PluginSource::Github(_) => format!("{}#{key}", req.source.lock_key().unwrap_or_default()),
+            PluginSource::Github(_) => format!("{}#{name}", req.source.lock_key().unwrap_or_default()),
             s => s.lock_key().unwrap_or_default(),
         };
         if !indexes.contains_key(&ikey) {
-            match Index::for_source(&req.source, req.kind, &req.name) {
+            match Index::for_source(&req.source, name) {
                 Ok(i) => {
                     indexes.insert(ikey.clone(), i);
                 }
@@ -568,28 +648,21 @@ pub fn sync(
             (l, fresh)
         }) {
             Ok((locked, false)) => {
-                lock.map_mut(req.kind).insert(req.name.clone(), locked.clone());
+                lock.plugins.insert(name.clone(), locked.clone());
                 lock_changed = true;
                 out.push(Synced::AlreadyInstalled {
-                    kind: req.kind,
-                    name: req.name.clone(),
+                    name: name.clone(),
                     version: Some(locked.version),
                 });
             }
             Ok((locked, true)) => {
-                log(&format!(
-                    "installed {} plugin `{}` {}",
-                    req.kind.as_str(),
-                    req.name,
-                    locked.version
-                ));
-                if lock.get(req.kind, &req.name) != Some(&locked) {
-                    lock.map_mut(req.kind).insert(req.name.clone(), locked.clone());
+                log(&format!("installed plugin package `{name}` {}", locked.version));
+                if lock.get(name) != Some(&locked) {
+                    lock.plugins.insert(name.clone(), locked.clone());
                     lock_changed = true;
                 }
                 out.push(Synced::Installed {
-                    kind: req.kind,
-                    name: req.name.clone(),
+                    name: name.clone(),
                     version: locked.version,
                 });
             }
@@ -611,23 +684,33 @@ fn install_one(
     req: &PluginRequirement,
     pin: Option<&Locked>,
 ) -> Result<(Locked, bool), String> {
-    let plugin = index
-        .plugin(req.kind, &req.name)
-        .ok_or_else(|| format!("the registry has no {} plugin `{}`", req.kind.as_str(), req.name))?;
-    let v = match pin {
-        Some(l) => plugin.exact(&l.version).ok_or_else(|| {
+    let name = &req.name;
+    let package = index.package(name).ok_or_else(|| {
+        let inside: Vec<String> = index
+            .plugins
+            .iter()
+            .filter(|p| p.provides.iter().any(|i| &i.name == name))
+            .map(|p| format!("`{}`", p.name))
+            .collect();
+        if inside.is_empty() {
+            format!("the registry has no plugin package `{name}`")
+        } else {
             format!(
-                "dre.lock pins {} `{}` {}, which the registry doesn't list",
-                req.kind.as_str(),
-                req.name,
+                "the registry has no plugin package `{name}`; `{name}` is a plugin in {}: declare that under `plugins:` instead",
+                inside.join(", ")
+            )
+        }
+    })?;
+    let v = match pin {
+        Some(l) => package.exact(&l.version).ok_or_else(|| {
+            format!(
+                "dre.lock pins plugin package `{name}` {}, which the registry doesn't list",
                 l.version
             )
         })?,
-        None => plugin.best(&req.req()).ok_or_else(|| {
+        None => package.best(&req.req()).ok_or_else(|| {
             format!(
-                "no version of the {} plugin `{}` matches `{}` for {}",
-                req.kind.as_str(),
-                req.name,
+                "no version of the plugin package `{name}` matches `{}` for {}",
                 req.version,
                 platform()
             )
@@ -637,40 +720,43 @@ fn install_one(
     // published under the same version must be installed again, not pinned to a checksum the
     // installed file doesn't have. (An archived artifact's checksum can't be compared with the
     // extracted executable, so those are always reinstalled.)
-    let installed = install_path(dir, req.kind, &req.name, &v.version);
+    let vdir = version_dir(dir, name, &v.version);
     if pin.is_none()
         && let Some(art) = v.artifacts.get(&platform())
         && !(art.url.ends_with(".tar.gz") || art.url.ends_with(".tgz"))
-        && std::fs::read(&installed).is_ok_and(|b| hex(&Sha256::digest(&b)).eq_ignore_ascii_case(&art.sha256))
+        && let Some(m) = crate::plugins::read_manifest(&vdir)
+        && std::fs::read(vdir.join(&m.executable))
+            .is_ok_and(|b| hex(&Sha256::digest(&b)).eq_ignore_ascii_case(&art.sha256))
     {
         let locked = Locked {
             version: v.version.clone(),
             sha256: published_checksums(v),
             from: None,
+            provides: m.provides,
         };
         return Ok((locked, false));
     }
     let expect = pin.map(|l| &l.sha256);
     if req.source.is_default() {
-        install_linked(dir, plugin, v, expect).map(|l| (l, true))
+        install_linked(dir, package, v, expect).map(|l| (l, true))
     } else {
-        install(dir, plugin, v, expect).map(|l| (l, true))
+        install(dir, package, v, expect).map(|l| (l, true))
     }
 }
 
 /// Install into `dir` through the shared cache: download there once, then link into `dir`.
 pub fn install_linked(
     dir: &Path,
-    plugin: &IndexPlugin,
+    package: &IndexPackage,
     v: &IndexVersion,
     pin: Option<&Checksums>,
 ) -> Result<Locked, String> {
     let cache = crate::plugins::cache_dir();
-    let locked = install(&cache, plugin, v, pin)?;
+    let locked = install(&cache, package, v, pin)?;
     if dir != cache {
-        crate::plugins::link_or_copy(
-            &install_path(&cache, plugin.kind, &plugin.name, &v.version),
-            &install_path(dir, plugin.kind, &plugin.name, &v.version),
+        crate::plugins::link_version(
+            &version_dir(&cache, &package.name, &v.version),
+            &version_dir(dir, &package.name, &v.version),
         )?;
     }
     Ok(locked)

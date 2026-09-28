@@ -33,31 +33,44 @@ fn stand_in_plugins() -> PathBuf {
     DIR.get_or_init(|| {
         let d = tempfile::tempdir().unwrap();
         let real = [
-            "dre-format-csv",
-            "dre-format-delimited",
-            "dre-format-xlsx",
-            "dre-format-parquet",
-            "dre-format-fixed_width",
-            "dre-destination-sftp",
+            "dre-plugin-csv",
+            "dre-plugin-xlsx",
+            "dre-plugin-parquet",
+            "dre-plugin-fixed_width",
+            "dre-plugin-sftp",
             "dre-destination-fixture",
         ];
         common::build_bins(&real);
         for b in real {
             common::place_plugin(d.path(), b);
         }
-        for n in [
-            "source-duckdb",
-            "source-postgres",
-            "source-fixture",
-            "destination-s3",
-        ] {
-            let p = d.path().join(format!("dre-{n}{}", std::env::consts::EXE_SUFFIX));
-            std::fs::write(&p, "").unwrap();
+        let stand_in = |p: &Path| {
+            std::fs::write(p, "").unwrap();
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+                std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
             }
+        };
+        stand_in(
+            &d.path()
+                .join(format!("dre-source-fixture{}", std::env::consts::EXE_SUFFIX)),
+        );
+        // Installed packages, which say what they provide without being started.
+        for (package, provides) in [
+            ("duckdb", &["source/duckdb"][..]),
+            ("postgres", &["source/postgres"]),
+            (
+                "object_store",
+                &["destination/s3", "destination/gcs", "destination/azure_blob"],
+            ),
+        ] {
+            let dir = d.path().join(package).join("0.0.1");
+            std::fs::create_dir_all(&dir).unwrap();
+            let exe = format!("dre-plugin-{package}{}", std::env::consts::EXE_SUFFIX);
+            stand_in(&dir.join(&exe));
+            let manifest = serde_json::json!({"executable": exe, "provides": provides});
+            std::fs::write(dir.join("plugin.json"), manifest.to_string()).unwrap();
         }
         d
     })

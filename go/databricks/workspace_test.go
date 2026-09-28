@@ -1,6 +1,6 @@
 package main
 
-// The databricks_workspace destination against a fake Workspace API.
+// The databricks destination's workspace paths, against a fake Workspace API.
 
 import (
 	"io"
@@ -118,14 +118,10 @@ func TestOnDatabricksComputeTheFileIsCopiedToTheMountedWorkspace(t *testing.T) {
 	}
 }
 
-func TestTheWorkspaceRole(t *testing.T) {
-	if roleOf("/x/dre-destination-databricks_workspace.exe").name != "databricks_workspace" ||
-		roleOf("dre-destination-databricks_volumes").name != "databricks_volumes" {
-		t.Fatal("roleOf")
-	}
-	c := startAs(t, workspaceRole)
-	c.send(map[string]any{"type": "hello", "min_version": 0, "max_version": 0, "core_version": "t"})
-	if r := c.reply(); r["kind"] != "destination" || r["name"] != "databricks_workspace" {
+func TestTheDestinationDeliversWorkspacePaths(t *testing.T) {
+	c := startAs(t, sourceRole)
+	c.send(map[string]any{"type": "hello", "min_version": 0, "max_version": 0, "core_version": "t", "plugin": "destination/databricks"})
+	if r := c.reply(); r["kind"] != "destination" || r["name"] != "databricks" {
 		t.Fatalf("%v", r)
 	}
 	srv, _ := fakeWorkspace(t)

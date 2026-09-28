@@ -206,15 +206,6 @@ exit: 0
     },
     "plugins": [
       {
-        "kind": "source",
-        "name": "duckdb",
-        "version": ">=0.0",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      },
-      {
-        "kind": "format",
         "name": "csv",
         "version": "*",
         "declared_in": [
@@ -222,7 +213,13 @@ exit: 0
         ]
       },
       {
-        "kind": "format",
+        "name": "duckdb",
+        "version": ">=0.0",
+        "declared_in": [
+          "dependencies.yml"
+        ]
+      },
+      {
         "name": "xlsx",
         "version": "*",
         "declared_in": [

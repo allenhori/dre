@@ -17,7 +17,7 @@ fn project(report: &str) -> TestProject {
             ),
             (
                 "dependencies.yml",
-                "sources: [duckdb]\nformats: [csv, delimited, parquet, fixed_width, xlsx]\n",
+                "plugins: [duckdb, csv, parquet, fixed_width, xlsx]\n",
             ),
             ("reports/fin/r/r.yml", report),
             (
@@ -90,7 +90,7 @@ fn xlsx_template() {
          \x20     - {sheet: Detail, cell: B1, query: total, column: n}\n",
     );
     let tmpl = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../plugins/format-xlsx/tests/fixtures/branded.xlsx");
+        .join("../../plugins/xlsx/tests/fixtures/branded.xlsx");
     std::fs::create_dir_all(p.path("templates")).unwrap();
     std::fs::copy(tmpl, p.path("templates/branded.xlsx")).unwrap();
     p.dre("validate", &[]).ok();

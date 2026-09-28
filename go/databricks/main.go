@@ -1,12 +1,12 @@
-// Command dre-databricks is DRE's Databricks adapter: one program, installed under two plugin
-// names, that serves as
+// Command dre-plugin-databricks is DRE's Databricks plugin package: one program serving
 //
-//   - dre-source-databricks: the source for Databricks SQL warehouses, and
-//   - dre-destination-databricks_volumes: the destination for Unity Catalog Volumes, and
-//   - dre-destination-databricks_workspace: the destination for workspace files (/Workspace/...).
+//   - the `databricks` source, for Databricks SQL warehouses, and
+//   - the `databricks` destination, for Unity Catalog Volumes (/Volumes/...) and workspace files
+//     (/Workspace/...), chosen by the path.
 //
-// It picks its role from the name it was started as. Every role shares one sign-in (PAT or
-// OAuth) and one OAuth session per workspace in ~/.dre/oauth_sessions.json.
+// Core's hello names the plugin it wants; without one, a program named dre-destination-* serves
+// the destination and any other the source. Both share one sign-in (PAT or OAuth) and one OAuth
+// session per workspace in ~/.dre/oauth_sessions.json.
 //
 // It is written in Go so the source can use Databricks' official Go connector
 // (databricks-sql-go): SQL warehouses only hold sessions for Databricks' own clients, and one
@@ -52,19 +52,18 @@ type role struct {
 
 var (
 	sourceRole      = role{kind: "source", name: "databricks", capabilities: []string{"sessions", "check", "load", "validate"}}
-	destinationRole = role{kind: "destination", name: "databricks_volumes", capabilities: []string{"validate"}}
-	workspaceRole   = role{kind: "destination", name: "databricks_workspace", capabilities: []string{"validate"}}
+	destinationRole = role{kind: "destination", name: "databricks", capabilities: []string{"validate"}}
+	// roles is every plugin the package provides, in the order `provides` lists them.
+	roles = []role{sourceRole, destinationRole}
 )
 
-// roleOf picks the role from the executable's name: dre-destination-databricks_workspace and
-// dre-destination-databricks_volumes serve those destinations, anything else
-// (dre-source-databricks) the source.
+// id is the role as the protocol writes a plugin: `<kind>/<name>`.
+func (r role) id() string { return r.kind + "/" + r.name }
+
+// roleOf picks the role when core's hello doesn't name one, from the executable's name:
+// dre-destination-* serves the destination, anything else the source.
 func roleOf(exe string) role {
-	base := strings.ToLower(filepath.Base(exe))
-	switch {
-	case strings.HasPrefix(base, "dre-destination-databricks_workspace"):
-		return workspaceRole
-	case strings.HasPrefix(base, "dre-destination-"):
+	if strings.HasPrefix(strings.ToLower(filepath.Base(exe)), "dre-destination-") {
 		return destinationRole
 	}
 	return sourceRole
@@ -205,10 +204,26 @@ func (s *server) hello(req map[string]json.RawMessage) {
 		s.send(map[string]any{"type": "version_mismatch", "min_version": protocolMin, "max_version": protocolMax})
 		panic(exitCode(1))
 	}
+	provides := make([]string, len(roles))
+	for i, r := range roles {
+		provides[i] = r.id()
+	}
+	if want := str(req["plugin"]); want != "" {
+		found := false
+		for _, r := range roles {
+			if r.id() == want {
+				s.role, found = r, true
+			}
+		}
+		if !found {
+			s.send(errorMsg(fmt.Sprintf("this executable provides %s, not %s", strings.Join(provides, ", "), want)))
+			panic(exitCode(1))
+		}
+	}
 	s.greeted = true
 	s.send(map[string]any{
 		"type": "hello", "protocol_version": hi, "kind": s.role.kind, "name": s.role.name,
-		"version": version, "capabilities": s.role.capabilities,
+		"version": version, "capabilities": s.role.capabilities, "provides": provides,
 	})
 }
 
@@ -337,10 +352,6 @@ func (s *server) handleDestination(t string, req map[string]json.RawMessage) err
 			return fmt.Errorf("this destination takes one file per delivery")
 		default:
 			return fmt.Errorf("`deliver` needs exactly one of `local_path` or `files`")
-		}
-		deliver := deliverToVolume
-		if s.role.name == workspaceRole.name {
-			deliver = deliverToWorkspace
 		}
 		loc, err := deliver(local, remote, r.Connection)
 		if err != nil {

@@ -10,6 +10,10 @@
 //!
 //! Every `open` logs `fixture: opened read_only=<bool>` to stderr.
 //!
+//! In its normal mode it's a package of two plugins: the `fixture` source (served when core's
+//! hello names no plugin) and an `inbox` destination with the source's connection fields, which
+//! stands in for a destination on the same platform (`dre init` tests).
+//!
 //! SQL it understands: `rows N` (N rows of `n`, batches of 3), `none`, `fail`, `crash`,
 //! `log <text>`, `panic`. `check` accepts anything except `bad`.
 
@@ -19,7 +23,7 @@ use std::sync::Arc;
 use arrow::array::{Int64Array, RecordBatch};
 use arrow::datatypes::{DataType, Field, Schema};
 use dre_protocol::msg::ConnectionField;
-use dre_protocol::plugin::{About, ResultSink, Source, serve_source};
+use dre_protocol::plugin::{About, Destination, Plugin, ResultSink, Source, serve_package, serve_source};
 use dre_protocol::{CAP_CHECK, CAP_READ_ONLY, CAP_SESSIONS};
 use serde_json::{Map, Value};
 
@@ -30,7 +34,7 @@ struct Fixture {
 impl Source for Fixture {
     fn connection_fields(&self) -> Vec<ConnectionField> {
         vec![
-            // `same_as_source` matters when this binary also stands in for a destination.
+            // `same_as_source` matters for the `inbox` destination, which has these fields too.
             ConnectionField::new("path", "where the data lives")
                 .required()
                 .same_as_source("fixture"),
@@ -146,5 +150,26 @@ fn main() {
         CAP_READ_ONLY,
         CAP_CHECK,
     ]);
-    serve_source(about, Fixture { opened: false })
+    serve_package(vec![
+        Plugin::Source(about, Box::new(Fixture { opened: false })),
+        Plugin::Destination(About::new("inbox", env!("CARGO_PKG_VERSION")), Box::new(Inbox)),
+    ])
+}
+
+/// A destination with the source's connection fields, recording nothing.
+struct Inbox;
+
+impl Destination for Inbox {
+    fn connection_fields(&self) -> Vec<ConnectionField> {
+        Fixture { opened: false }.connection_fields()
+    }
+
+    fn deliver(
+        &mut self,
+        local: &std::path::Path,
+        _remote: Option<&str>,
+        _connection: &Map<String, Value>,
+    ) -> dre_protocol::plugin::Result<String> {
+        Ok(format!("inbox:{}", local.display()))
+    }
 }

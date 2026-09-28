@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::Kind;
 pub use crate::options::OptionField;
+use crate::{Kind, PluginId};
 
 /// Core → plugin.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -15,6 +15,10 @@ pub enum Request {
         min_version: u32,
         max_version: u32,
         core_version: String,
+        /// The plugin core wants served, for an executable that provides several. A package
+        /// that doesn't provide it replies `error`; without it, the package serves its first.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plugin: Option<PluginId>,
     },
     /// Describe the connection fields a profile output for this plugin takes (used by `dre init`)
     /// and the options a report's config block for it takes.
@@ -87,6 +91,9 @@ pub enum Response {
         version: String,
         #[serde(default)]
         capabilities: Vec<String>,
+        /// Every plugin the executable serves; empty for one that serves only `kind`/`name`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        provides: Vec<PluginId>,
     },
     VersionMismatch {
         min_version: u32,

@@ -1,7 +1,5 @@
-sources:
+plugins:
   - duckdb: ">=0.0"
-formats:
   - csv
   - xlsx
   - fixed_width
-  - delimited

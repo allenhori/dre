@@ -28,8 +28,8 @@ use crate::render::{
     Column, Connection, Connections, QueryRows, QueryRunner, RenderError, Renderer, RendererConfig,
     RunContext,
 };
+use crate::selector;
 use crate::sqlsplit::{self, StatementKind};
-use crate::{lock, selector};
 
 /// What the caller asked for.
 #[derive(Debug, Clone, Default)]
@@ -548,7 +548,7 @@ impl<'a> BindingRun<'a> {
         self.source_type = output.kind.clone();
         // Found and opened only when something needs the database, so compiling a report whose
         // templates don't query it works without the plugin or credentials.
-        let source_path = find_plugin(self.project, PluginKind::Source, &output.kind);
+        let source_path = find_plugin(self.project, PluginKind::Source, &output.kind).map_err(String::from);
         let connection = render_connection(output);
 
         let session = Arc::new(Mutex::new(Session::new(
@@ -1008,8 +1008,9 @@ impl<'a> BindingRun<'a> {
             return Ok(());
         }
         let out = &self.b.output;
-        let plugin_path = find_plugin(self.project, PluginKind::Format, &out.format)?;
-        let mut p = PluginProcess::start_in(&plugin_path, self.ui.plugin_log(), Some(&self.project.root))
+        let plugin = find_plugin(self.project, PluginKind::Format, &out.format)?;
+        let mut p = plugin
+            .start(self.ui.plugin_log(), Some(&self.project.root))
             .map_err(|e| e.to_string())?;
         let multi = out.format == "xlsx" || out.template.is_some() || !is_single_table(&out.format);
         let groups: Vec<(String, Vec<usize>)> = if multi || self.produced.len() == 1 {
@@ -1308,7 +1309,8 @@ impl<'a> BindingRun<'a> {
             format!("delivery through `{kind}` failed: {e}; the output is still in target/")
         };
         let plugin = find_plugin(self.project, PluginKind::Destination, &kind)?;
-        let mut p = PluginProcess::start_in(&plugin, self.ui.plugin_log(), Some(&self.project.root))
+        let mut p = plugin
+            .start(self.ui.plugin_log(), Some(&self.project.root))
             .map_err(|e| e.to_string())?;
         let batches: Vec<Vec<usize>> = if targets.len() > 1 && p.has(CAP_MULTI_FILE) {
             vec![(0..targets.len()).collect()]
@@ -1517,7 +1519,7 @@ impl<'a> BindingRun<'a> {
 
 /// The source session, started on first use (rendering may need it for `run_query()`).
 struct Session {
-    path: Result<PathBuf, String>,
+    path: Result<crate::plugins::Located, String>,
     connection: Result<JsonMap<String, Json>, String>,
     cwd: PathBuf,
     log: LogSink,
@@ -1531,7 +1533,7 @@ struct Session {
 
 impl Session {
     fn new(
-        path: Result<PathBuf, String>,
+        path: Result<crate::plugins::Located, String>,
         connection: Result<JsonMap<String, Json>, String>,
         cwd: PathBuf,
         log: LogSink,
@@ -1559,9 +1561,10 @@ impl Session {
 
     fn get(&mut self) -> Result<&mut PluginProcess, String> {
         if self.proc_.is_none() {
-            let path = self.path.clone()?;
+            let plugin = self.path.clone()?;
             let connection = self.connection.clone()?;
-            let mut p = PluginProcess::start_in(&path, self.log.clone(), Some(&self.cwd))
+            let mut p = plugin
+                .start(self.log.clone(), Some(&self.cwd))
                 .map_err(|e| e.to_string())?;
             let ro = self.unmanaged && self.read_only && p.has(CAP_READ_ONLY);
             p.open(connection, ro)
@@ -1723,47 +1726,14 @@ fn render_connection(output: &ProfileTarget) -> Result<JsonMap<String, Json>, St
     }
 }
 
-/// Locate the plugin for a declared type, honouring `dre.lock` pins and declared constraints.
-pub fn find_plugin(project: &Project, kind: PluginKind, name: &str) -> Result<PathBuf, String> {
-    find_plugin_in(&project.root, &project.plugins, kind, name)
-}
-
-fn find_plugin_in(
-    root: &Path,
-    plugins: &[crate::project::PluginRequirement],
+/// Locate the plugin for a declared type among the project's packages, honouring `dre.lock`
+/// pins and declared constraints.
+pub fn find_plugin(
+    project: &Project,
     kind: PluginKind,
     name: &str,
-) -> Result<PathBuf, String> {
-    let declared = plugins.iter().find(|p| p.kind == kind && p.name == name);
-    if let Some(crate::project::PluginRequirement {
-        source: crate::project::PluginSource::Local(p),
-        ..
-    }) = declared
-    {
-        let path = root.join(p);
-        return if path.is_file() {
-            Ok(path)
-        } else {
-            Err(format!(
-                "the {} plugin `{name}` is declared `local: {p}`, but there's no file at {}",
-                kind.as_str(),
-                path.display()
-            ))
-        };
-    }
-    let req = plugins
-        .iter()
-        .find(|p| p.kind == kind && p.name == name)
-        .map(|p| p.req());
-    let pin = lock::Lock::load(root).ok().and_then(|l| l.version(kind, name));
-    let dir = crate::plugins::plugins_dir(Some(root));
-    crate::plugins::find(&dir, kind, name, req.as_ref(), pin.as_ref()).map(|p| p.path).ok_or_else(|| {
-        format!(
-            "the {} plugin `{name}` isn't installed (looked in {}); run `dre deps` to install the project's plugins",
-            kind.as_str(),
-            dir.display()
-        )
-    })
+) -> Result<crate::plugins::Located, crate::plugins::LocateError> {
+    crate::plugins::locate(project, &crate::project::PluginId::new(kind, name))
 }
 
 /// `target` and `profile()` from `profiles.yml`. A field is secret when the plugin's `describe`
@@ -1860,8 +1830,9 @@ impl ProfileConnections {
             if kind == LOCAL_TYPE {
                 return Some(Vec::new());
             }
-            let path = find_plugin_in(&self.root, &self.plugins, plugin_kind, kind).ok()?;
-            let mut p = PluginProcess::start_in(&path, self.log.clone(), Some(&self.root)).ok()?;
+            let id = crate::project::PluginId::new(plugin_kind, kind);
+            let plugin = crate::plugins::locate_in(&self.root, &self.plugins, &id).ok()?;
+            let mut p = plugin.start(self.log.clone(), Some(&self.root)).ok()?;
             let fields = p.describe().ok();
             let _ = p.close();
             Some(fields?.into_iter().filter(|f| f.secret).map(|f| f.name).collect())

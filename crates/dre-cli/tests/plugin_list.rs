@@ -3,15 +3,19 @@ mod common;
 use assert_cmd::Command;
 
 #[test]
-fn plugin_list_shows_kind_name_version_and_protocol() {
+fn plugin_list_shows_package_provides_version_and_protocol() {
     let dir = tempfile::tempdir().unwrap();
     common::place_plugin(dir.path(), "dre-source-fixture");
-    // A versioned install, side by side.
-    let versioned = dir.path().join("source/fixture/1.2.0");
+    // A versioned install, side by side, with its manifest.
+    let versioned = dir.path().join("fixture/1.2.0");
     std::fs::create_dir_all(&versioned).unwrap();
-    std::fs::copy(
-        common::workspace_bin("dre-source-fixture"),
-        versioned.join(common::workspace_bin("dre-source-fixture").file_name().unwrap()),
+    let exe = common::workspace_bin("dre-source-fixture");
+    let name = exe.file_name().unwrap().to_string_lossy().to_string();
+    std::fs::copy(&exe, versioned.join(&name)).unwrap();
+    std::fs::write(
+        versioned.join("plugin.json"),
+        serde_json::json!({"executable": name, "provides": ["source/fixture", "destination/inbox"]})
+            .to_string(),
     )
     .unwrap();
     // Not a plugin: wrong name shape.
@@ -29,16 +33,26 @@ fn plugin_list_shows_kind_name_version_and_protocol() {
     assert_eq!(lines.len(), 3, "{text}");
     assert_eq!(
         lines[0].split_whitespace().collect::<Vec<_>>(),
-        ["KIND", "NAME", "VERSION", "PROTOCOL", "PATH"]
+        ["PACKAGE", "PROVIDES", "VERSION", "PROTOCOL", "PATH"]
     );
-    for l in &lines[1..] {
-        let cols: Vec<&str> = l.split_whitespace().collect();
-        assert_eq!(
-            &cols[..4],
-            &["source", "fixture", env!("CARGO_PKG_VERSION"), "v0"],
-            "{text}"
-        );
-    }
+    // Flat, named for one plugin; then the installed package.
+    let cols = |l: &str| l.split_whitespace().map(str::to_string).collect::<Vec<_>>();
+    assert_eq!(
+        &cols(lines[1])[..4],
+        &["fixture", "source/fixture", env!("CARGO_PKG_VERSION"), "v0"],
+        "{text}"
+    );
+    assert_eq!(
+        &cols(lines[2])[..5],
+        &[
+            "fixture",
+            "source/fixture,",
+            "destination/inbox",
+            env!("CARGO_PKG_VERSION"),
+            "v0"
+        ],
+        "{text}"
+    );
 }
 
 #[test]
@@ -50,5 +64,5 @@ fn plugin_list_with_nothing_installed_says_where_it_looked() {
         .env("DRE_PLUGINS_DIR", dir.path())
         .output()
         .unwrap();
-    assert!(String::from_utf8_lossy(&out.stdout).starts_with("No plugins installed in"));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("No plugin packages installed in"));
 }

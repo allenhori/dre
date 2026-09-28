@@ -7,7 +7,7 @@ use std::path::Path;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-use crate::project::PluginKind;
+use dre_protocol::PluginId;
 
 pub const LOCK_FILE: &str = "dre.lock";
 
@@ -19,6 +19,9 @@ pub struct Locked {
     /// `registry:<url>`. A different declared source re-resolves the plugin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// The plugins the package provides, so a project can be checked without installing it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub provides: Vec<PluginId>,
 }
 
 /// A locked plugin's artifact checksums by platform (`macos-aarch64`, `linux-x86_64`, ...), so
@@ -110,15 +113,13 @@ pub struct LockedPackage {
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Lock {
+    /// Plugin packages by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub sources: BTreeMap<String, Locked>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub formats: BTreeMap<String, Locked>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub destinations: BTreeMap<String, Locked>,
+    pub plugins: BTreeMap<String, Locked>,
+    /// Macro packages by name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub packages: BTreeMap<String, LockedPackage>,
-    /// `local:` plugins by `<kind>/<name>`: the path they're used from. Nothing to pin.
+    /// `local:` plugin packages by name: the path they're used from. Nothing to pin.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub local: BTreeMap<String, String>,
 }
@@ -142,27 +143,12 @@ impl Lock {
         std::fs::write(root.join(LOCK_FILE), text).map_err(|e| format!("{LOCK_FILE}: {e}"))
     }
 
-    fn map(&self, kind: PluginKind) -> &BTreeMap<String, Locked> {
-        match kind {
-            PluginKind::Source => &self.sources,
-            PluginKind::Format => &self.formats,
-            PluginKind::Destination => &self.destinations,
-        }
+    /// A plugin package's pin.
+    pub fn get(&self, package: &str) -> Option<&Locked> {
+        self.plugins.get(package)
     }
 
-    pub fn map_mut(&mut self, kind: PluginKind) -> &mut BTreeMap<String, Locked> {
-        match kind {
-            PluginKind::Source => &mut self.sources,
-            PluginKind::Format => &mut self.formats,
-            PluginKind::Destination => &mut self.destinations,
-        }
-    }
-
-    pub fn get(&self, kind: PluginKind, name: &str) -> Option<&Locked> {
-        self.map(kind).get(name)
-    }
-
-    pub fn version(&self, kind: PluginKind, name: &str) -> Option<Version> {
-        self.get(kind, name).map(|l| l.version.clone())
+    pub fn version(&self, package: &str) -> Option<Version> {
+        self.get(package).map(|l| l.version.clone())
     }
 }

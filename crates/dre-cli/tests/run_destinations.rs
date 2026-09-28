@@ -25,10 +25,7 @@ fn project(report_yml: &str, sql: &[(&str, &str)]) -> (TestProject, std::path::P
             "dre_project.yml",
             "name: acme_reports\ndefault_profile: warehouse\nvars: {team: finance}\n",
         ),
-        (
-            "dependencies.yml",
-            "sources: [duckdb]\nformats: [csv]\ndestinations: [fixture]\n",
-        ),
+        ("dependencies.yml", "plugins: [duckdb, csv, fixture]\n"),
         ("reports/ops/daily/daily.yml", report_yml),
     ];
     for (name, body) in sql {
@@ -261,10 +258,7 @@ fn a_plugin_without_options_refuses_them() {
     let mut profiles = std::fs::read_to_string(p.dir.path().join("profiles/profiles.yml")).unwrap();
     profiles.push_str("  box:\n    target: dev\n    targets:\n      dev: {type: sftp, host: 127.0.0.1, port: 1, username: u, password: x}\n");
     std::fs::write(p.dir.path().join("profiles/profiles.yml"), profiles).unwrap();
-    p.write(
-        "dependencies.yml",
-        "sources: [duckdb]\nformats: [csv]\ndestinations: [fixture, sftp]\n",
-    );
+    p.write("dependencies.yml", "plugins: [duckdb, csv, fixture, sftp]\n");
     p.dre("run", &["daily"])
         .failed()
         .says("destination `box`: the `sftp` destination takes no options, but got `pasth`");

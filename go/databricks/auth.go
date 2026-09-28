@@ -17,7 +17,7 @@ package main
 // auth_type: pat uses `token`. auth_type: oauth without a client_secret signs a person in through the browser (authorization
 // code with PKCE, redirected to a listener on localhost). The session is saved in
 // ~/.dre/oauth_sessions.json under databricks/<host>/<client_id>, the same file and format the
-// Rust databricks_volumes destination uses (crates/dre-protocol/src/sessions.rs), so both share
+// Rust side uses (crates/dre-protocol/src/sessions.rs), so both share
 // one sign-in per workspace. The refresh token renews it, so the browser only opens when there
 // is no usable refresh token. With a client_secret it signs in as a service principal (client
 // credentials); those tokens stay in memory. Either way the access token is renewed shortly

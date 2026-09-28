@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
 use crate::frame::{self, Frame, FrameError};
 use crate::msg::{ConnectionField, Request, Response, ResultSetMeta};
 use crate::options::{self, OptionField};
-use crate::{CAP_VALIDATE, Kind, MAX_VERSION, MIN_VERSION};
+use crate::{CAP_VALIDATE, Kind, MAX_VERSION, MIN_VERSION, PluginId};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -324,26 +324,151 @@ impl Handler<'_> {
     }
 }
 
-pub fn serve_source(about: About, mut s: impl Source) -> ! {
-    serve(about, Handler::Source(&mut s))
+pub fn serve_source(about: About, s: impl Source + 'static) -> ! {
+    serve_package(vec![Plugin::Source(about, Box::new(s))])
 }
 
-pub fn serve_format(about: About, mut f: impl Format) -> ! {
-    serve(about, Handler::Format(&mut f))
+pub fn serve_format(about: About, f: impl Format + 'static) -> ! {
+    serve_package(vec![Plugin::Format(about, Box::new(f))])
 }
 
-pub fn serve_destination(about: About, mut d: impl Destination) -> ! {
-    serve(about, Handler::Destination(&mut d))
+pub fn serve_destination(about: About, d: impl Destination + 'static) -> ! {
+    serve_package(vec![Plugin::Destination(about, Box::new(d))])
 }
 
-fn serve(about: About, mut h: Handler<'_>) -> ! {
+/// One of the plugins a package's executable serves (see [`serve_package`]).
+pub enum Plugin {
+    Source(About, Box<dyn Source>),
+    Format(About, Box<dyn Format>),
+    Destination(About, Box<dyn Destination>),
+}
+
+impl Plugin {
+    fn id(&self) -> PluginId {
+        let (kind, about) = match self {
+            Plugin::Source(a, _) => (Kind::Source, a),
+            Plugin::Format(a, _) => (Kind::Format, a),
+            Plugin::Destination(a, _) => (Kind::Destination, a),
+        };
+        PluginId::new(kind, about.name)
+    }
+
+    fn handler(&mut self) -> (&About, Handler<'_>) {
+        match self {
+            Plugin::Source(a, s) => (a, Handler::Source(s.as_mut())),
+            Plugin::Format(a, f) => (a, Handler::Format(f.as_mut())),
+            Plugin::Destination(a, d) => (a, Handler::Destination(d.as_mut())),
+        }
+    }
+}
+
+/// Serve every plugin of a package from one executable. Core's `hello` names the plugin it
+/// wants; without one, the first is served.
+pub fn serve_package(mut plugins: Vec<Plugin>) -> ! {
+    assert!(!plugins.is_empty(), "a package serves at least one plugin");
     let mut input = Input {
         r: BufReader::new(Box::new(std::io::stdin())),
     };
     let mut out = Output {
         w: BufWriter::new(std::io::stdout()),
     };
-    let mut greeted = false;
+    let provides: Vec<PluginId> = plugins.iter().map(Plugin::id).collect();
+    let chosen = loop {
+        let req = match next_request(&mut input, &mut out) {
+            Some(r) => r,
+            None => continue,
+        };
+        let Request::Hello {
+            min_version,
+            max_version,
+            plugin,
+            ..
+        } = req
+        else {
+            out.send(&Response::Error {
+                message: "the first request must be `hello`".into(),
+            });
+            continue;
+        };
+        let Some(chosen) = negotiate((min_version, max_version), (MIN_VERSION, MAX_VERSION)) else {
+            out.send(&Response::VersionMismatch {
+                min_version: MIN_VERSION,
+                max_version: MAX_VERSION,
+            });
+            std::process::exit(1);
+        };
+        let i = match &plugin {
+            None => 0,
+            Some(want) => match provides.iter().position(|p| p == want) {
+                Some(i) => i,
+                None => {
+                    let list: Vec<String> = provides.iter().map(|p| p.to_string()).collect();
+                    out.send(&Response::Error {
+                        message: format!("this executable provides {}, not {want}", list.join(", ")),
+                    });
+                    std::process::exit(1);
+                }
+            },
+        };
+        let (about, h) = plugins[i].handler();
+        out.send(&Response::Hello {
+            protocol_version: chosen,
+            kind: h.kind(),
+            name: about.name.to_string(),
+            version: about.version.to_string(),
+            capabilities: about
+                .capabilities
+                .iter()
+                .chain(std::iter::once(&CAP_VALIDATE))
+                .map(|c| c.to_string())
+                .collect(),
+            provides: if provides.len() > 1 {
+                provides.clone()
+            } else {
+                Vec::new()
+            },
+        });
+        break i;
+    };
+    let (about, h) = plugins[chosen].handler();
+    serve(about.name, h, input, out)
+}
+
+/// The next request, or `None` after answering one that can't be read. Exits at end of input.
+fn next_request(input: &mut Input, out: &mut Output) -> Option<Request> {
+    let frame = match frame::read_frame(&mut input.r) {
+        Ok(f) => f,
+        Err(FrameError::Eof) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("{e}");
+            out.send(&Response::Error {
+                message: e.to_string(),
+            });
+            std::process::exit(2);
+        }
+    };
+    match frame {
+        Frame::Json(v) => match serde_json::from_value::<Request>(v.clone()) {
+            Ok(r) => Some(r),
+            Err(_) => {
+                let t = v.get("type").and_then(Value::as_str).unwrap_or("?").to_string();
+                out.send(&Response::Error {
+                    message: format!("unsupported request `{t}`"),
+                });
+                None
+            }
+        },
+        Frame::Arrow(_) => {
+            out.send(&Response::Error {
+                message: "unexpected Arrow frame".into(),
+            });
+            None
+        }
+    }
+}
+
+/// Serve requests after the handshake.
+fn serve(name: &str, mut h: Handler<'_>, mut input: Input, mut out: Output) -> ! {
     loop {
         let frame = match frame::read_frame(&mut input.r) {
             Ok(f) => f,
@@ -379,37 +504,9 @@ fn serve(about: About, mut h: Handler<'_>) -> ! {
                 continue;
             }
         };
-        if let Request::Hello {
-            min_version,
-            max_version,
-            ..
-        } = req
-        {
-            let Some(chosen) = negotiate((min_version, max_version), (MIN_VERSION, MAX_VERSION)) else {
-                out.send(&Response::VersionMismatch {
-                    min_version: MIN_VERSION,
-                    max_version: MAX_VERSION,
-                });
-                std::process::exit(1);
-            };
-            greeted = true;
-            out.send(&Response::Hello {
-                protocol_version: chosen,
-                kind: h.kind(),
-                name: about.name.to_string(),
-                version: about.version.to_string(),
-                capabilities: about
-                    .capabilities
-                    .iter()
-                    .chain(std::iter::once(&CAP_VALIDATE))
-                    .map(|c| c.to_string())
-                    .collect(),
-            });
-            continue;
-        }
-        if !greeted {
+        if let Request::Hello { .. } = req {
             out.send(&Response::Error {
-                message: "the first request must be `hello`".into(),
+                message: "`hello` was already answered".into(),
             });
             continue;
         }
@@ -421,7 +518,7 @@ fn serve(about: About, mut h: Handler<'_>) -> ! {
             std::process::exit(0);
         }
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            handle(&mut h, about.name, req, &mut input, &mut out)
+            handle(&mut h, name, req, &mut input, &mut out)
         }));
         match result {
             Ok(Ok(())) => {}

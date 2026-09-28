@@ -16,11 +16,11 @@ fn registry(dir: &Path) {
     let sha: String = Sha256::digest(&bin).iter().map(|b| format!("{b:02x}")).collect();
     let plat = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     let art = serde_json::json!({ plat: {"url": reg.join("fixture").to_string_lossy(), "sha256": sha} });
-    let index = serde_json::json!({"schema": 1, "plugins": [
-        {"kind": "source", "name": "fixture", "description": "a test source",
+    // One package, `fixture`, with a source and a destination (`inbox`).
+    let index = serde_json::json!({"schema": 2, "plugins": [
+        {"name": "fixture", "description": "a test package",
+         "provides": ["source/fixture", "destination/inbox"],
          "versions": [{"version": "1.0.0", "protocol": 0, "artifacts": art}]},
-        {"kind": "destination", "name": "inbox", "description": "a test destination",
-         "versions": [{"version": "2.0.0", "protocol": 0, "artifacts": art}]},
     ]});
     std::fs::write(reg.join("index.json"), index.to_string()).unwrap();
 }
@@ -59,9 +59,14 @@ fn init_installs_the_source_writes_profiles_and_scaffolds_a_project() {
     let r = dre(d.path(), &["init"], answers);
     r.ok()
         .says("Installed")
-        .says("source plugin `fixture` 1.0.0")
-        .says("destination plugin `inbox` 2.0.0")
+        .says("plugin package `fixture` 1.0.0")
         .says("Created");
+    assert_eq!(
+        r.stderr.matches("Installed").count() + r.stdout.matches("Installed").count(),
+        1,
+        "installed once: {}",
+        r.stderr
+    );
 
     let profiles = std::fs::read_to_string(d.path().join("dot-dre/profiles.yml")).unwrap();
     assert_eq!(
@@ -84,10 +89,7 @@ fn init_installs_the_source_writes_profiles_and_scaffolds_a_project() {
         "target/\nlogs/\ndre_deps/\n"
     );
     let plugins = std::fs::read_to_string(p.join("dependencies.yml")).unwrap();
-    assert!(
-        plugins.contains("sources:\n  - fixture\n") && plugins.contains("destinations:\n  - inbox\n"),
-        "{plugins}"
-    );
+    assert!(plugins.ends_with("plugins:\n  - fixture\n  - csv\n"), "{plugins}");
     assert!(
         std::fs::read_to_string(p.join("dre_project.yml"))
             .unwrap()

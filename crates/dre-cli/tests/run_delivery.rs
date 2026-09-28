@@ -22,10 +22,7 @@ fn a_failed_upload_leaves_the_output_in_target_and_says_so() {
                 "dre_project.yml",
                 "name: acme_reports\ndefault_profile: warehouse\n",
             ),
-            (
-                "dependencies.yml",
-                "sources: [duckdb]\nformats: [csv]\ndestinations: [sftp]\n",
-            ),
+            ("dependencies.yml", "plugins: [duckdb, csv, sftp]\n"),
             (
                 "reports/ops/daily/daily.yml",
                 "queries: [q]\noutput:\n  destination: {profile: client_sftp, path: /inbound/daily.csv}\n",

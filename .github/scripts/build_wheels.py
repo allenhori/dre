@@ -11,15 +11,15 @@ first-party plugin, a `dre` console command, `python -m dre_cli`, and a small Py
 The PyPI name `dre` is taken by an unrelated project, so the distribution is `dre-cli`; the
 command is still `dre`. Versions map to PEP 440: 0.0.1-alpha-3 -> 0.0.1a3.
 
-The Databricks adapter is one program serving several plugin names. The wheel holds it once, as
-the `databricks` source; the first run makes the other names (links, or copies where links aren't
-possible) in a plugins folder under the user's cache, which keeps the wheel within PyPI's size
-limit.
+Each first-party plugin package (.github/scripts/packages.json) is in the wheel once, laid out
+as an installed plugins directory (`plugins/<package>/<version>/` with its `plugin.json`), which
+`dre` uses as DRE_PLUGINS_DIR.
 """
 
 import argparse
 import base64
 import hashlib
+import json
 import platform as pyplatform
 import re
 import stat
@@ -42,16 +42,8 @@ PLATFORMS = {
     "windows-x86_64": "win_amd64",
 }
 
-PLUGINS = [
-    ("source", "duckdb"), ("source", "postgres"), ("source", "databricks"),
-    ("format", "csv"), ("format", "delimited"), ("format", "fixed_width"), ("format", "parquet"),
-    ("format", "xlsx"),
-    ("destination", "s3"), ("destination", "gcs"), ("destination", "azure_blob"),
-    ("destination", "sftp"), ("destination", "ftp"), ("destination", "email"),
-    ("destination", "slack"),
-]
-# Plugin names served by the `databricks` source's program, made at first run.
-ALIASES = [("destination", "databricks_volumes"), ("destination", "databricks_workspace")]
+# The first-party plugin packages and what each provides.
+PACKAGES = json.loads((Path(__file__).parent / "packages.json").read_text())
 
 
 def this_platform():
@@ -94,7 +86,6 @@ project needs no download to run; set DRE_PLUGINS_DIR yourself to use another pl
 """
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -104,8 +95,6 @@ DRE_VERSION = "{dre_version}"
 
 _HERE = Path(__file__).resolve().parent
 _EXE = ".exe" if os.name == "nt" else ""
-# Plugin names served by the bundled `databricks` source's program.
-_ALIASES = {aliases!r}
 
 
 def executable() -> str:
@@ -113,49 +102,9 @@ def executable() -> str:
     return str(_HERE / "bin" / ("dre" + _EXE))
 
 
-def _cache_dir() -> Path:
-    if os.name == "nt":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
-    else:
-        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
-    return base / "dre-cli" / DRE_VERSION / "plugins"
-
-
-def _link(src: Path, dst: Path) -> None:
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    if dst.exists():
-        return
-    tmp = dst.with_name(dst.name + ".%d.tmp" % os.getpid())
-    try:
-        os.symlink(src, tmp)
-    except OSError:
-        shutil.copy2(src, tmp)
-    os.replace(tmp, dst)
-
-
 def plugins_dir() -> str:
-    """A plugins directory, in DRE's `<kind>/<name>/<version>/` layout, with every bundled
-    plugin. Made once per version under the user's cache; the bundled folder if that fails."""
-    bundled = _HERE / "plugins"
-    target = _cache_dir()
-    # The links point into one installation; another one (a new venv) remakes them.
-    stamp = target / ".installation"
-    try:
-        if stamp.read_text() == str(bundled):
-            return str(target)
-    except OSError:
-        pass
-    try:
-        shutil.rmtree(target, ignore_errors=True)
-        for exe in bundled.glob("*/*/*/dre-*"):
-            _link(exe, target / exe.relative_to(bundled))
-        db = bundled / "source" / "databricks" / DRE_VERSION / ("dre-source-databricks" + _EXE)
-        for kind, name in _ALIASES:
-            _link(db, target / kind / name / DRE_VERSION / ("dre-%s-%s%s" % (kind, name, _EXE)))
-        stamp.write_text(str(bundled))
-        return str(target)
-    except OSError:
-        return str(bundled)
+    """The bundled plugins directory, laid out as DRE installs packages."""
+    return str(_HERE / "plugins")
 
 
 def environ(env=None):
@@ -216,14 +165,17 @@ def build(dre_version, plat, out_dir, dist=None, from_dir=None):
     else:
         core = Path(dist) / f"dre-{dre_version}-{plat}{ext}"
         files[f"{PKG}/bin/dre{exe}"] = (member(core, "dre", exe), True)
-    for kind, name in PLUGINS:
-        binary = f"dre-{kind}-{name}"
+    for package, about in PACKAGES.items():
+        binary = f"dre-plugin-{package}"
         if from_dir:
             data = (Path(from_dir) / f"{binary}{exe}").read_bytes()
         else:
             data = member(Path(dist) / f"{binary}-{dre_version}-{plat}.tar.gz", binary, exe)
-        files[f"{PKG}/plugins/{kind}/{name}/{dre_version}/{binary}{exe}"] = (data, True)
-    shim = SHIM.format(version=version, dre_version=dre_version, aliases=ALIASES)
+        vdir = f"{PKG}/plugins/{package}/{dre_version}"
+        files[f"{vdir}/{binary}{exe}"] = (data, True)
+        manifest = {"executable": binary + exe, "provides": about["provides"]}
+        files[f"{vdir}/plugin.json"] = (json.dumps(manifest, indent=2).encode(), False)
+    shim = SHIM.format(version=version, dre_version=dre_version)
     files[f"{PKG}/__init__.py"] = (shim.encode(), False)
     files[f"{PKG}/__main__.py"] = (MAIN.encode(), False)
 
@@ -275,7 +227,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", required=True, help="DRE's version, e.g. 0.0.1-alpha-3")
     ap.add_argument("--dist", help="folder of the release's assets (dre-*.tar.gz / .zip)")
-    ap.add_argument("--from-dir", help="a local build (dre and dre-* in this folder), for this machine")
+    ap.add_argument("--from-dir", help="a local build (dre and dre-plugin-* in this folder), for this machine")
     ap.add_argument("--platform", action="append", help="release platform (repeatable); default: all in --dist")
     ap.add_argument("--out", default="wheels", help="where to write the wheels (default: wheels)")
     a = ap.parse_args()

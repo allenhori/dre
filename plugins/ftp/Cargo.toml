@@ -1,0 +1,20 @@
+[package]
+name = "dre-plugin-ftp"
+description = "DRE destination plugin: FTP and explicit FTPS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+dre-protocol = { path = "../../crates/dre-protocol" }
+serde_json.workspace = true
+suppaftp = { version = "12", features = ["rustls-ring"] }
+# rustls, not native-tls: it resumes the control connection's TLS session on data connections,
+# which vsftpd (`require_ssl_reuse`), ProFTPD and FileZilla Server require.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+
+[dev-dependencies]
+tempfile.workspace = true
