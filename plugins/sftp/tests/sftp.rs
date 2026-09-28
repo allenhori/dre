@@ -2,7 +2,7 @@
 //! `dre-pass`, writable `upload/`; `DRE_TEST_SFTP_KEY` is a private key the server accepts).
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use dre_protocol::conformance;
 use dre_protocol::host::{LogSink, PluginProcess};
@@ -29,14 +29,20 @@ fn deliver(remote: &str, conn: Value, bytes: &[u8]) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Scan the server's host keys into a known_hosts file.
+/// Scan the server's host keys into a known_hosts file. The scan runs once for all tests:
+/// `ssh-keyscan` opens a connection per key type, and several scans at once from the parallel
+/// tests pass sshd's `MaxStartups` (10 unauthenticated connections), so it drops some at random.
 fn known_hosts(dir: &Path, host: &str, port: u16) -> String {
-    let out = std::process::Command::new("ssh-keyscan")
-        .args(["-p", &port.to_string(), host])
-        .output()
-        .unwrap();
+    static SCAN: OnceLock<Vec<u8>> = OnceLock::new();
+    let keys = SCAN.get_or_init(|| {
+        std::process::Command::new("ssh-keyscan")
+            .args(["-p", &port.to_string(), host])
+            .output()
+            .unwrap()
+            .stdout
+    });
     let path = dir.join("known_hosts");
-    std::fs::write(&path, &out.stdout).unwrap();
+    std::fs::write(&path, keys).unwrap();
     path.to_string_lossy().to_string()
 }
 
