@@ -27,7 +27,8 @@ fn write(options: Value, batch: RecordBatch) -> Result<Vec<u8>, String> {
     };
     p.write_begin(path.to_str().unwrap(), "fixed_width", options, vec![meta], None)
         .unwrap();
-    p.write_result_set(&batch.schema(), vec![batch]).unwrap();
+    p.write_result_set(&batch.schema(), vec![batch])
+        .map_err(|e| e.to_string())?;
     p.write_finish().map_err(|e| e.to_string())?;
     Ok(std::fs::read(&path).unwrap())
 }

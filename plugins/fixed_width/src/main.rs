@@ -203,7 +203,7 @@ fn column_errors(n: usize, c: &Value) -> Vec<String> {
     }
     for k in ["pad", "null_fill"] {
         if let Some(p) = m.get(k)
-            && !p.as_str().is_some_and(|s| s.chars().count() == 1)
+            && p.as_str().is_none_or(|s| s.chars().count() != 1)
         {
             errs.push(format!("{label} `{k}` must be a single character"));
         }
