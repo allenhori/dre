@@ -346,3 +346,20 @@ func TestAStaleLockIsTakenOver(t *testing.T) {
 		t.Fatal("waited on a stale lock")
 	}
 }
+
+// With no one at the terminal, a browser sign-in fails at once instead of being retried while
+// the connector waits for a warehouse to start.
+func TestOpeningASessionWithoutASignInFailsAtOnce(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("DRE_INTERACTIVE", "0")
+	srv := httptest.NewServer(&fakeIdP{expiresIn: 3600})
+	defer srv.Close()
+	start := time.Now()
+	_, err := newDatabricks(map[string]any{"host": srv.URL, "http_path": "/sql/1.0/warehouses/x", "auth_type": "oauth"})
+	if err == nil || !strings.Contains(err.Error(), "needs a browser, but no one is at the terminal") {
+		t.Fatalf("%v", err)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("took %v", d)
+	}
+}
