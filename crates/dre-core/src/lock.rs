@@ -14,11 +14,90 @@ pub const LOCK_FILE: &str = "dre.lock";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Locked {
     pub version: Version,
-    pub sha256: String,
+    pub sha256: Checksums,
     /// Where it came from when not the default registry: `github:owner/repo` or
     /// `registry:<url>`. A different declared source re-resolves the plugin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+}
+
+/// A locked plugin's artifact checksums by platform (`macos-aarch64`, `linux-x86_64`, ...), so
+/// one committed `dre.lock` installs the same builds on every machine. Written as a map; a lock
+/// from before this holds one checksum for a platform it didn't name (see [`Checksums::legacy`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Checksums(BTreeMap<String, String>);
+
+/// The key of a checksum whose platform isn't known.
+const LEGACY: &str = "";
+
+impl Checksums {
+    pub fn new() -> Checksums {
+        Checksums::default()
+    }
+
+    /// One checksum of unknown platform, as in a lock from before per-platform checksums.
+    pub fn legacy_only(sha: &str) -> Checksums {
+        let mut c = Checksums::new();
+        c.0.insert(LEGACY.into(), sha.to_lowercase());
+        c
+    }
+
+    pub fn get(&self, platform: &str) -> Option<&str> {
+        self.0.get(platform).map(String::as_str)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether `sha` is one of the known platforms' checksums.
+    pub fn contains(&self, sha: &str) -> bool {
+        self.0
+            .iter()
+            .any(|(p, s)| p != LEGACY && s.eq_ignore_ascii_case(sha))
+    }
+
+    pub fn legacy(&self) -> Option<&str> {
+        self.get(LEGACY)
+    }
+
+    pub fn insert(&mut self, platform: &str, sha: &str) {
+        self.0.remove(LEGACY);
+        self.0.insert(platform.into(), sha.to_lowercase());
+    }
+
+    /// Add the platforms `other` knows and this one doesn't.
+    pub fn merge(&mut self, other: &Checksums) {
+        for (p, s) in &other.0 {
+            if p != LEGACY {
+                self.0.entry(p.clone()).or_insert_with(|| s.clone());
+            }
+        }
+    }
+}
+
+impl Serialize for Checksums {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.legacy() {
+            Some(sha) if self.0.len() == 1 => s.serialize_str(sha),
+            _ => self.0.serialize(s),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Checksums {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            One(String),
+            Many(BTreeMap<String, String>),
+        }
+        Ok(match Raw::deserialize(d)? {
+            Raw::One(sha) => Checksums::legacy_only(&sha),
+            Raw::Many(m) => Checksums(m.into_iter().map(|(k, v)| (k, v.to_lowercase())).collect()),
+        })
+    }
 }
 
 /// A git package pinned to the commit its declared revision resolved to.
