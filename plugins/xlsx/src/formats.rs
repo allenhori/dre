@@ -72,7 +72,7 @@ impl Kind {
         }
     }
 
-    fn describe(self) -> &'static str {
+    pub fn describe(self) -> &'static str {
         match self {
             Kind::Number => "a number column",
             Kind::Date => "a date column",
@@ -147,6 +147,11 @@ impl Formats {
             matched: BTreeSet::new(),
             sheets: Vec::new(),
         })
+    }
+
+    /// The output-level `columns` map.
+    pub fn output(&self) -> &BTreeMap<String, ColumnOptions> {
+        &self.output
     }
 
     /// Each column's format in one result set (`schema` normalized), checking that every name

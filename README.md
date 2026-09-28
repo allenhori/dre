@@ -8,9 +8,9 @@
 
 DRE is SQL (plus a template) in, a correctly formatted file out. You declare reports as YAML and
 `.sql` files in a dbt-shaped project. DRE runs the SQL against your warehouse, writes the result as
-csv, delimited, fixed-width, parquet or xlsx (including multi-sheet workbooks and branded Excel
-templates), and delivers the file wherever it needs to go. It runs on whatever scheduler you
-already have: cron, Airflow, Dagster, Databricks Jobs.
+csv, delimited, fixed-width, parquet or xlsx (including multi-sheet workbooks, number formats,
+formulas and totals rows, and branded Excel templates), and delivers the file wherever it needs
+to go. It runs on whatever scheduler you already have: cron, Airflow, Dagster, Databricks Jobs.
 
 Status: under active development. The pre-releases (`v0.0.1-alpha-<n>`) are for trying DRE out;
 expect breaking changes.

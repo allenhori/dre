@@ -349,7 +349,113 @@ fn remove_general(s: &str) -> String {
 }
 
 /// The keys a column may set in a `columns:` map.
-pub const COLUMN_OPTION_KEYS: &[&str] = &["format"];
+pub const COLUMN_OPTION_KEYS: &[&str] = &["format", "formula", "total"];
+
+/// The functions a `total:` can name, and the Excel function each writes.
+pub const TOTAL_FUNCTIONS: &[(&str, &str)] = &[
+    ("sum", "SUM"),
+    ("average", "AVERAGE"),
+    ("count", "COUNTA"),
+    ("min", "MIN"),
+    ("max", "MAX"),
+];
+
+/// A piece of a formula from YAML.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FormulaPart {
+    /// Text written as it is.
+    Text(String),
+    /// `{name}`: that column's cell on the same row.
+    Cell(String),
+    /// `{name:*}`: that column's data range on the sheet.
+    Column(String),
+}
+
+/// Split a formula into text and `{name}` / `{name:*}` references. `{{` and `}}` are literal
+/// braces. The formula must start with `=`.
+pub fn parse_formula(f: &str) -> Result<Vec<FormulaPart>, String> {
+    if !f.starts_with('=') {
+        return Err("must start with `=`".into());
+    }
+    let mut parts = Vec::new();
+    let mut text = String::new();
+    let mut chars = f.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' if chars.peek() == Some(&'{') => {
+                chars.next();
+                text.push('{');
+            }
+            '}' if chars.peek() == Some(&'}') => {
+                chars.next();
+                text.push('}');
+            }
+            '}' => return Err("has a `}` without a matching `{` (write `}}` for a literal brace)".into()),
+            '{' => {
+                let mut name = String::new();
+                loop {
+                    match chars.next() {
+                        Some('}') => break,
+                        Some('{') => return Err("has a `{` inside `{ }`".into()),
+                        Some(ch) => name.push(ch),
+                        None => return Err("has an unclosed `{`".into()),
+                    }
+                }
+                if !text.is_empty() {
+                    parts.push(FormulaPart::Text(std::mem::take(&mut text)));
+                }
+                let part = match name.strip_suffix(":*") {
+                    Some(col) => FormulaPart::Column(col.trim().to_string()),
+                    None => FormulaPart::Cell(name.trim().to_string()),
+                };
+                if matches!(&part, FormulaPart::Cell(n) | FormulaPart::Column(n) if n.is_empty()) {
+                    return Err("has an empty `{}` reference".into());
+                }
+                parts.push(part);
+            }
+            _ => text.push(c),
+        }
+    }
+    if !text.is_empty() {
+        parts.push(FormulaPart::Text(text));
+    }
+    Ok(parts)
+}
+
+/// A row formula: `{name}` references only, since a row can't see the whole column's extent.
+pub fn check_row_formula(f: &str) -> Result<Vec<FormulaPart>, String> {
+    let parts = parse_formula(f)?;
+    if let Some(FormulaPart::Column(n)) = parts.iter().find(|p| matches!(p, FormulaPart::Column(_))) {
+        return Err(format!(
+            "uses `{{{n}:*}}`, a whole column, which only a `total` can use; a row formula refers to cells on its own row, like `{{{n}}}`"
+        ));
+    }
+    Ok(parts)
+}
+
+/// A `total:`: a function name, or a formula with `{name:*}` references only.
+pub fn check_total(t: &str) -> Result<(), String> {
+    if t.starts_with('=') {
+        let parts = parse_formula(t)?;
+        if let Some(FormulaPart::Cell(n)) = parts.iter().find(|p| matches!(p, FormulaPart::Cell(_))) {
+            return Err(format!(
+                "uses `{{{n}}}`, a cell on the same row, which a totals row doesn't have; use `{{{n}:*}}` for the whole column"
+            ));
+        }
+        return Ok(());
+    }
+    if TOTAL_FUNCTIONS.iter().any(|(k, _)| *k == t) {
+        return Ok(());
+    }
+    Err(format!(
+        "must be one of {} or a formula starting with `=`",
+        TOTAL_FUNCTIONS
+            .iter()
+            .map(|(k, _)| format!("`{k}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
 
 /// Parse a `columns:` map (column name → column options), collecting every problem as a
 /// sentence naming the column. Used by core for query entries and by the xlsx plugin for its
@@ -382,6 +488,20 @@ pub fn parse_columns(
                         Err(e) => errs.push(format!("column `{name}`: format `{code}` {e}")),
                     },
                     None => errs.push(format!("column `{name}`: `format` must be a string")),
+                },
+                "formula" => match val.as_str() {
+                    Some(f) => match check_row_formula(f) {
+                        Ok(_) => col.formula = Some(f.to_string()),
+                        Err(e) => errs.push(format!("column `{name}`: formula `{f}` {e}")),
+                    },
+                    None => errs.push(format!("column `{name}`: `formula` must be a string")),
+                },
+                "total" => match val.as_str() {
+                    Some(t) => match check_total(t) {
+                        Ok(()) => col.total = Some(t.to_string()),
+                        Err(e) => errs.push(format!("column `{name}`: total `{t}` {e}")),
+                    },
+                    None => errs.push(format!("column `{name}`: `total` must be a string")),
                 },
                 _ => errs.push(format!(
                     "column `{name}`: unknown key `{k}`; expected {}",
@@ -520,10 +640,66 @@ mod tests {
         assert_eq!(
             errs,
             vec![
-                "column `b`: unknown key `fromat`; expected `format`",
+                "column `b`: unknown key `fromat`; expected `format`, `formula`, `total`",
                 "column `c` must be a map of options like `{format: \"#,##0.00\"}`",
                 "column `d`: format `\"x` has an unclosed `\"` quote",
             ]
         );
+    }
+
+    #[test]
+    fn formulas() {
+        use FormulaPart::*;
+        assert_eq!(
+            parse_formula("={qty}*{ price }+{{1}}").unwrap(),
+            vec![
+                Text("=".into()),
+                Cell("qty".into()),
+                Text("*".into()),
+                Cell("price".into()),
+                Text("+{1}".into())
+            ]
+        );
+        assert_eq!(
+            parse_formula("=SUM({amount:*})").unwrap(),
+            vec![Text("=SUM(".into()), Column("amount".into()), Text(")".into())]
+        );
+        for (f, err) in [
+            ("{a}*2", "must start with `=`"),
+            ("={a", "has an unclosed `{`"),
+            (
+                "=a}",
+                "has a `}` without a matching `{` (write `}}` for a literal brace)",
+            ),
+            ("={}", "has an empty `{}` reference"),
+            ("={a{b}}", "has a `{` inside `{ }`"),
+        ] {
+            assert_eq!(parse_formula(f), Err(err.to_string()), "{f}");
+        }
+        assert!(
+            check_row_formula("={a}/SUM({a:*})")
+                .unwrap_err()
+                .contains("only a `total`")
+        );
+        assert!(check_total("sum").is_ok());
+        assert!(check_total("=SUM({a:*})-MIN({b:*})").is_ok());
+        assert!(check_total("={a}").unwrap_err().contains("doesn't have"));
+        assert_eq!(
+            check_total("total"),
+            Err(
+                "must be one of `sum`, `average`, `count`, `min`, `max` or a formula starting with `=`"
+                    .into()
+            )
+        );
+        let (cols, errs) = parse_columns(&json!({
+            "t": {"formula": "={a}*2", "format": "0.00", "total": "sum"},
+            "u": {"formula": "a*2"},
+            "v": {"total": "median"}
+        }));
+        assert_eq!(cols["t"].formula.as_deref(), Some("={a}*2"));
+        assert_eq!(cols["t"].total.as_deref(), Some("sum"));
+        assert_eq!(errs.len(), 2, "{errs:?}");
+        assert!(errs[0].starts_with("column `u`: formula `a*2` must start with `=`"));
+        assert!(errs[1].starts_with("column `v`: total `median` must be one of"));
     }
 }

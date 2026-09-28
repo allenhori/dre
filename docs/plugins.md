@@ -168,7 +168,7 @@ format_options:
 | `csv`, `delimited` | `delimiter`, `quote`, `quoting`, `header`, `line_ending`, `encoding`, `null`, `byte_order_mark` |
 | `fixed_width` | `columns` (see [Fixed-width columns](#fixed-width-columns)), `header`, `line_ending`, `encoding`, `line_breaks` |
 | `parquet` | none; Arrow types are preserved |
-| `xlsx` | `header`, `max_rows_per_sheet`, `columns`, `date_format`, `datetime_format`, `time_format` (see [xlsx column formats](#xlsx-column-formats)); per query `anchor`/`header`/`columns`; `template` |
+| `xlsx` | `header`, `max_rows_per_sheet`, `columns`, `date_format`, `datetime_format`, `time_format` (see [xlsx column formats](#xlsx-column-formats)), `totals_label` (see [xlsx formulas and totals rows](#xlsx-formulas-and-totals-rows)); per query `anchor`/`header`/`columns`; `template` |
 
 Every format but xlsx also takes `extension`: the output file's extension (`aba`, `dat`, ...), or
 `""` for none. The file is written the same way; only its name changes.
@@ -246,6 +246,49 @@ column: a date code on a number, a number code on a date, or either on text or b
 | `dd/mm/yyyy` | `25/01/2026` |
 | `mmm yyyy` | `Jan 2026` |
 | `h:mm AM/PM` | a time as `3:05 PM` |
+
+### xlsx formulas and totals rows
+
+The `columns:` map also takes `formula` (a formula on every row) and `total` (a totals row under
+the data), on a query entry or at output level, like `format`. A query entry's setting wins.
+
+```yaml
+queries:
+  - query: sales          # select region, qty, price, qty * price as line_total from sales
+    columns:
+      line_total: {formula: "={qty}*{price}", format: "#,##0.00", total: sum}
+      qty:        {total: sum}
+      price:      {total: "=SUM({line_total:*})/SUM({qty:*})"}   # average price per unit
+output:
+  format: xlsx
+  totals_label: Total     # the default; "" for none
+```
+
+**Row formulas.** The SQL selects a placeholder column where the formula goes, so it decides the
+column's position and header. `{name}` is another result column's cell on the same row: with
+the header in row 1, `={qty}*{price}` becomes `=B2*C2`, `=B3*C3`, and so on, following `anchor`
+and `header`. Text outside braces is written as it is (`={qty}*$H$1`); `{{` and `}}` are literal
+braces. The placeholder's value becomes the formula's cached result, so pandas, DuckDB and other
+readers that don't recalculate still see a value; a null placeholder leaves Excel to work it out
+when the file is opened. A formula must start with `=`. Only YAML makes formulas: text from a
+query, even `=SUM(A1:A2)`, is always written as text.
+
+**Totals rows.** A `total` writes a bold row with a top border straight under the data:
+`sum`, `average`, `count` (non-empty cells, Excel's `COUNTA`), `min` or `max`, or a formula whose
+`{name:*}` references stand for a column's data range (`B2:B10`). DRE works out the functions'
+results as cached values; a totals formula is left for Excel to calculate. The row's first cell
+shows `totals_label` when that column has no total of its own. `sum` and `average` need a number
+column; `min` and `max` a number, date or time column; `count` takes any. Each continuation
+sheet past `max_rows_per_sheet` gets a totals row over its own rows, and a sheet with no rows
+gets none.
+
+`dre validate` rejects a formula not starting with `=`, unbalanced braces, an unknown `total`, a
+`{name:*}` in a row formula, and a `{name}` in a totals formula. A run fails, naming the sheet and
+column, when a reference names a column the query doesn't return or a total doesn't fit its
+column. In a template, row formulas work in table blocks and use the block's columns (a
+reference to a column the block doesn't place is an error); a single-cell binding takes the
+value, not the formula. Templates don't take `total`: put the totals row under the block in the
+template, and DRE extends a `SUM` ending on the block's row over every inserted row.
 
 ### Fixed-width columns
 

@@ -1,5 +1,5 @@
 exit: 1
-error[invalid-output-option]: reports/ops/a/a.yml: report `a`: unknown option `delimiter` for format `xlsx`; expected one of header, max_rows_per_sheet, columns, date_format, datetime_format, time_format
+error[invalid-output-option]: reports/ops/a/a.yml: report `a`: unknown option `delimiter` for format `xlsx`; expected one of header, max_rows_per_sheet, columns, totals_label, date_format, datetime_format, time_format
 error[invalid-output-option]: reports/ops/a/a.yml: report `a`: `header` must be true or false
 error[invalid-output-option]: reports/ops/a/a.yml: report `a`: `max_rows_per_sheet` must be a whole number from 1 to 1048575
 error[invalid-output-option]: reports/ops/b/b.yml: report `b`: `delimiter` must be a single character

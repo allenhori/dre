@@ -27,6 +27,7 @@ fn cols(formats: &[(&str, &str)]) -> BTreeMap<String, ColumnOptions> {
                 n.to_string(),
                 ColumnOptions {
                     format: Some(f.to_string()),
+                    ..Default::default()
                 },
             )
         })

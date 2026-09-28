@@ -174,6 +174,14 @@ pub struct ColumnOptions {
     /// An Excel number format code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    /// A row formula (`={qty}*{price}`), written in place of the column's value, which becomes
+    /// its cached result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<String>,
+    /// A totals row entry under the data: `sum`, `average`, `count`, `min`, `max`, or a formula
+    /// over whole columns (`=SUM({amount:*})/COUNT({qty:*})`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

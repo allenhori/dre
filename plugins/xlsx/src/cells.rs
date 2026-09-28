@@ -185,12 +185,14 @@ pub fn excel_value(a: &dyn Array, i: usize, column: &str) -> Option<Excel> {
 /// Writes cells, keeping one Excel format object per distinct code.
 pub struct CellWriter {
     cache: HashMap<String, Format>,
+    totals: HashMap<Option<String>, Format>,
 }
 
 impl CellWriter {
     pub fn new() -> CellWriter {
         CellWriter {
             cache: HashMap::new(),
+            totals: HashMap::new(),
         }
     }
 
@@ -210,22 +212,49 @@ impl CellWriter {
             .collect()
     }
 
-    /// Write row `i` of `a` at `(row, col)` with the column's style. Nulls leave the cell empty.
+    /// A totals row cell's format: bold, a thin top border, and the column's number format.
+    pub fn totals_format(&mut self, code: Option<&str>) -> Format {
+        self.totals
+            .entry(code.map(str::to_string))
+            .or_insert_with(|| {
+                let f = Format::new()
+                    .set_bold()
+                    .set_border_top(rust_xlsxwriter::FormatBorder::Thin);
+                match code {
+                    Some(c) => f.set_num_format(c),
+                    None => f,
+                }
+            })
+            .clone()
+    }
+
+    /// Write value `v` (from [`excel_value`] on a column of type `t`) at `(row, col)` with the
+    /// column's style, or, given a row `formula`, that formula with `v` as its cached result.
+    /// Nulls leave the cell empty.
     #[allow(clippy::too_many_arguments)]
     pub fn write(
         &self,
         ws: &mut Worksheet,
         row: u32,
         col: u16,
-        a: &dyn Array,
-        i: usize,
+        v: Option<Excel>,
+        t: &DataType,
         column: &str,
         style: Option<&ColumnStyle>,
+        formula: Option<&str>,
     ) -> Result<()> {
-        let Some(v) = excel_value(a, i, column) else {
+        let fmt = style.map(|s| &s.format);
+        if let Some(f) = formula {
+            let formula = rust_xlsxwriter::Formula::new(f).set_result(crate::formulas::cached(&v));
+            match fmt {
+                Some(x) => ws.write_formula_with_format(row, col, formula, x)?,
+                None => ws.write_formula(row, col, formula)?,
+            };
+            return Ok(());
+        }
+        let Some(v) = v else {
             return Ok(());
         };
-        let fmt = style.map(|s| &s.format);
         match (v, fmt) {
             (Excel::Number(n) | Excel::Date(n) | Excel::DateTime(n) | Excel::Time(n), Some(f)) => {
                 ws.write_number_with_format(row, col, n, f)?
@@ -241,7 +270,7 @@ impl CellWriter {
                 }
                 match f {
                     // A number or date Excel can't hold stays unformatted text.
-                    Some(_) if Kind::of(a.data_type()) != Kind::Other => {
+                    Some(_) if Kind::of(t) != Kind::Other => {
                         if style.is_some_and(|s| s.explicit) {
                             unformatted(column);
                         }
