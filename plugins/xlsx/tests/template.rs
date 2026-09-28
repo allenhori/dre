@@ -24,6 +24,7 @@ fn meta(query: &str, name: &str) -> ResultSetMeta {
         result_index: 1,
         anchor: None,
         header: None,
+        columns: Default::default(),
     }
 }
 

@@ -7,7 +7,11 @@ use arrow::datatypes::{
 };
 use arrow::util::display::{ArrayFormatter, FormatOptions};
 use dre_protocol::plugin::Result;
+use std::collections::HashMap;
+
 use rust_xlsxwriter::{Format, Worksheet};
+
+use crate::formats::{ColumnFormat, Kind};
 
 /// Days from Excel's epoch (1899-12-30) to 1970-01-01.
 pub const EPOCH_OFFSET: f64 = 25_569.0;
@@ -43,6 +47,15 @@ enum Lossy {
 static LOSSY: std::sync::Mutex<std::collections::BTreeMap<(String, Lossy), u64>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
+/// Columns with a format some of whose values were written as text, so the format wasn't applied.
+static UNFORMATTED: std::sync::Mutex<std::collections::BTreeSet<String>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// Note that a formatted column had a value written as text, without its format.
+pub fn unformatted(column: &str) {
+    UNFORMATTED.lock().unwrap().insert(column.to_string());
+}
+
 fn lossy(column: &str, why: Lossy) {
     *LOSSY
         .lock()
@@ -53,6 +66,7 @@ fn lossy(column: &str, why: Lossy) {
 
 /// One warning per column and reason for values written as text, since the last call.
 pub fn take_warnings() -> Vec<String> {
+    let unformatted = std::mem::take(&mut *UNFORMATTED.lock().unwrap());
     std::mem::take(&mut *LOSSY.lock().unwrap())
         .into_iter()
         .map(|((column, why), n)| {
@@ -65,7 +79,12 @@ pub fn take_warnings() -> Vec<String> {
                     "{n} date(s) before 1900-03-01 or after 9999-12-31, which Excel can't show as dates, were written as ISO text"
                 ),
             };
-            format!("column `{column}`: {what}")
+            let note = if unformatted.contains(&column) {
+                "; the column's format wasn't applied to them"
+            } else {
+                ""
+            };
+            format!("column `{column}`: {what}{note}")
         })
         .collect()
 }
@@ -163,22 +182,36 @@ pub fn excel_value(a: &dyn Array, i: usize, column: &str) -> Option<Excel> {
     })
 }
 
+/// Writes cells, keeping one Excel format object per distinct code.
 pub struct CellWriter {
-    date: Format,
-    datetime: Format,
-    time: Format,
+    cache: HashMap<String, Format>,
 }
 
 impl CellWriter {
     pub fn new() -> CellWriter {
         CellWriter {
-            date: Format::new().set_num_format("yyyy-mm-dd"),
-            datetime: Format::new().set_num_format("yyyy-mm-dd hh:mm:ss"),
-            time: Format::new().set_num_format("hh:mm:ss"),
+            cache: HashMap::new(),
         }
     }
 
-    /// Write row `i` of `a` at `(row, col)`. Nulls leave the cell empty.
+    /// The format objects for one result set's columns.
+    pub fn formats(&mut self, cols: &[ColumnFormat]) -> Vec<Option<ColumnStyle>> {
+        cols.iter()
+            .map(|c| {
+                c.code().map(|code| ColumnStyle {
+                    format: self
+                        .cache
+                        .entry(code.to_string())
+                        .or_insert_with(|| Format::new().set_num_format(code))
+                        .clone(),
+                    explicit: c.is_explicit(),
+                })
+            })
+            .collect()
+    }
+
+    /// Write row `i` of `a` at `(row, col)` with the column's style. Nulls leave the cell empty.
+    #[allow(clippy::too_many_arguments)]
     pub fn write(
         &self,
         ws: &mut Worksheet,
@@ -187,25 +220,47 @@ impl CellWriter {
         a: &dyn Array,
         i: usize,
         column: &str,
+        style: Option<&ColumnStyle>,
     ) -> Result<()> {
         let Some(v) = excel_value(a, i, column) else {
             return Ok(());
         };
-        match v {
-            Excel::Number(n) => ws.write_number(row, col, n)?,
-            Excel::Date(n) => ws.write_number_with_format(row, col, n, &self.date)?,
-            Excel::DateTime(n) => ws.write_number_with_format(row, col, n, &self.datetime)?,
-            Excel::Time(n) => ws.write_number_with_format(row, col, n, &self.time)?,
-            Excel::Bool(b) => ws.write_boolean(row, col, b)?,
-            Excel::Text(s) => {
+        let fmt = style.map(|s| &s.format);
+        match (v, fmt) {
+            (Excel::Number(n) | Excel::Date(n) | Excel::DateTime(n) | Excel::Time(n), Some(f)) => {
+                ws.write_number_with_format(row, col, n, f)?
+            }
+            (Excel::Number(n) | Excel::Date(n) | Excel::DateTime(n) | Excel::Time(n), None) => {
+                ws.write_number(row, col, n)?
+            }
+            (Excel::Bool(b), Some(f)) => ws.write_boolean_with_format(row, col, b, f)?,
+            (Excel::Bool(b), None) => ws.write_boolean(row, col, b)?,
+            (Excel::Text(s), f) => {
                 if s.chars().count() > EXCEL_MAX_STRING {
                     return Err(format!("column `{column}`: a value is longer than Excel's {EXCEL_MAX_STRING}-character cell limit").into());
                 }
-                ws.write_string(row, col, s)?
+                match f {
+                    // A number or date Excel can't hold stays unformatted text.
+                    Some(_) if Kind::of(a.data_type()) != Kind::Other => {
+                        if style.is_some_and(|s| s.explicit) {
+                            unformatted(column);
+                        }
+                        ws.write_string(row, col, s)?
+                    }
+                    Some(f) => ws.write_string_with_format(row, col, s, f)?,
+                    None => ws.write_string(row, col, s)?,
+                }
             }
         };
         Ok(())
     }
+}
+
+/// A column's number format, and whether YAML asked for it.
+#[derive(Clone)]
+pub struct ColumnStyle {
+    pub format: Format,
+    pub explicit: bool,
 }
 
 /// Cast every column to one of the handful of types `CellWriter` writes natively.

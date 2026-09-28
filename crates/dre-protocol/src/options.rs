@@ -196,6 +196,208 @@ fn check_value(f: &OptionField, v: &Value) -> Option<String> {
     None
 }
 
+/// What an Excel number format code displays, from [`check_num_format`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumFormatClass {
+    /// Digits, percentages, currency, `General`: for number columns.
+    Number,
+    /// Dates, times, elapsed time: for date, timestamp and time columns.
+    DateTime,
+    /// Only `@` (and literals): shows any value as text.
+    Text,
+}
+
+impl NumFormatClass {
+    pub fn describe(self) -> &'static str {
+        match self {
+            NumFormatClass::Number => "a number format",
+            NumFormatClass::DateTime => "a date/time format",
+            NumFormatClass::Text => "a text format",
+        }
+    }
+}
+
+/// Characters Excel shows as themselves in a format code without quoting.
+const LITERALS: &str = "$-+/():!^&'~{}<>= ";
+
+/// A light syntax check of an Excel number format code (the text of Excel's Format Cells →
+/// Custom dialog), and what it displays. Not a full grammar: conditions, colours and locale tags
+/// inside `[]` are accepted without being interpreted.
+pub fn check_num_format(code: &str) -> Result<NumFormatClass, String> {
+    if code.trim().is_empty() {
+        return Err("is empty".into());
+    }
+    let mut sections = vec![String::new()];
+    let mut chars = code.chars().peekable();
+    // Per section: the tokens left once quoted text, escapes, fills and brackets are removed.
+    let mut elapsed = vec![false];
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => loop {
+                match chars.next() {
+                    Some('"') => break,
+                    Some(_) => {}
+                    None => return Err("has an unclosed `\"` quote".into()),
+                }
+            },
+            '[' => {
+                let mut inner = String::new();
+                loop {
+                    match chars.next() {
+                        Some(']') => break,
+                        Some('[') => return Err("has a `[` inside `[ ]`".into()),
+                        Some(ch) => inner.push(ch),
+                        None => return Err("has an unclosed `[` bracket".into()),
+                    }
+                }
+                let lower = inner.to_ascii_lowercase();
+                if !lower.is_empty()
+                    && ["h", "m", "s"]
+                        .iter()
+                        .any(|u| lower.chars().all(|ch| ch.to_string() == *u))
+                {
+                    *elapsed.last_mut().unwrap() = true;
+                }
+            }
+            ']' => return Err("has a `]` without a matching `[`".into()),
+            '\\' | '_' | '*' => {
+                if chars.next().is_none() {
+                    return Err(format!("ends with `{c}`, which needs a character after it"));
+                }
+            }
+            ';' => {
+                sections.push(String::new());
+                elapsed.push(false);
+            }
+            _ => sections.last_mut().unwrap().push(c),
+        }
+    }
+    if sections.len() > 4 {
+        return Err(format!(
+            "has {} `;` sections; Excel allows at most four (positive;negative;zero;text)",
+            sections.len()
+        ));
+    }
+    let mut class = None;
+    for (s, elapsed) in sections.iter().zip(elapsed) {
+        let general = s.to_ascii_lowercase().contains("general");
+        let s = remove_general(s);
+        let mut date = elapsed;
+        let mut number = general;
+        let upper = s.to_ascii_uppercase();
+        let mut rest = upper.as_str();
+        while let Some(c) = rest.chars().next() {
+            if rest.starts_with("AM/PM") {
+                date = true;
+                rest = &rest[5..];
+                continue;
+            }
+            if rest.starts_with("A/P") {
+                date = true;
+                rest = &rest[3..];
+                continue;
+            }
+            match c {
+                '0' | '#' | '?' | '%' | '.' | ',' => number = true,
+                '1'..='9' => {}
+                'E' if rest[1..].starts_with(['+', '-']) => {
+                    number = true;
+                    rest = &rest[2..];
+                    continue;
+                }
+                'Y' | 'M' | 'D' | 'H' | 'S' | 'E' | 'B' | 'G' => date = true,
+                '@' => {}
+                c if LITERALS.contains(c) => {}
+                c => {
+                    return Err(format!(
+                        "has `{c}`, which isn't part of an Excel number format; put literal text in double quotes"
+                    ));
+                }
+            }
+            rest = &rest[c.len_utf8()..];
+        }
+        let this = if date {
+            Some(NumFormatClass::DateTime)
+        } else if number {
+            Some(NumFormatClass::Number)
+        } else {
+            None
+        };
+        class = class.or(this);
+    }
+    Ok(class.unwrap_or(NumFormatClass::Text))
+}
+
+/// A section with every `General` (any case) taken out.
+fn remove_general(s: &str) -> String {
+    let lower = s.to_ascii_lowercase();
+    if !lower.contains("general") {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut i = 0;
+    while i < s.len() {
+        if lower[i..].starts_with("general") {
+            i += "general".len();
+        } else {
+            let c = s[i..].chars().next().unwrap();
+            out.push(c);
+            i += c.len_utf8();
+        }
+    }
+    out
+}
+
+/// The keys a column may set in a `columns:` map.
+pub const COLUMN_OPTION_KEYS: &[&str] = &["format"];
+
+/// Parse a `columns:` map (column name → column options), collecting every problem as a
+/// sentence naming the column. Used by core for query entries and by the xlsx plugin for its
+/// output-level `columns` option.
+pub fn parse_columns(
+    v: &Value,
+) -> (
+    std::collections::BTreeMap<String, crate::msg::ColumnOptions>,
+    Vec<String>,
+) {
+    let mut out = std::collections::BTreeMap::new();
+    let mut errs = Vec::new();
+    let Some(m) = v.as_object() else {
+        errs.push("`columns` must be a map from column name to options like `{format: \"#,##0.00\"}`".into());
+        return (out, errs);
+    };
+    for (name, opts) in m {
+        let Some(o) = opts.as_object() else {
+            errs.push(format!(
+                "column `{name}` must be a map of options like `{{format: \"#,##0.00\"}}`"
+            ));
+            continue;
+        };
+        let mut col = crate::msg::ColumnOptions::default();
+        for (k, val) in o {
+            match k.as_str() {
+                "format" => match val.as_str() {
+                    Some(code) => match check_num_format(code) {
+                        Ok(_) => col.format = Some(code.to_string()),
+                        Err(e) => errs.push(format!("column `{name}`: format `{code}` {e}")),
+                    },
+                    None => errs.push(format!("column `{name}`: `format` must be a string")),
+                },
+                _ => errs.push(format!(
+                    "column `{name}`: unknown key `{k}`; expected {}",
+                    COLUMN_OPTION_KEYS
+                        .iter()
+                        .map(|k| format!("`{k}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+            }
+        }
+        out.insert(name.clone(), col);
+    }
+    (out, errs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +456,74 @@ mod tests {
         assert_eq!(
             check(Kind::Destination, "sftp", &[], &o),
             vec!["the `sftp` destination takes no options, but got `to`; check the key's spelling"]
+        );
+    }
+
+    #[test]
+    fn number_format_codes() {
+        use NumFormatClass::*;
+        let ok = [
+            ("General", Number),
+            ("0", Number),
+            ("#,##0.00", Number),
+            ("0.0%", Number),
+            ("0.00E+00", Number),
+            ("# ?/?", Number),
+            ("[$€-x-euro2] #,##0.00", Number),
+            ("[$$-409]#,##0.00", Number),
+            ("#,##0.00;[Red](#,##0.00)", Number),
+            ("#,##0;(#,##0);\"-\";@", Number),
+            ("_(* #,##0.00_);_(* (#,##0.00);_(* \"-\"??_);_(@_)", Number),
+            ("[>=1000]#,##0;0", Number),
+            ("\\€#,##0", Number),
+            ("yyyy-mm-dd", DateTime),
+            ("dd/mm/yyyy", DateTime),
+            ("mmm yyyy", DateTime),
+            ("yyyy-mm-dd hh:mm:ss", DateTime),
+            ("h:mm AM/PM", DateTime),
+            ("h:mm A/P", DateTime),
+            ("[h]:mm:ss", DateTime),
+            ("[mm]", DateTime),
+            ("hh:mm:ss.000", DateTime),
+            ("@", Text),
+            ("\"Total: \"@", Text),
+        ];
+        for (code, class) in ok {
+            assert_eq!(check_num_format(code), Ok(class), "{code}");
+        }
+        let bad = [
+            ("", "is empty"),
+            (
+                "0;0;0;@;0",
+                "has 5 `;` sections; Excel allows at most four (positive;negative;zero;text)",
+            ),
+            ("\"abc", "has an unclosed `\"` quote"),
+            ("[Red#,##0", "has an unclosed `[` bracket"),
+            ("#,##0]", "has a `]` without a matching `[`"),
+            ("0\\", "ends with `\\`, which needs a character after it"),
+            (
+                "0 units",
+                "has `U`, which isn't part of an Excel number format; put literal text in double quotes",
+            ),
+        ];
+        for (code, err) in bad {
+            assert_eq!(check_num_format(code), Err(err.to_string()), "{code}");
+        }
+    }
+
+    #[test]
+    fn column_maps() {
+        let (cols, errs) = parse_columns(
+            &json!({"a": {"format": "0.0%"}, "b": {"fromat": "0"}, "c": "0", "d": {"format": "\"x"}}),
+        );
+        assert_eq!(cols["a"].format.as_deref(), Some("0.0%"));
+        assert_eq!(
+            errs,
+            vec![
+                "column `b`: unknown key `fromat`; expected `format`",
+                "column `c` must be a map of options like `{format: \"#,##0.00\"}`",
+                "column `d`: format `\"x` has an unclosed `\"` quote",
+            ]
         );
     }
 }

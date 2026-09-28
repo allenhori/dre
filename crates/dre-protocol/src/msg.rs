@@ -163,6 +163,17 @@ pub struct ResultSetMeta {
     pub anchor: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub header: Option<bool>,
+    /// The query entry's `columns:` map: per result column, how to show it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub columns: std::collections::BTreeMap<String, ColumnOptions>,
+}
+
+/// One entry of a `columns:` map.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ColumnOptions {
+    /// An Excel number format code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
