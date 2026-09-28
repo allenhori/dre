@@ -22,6 +22,7 @@ fn meta(name: &str, anchor: Option<&str>, header: Option<bool>) -> ResultSetMeta
         result_index: 1,
         anchor: anchor.map(Into::into),
         header,
+        columns: Default::default(),
     }
 }
 

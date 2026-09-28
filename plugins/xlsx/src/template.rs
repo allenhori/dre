@@ -21,6 +21,7 @@ use umya_spreadsheet::{Workbook as Spreadsheet, Worksheet};
 
 use crate::EXCEL_MAX_ROWS;
 use crate::cells::{Excel, excel_value, normalize, parse_cell};
+use crate::formats::{ColumnFormat, Formats, Kind};
 
 #[derive(Debug, Deserialize)]
 struct Binding {
@@ -51,6 +52,7 @@ struct Collected {
     name: String,
     names: Vec<String>,
     batch: RecordBatch,
+    formats: Vec<ColumnFormat>,
 }
 
 pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
@@ -60,6 +62,7 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
         .map_err(|e| format!("can't open template {}: {e:?}", payload.file))?;
 
     // Template filling needs every row in hand to know how many rows to insert.
+    let mut fmts = Formats::new(&req.options)?;
     let mut results = Vec::new();
     while let Some(mut rs) = sets.next_set()? {
         let mut batches = Vec::new();
@@ -71,14 +74,17 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
             None => normalize(&RecordBatch::new_empty(rs.schema.clone()))?.schema(),
         };
         let batch = arrow::compute::concat_batches(&schema, &batches)?;
+        let formats = fmts.for_set(&rs.meta, &schema)?;
         results.push(Collected {
             query: rs.meta.query.clone(),
             index: rs.meta.result_index,
             name: rs.meta.name.clone(),
             names: schema.fields().iter().map(|f| f.name().clone()).collect(),
             batch,
+            formats,
         });
     }
+    fmts.finish()?;
     let find = |b: &Binding| -> Result<usize> {
         let q = b.query.as_deref().unwrap_or_default();
         let idx = b.result_index.unwrap_or(1);
@@ -124,7 +130,7 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
                     .into());
                 }
             }
-            write_value(ws, coord, res.batch.column(ci).as_ref(), 0, col);
+            write_value(ws, coord, res.batch.column(ci).as_ref(), 0, col, &res.formats[ci]);
         }
     }
 
@@ -177,6 +183,7 @@ pub fn fill(req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>
                         res.batch.column(c).as_ref(),
                         row,
                         &res.names[c],
+                        &res.formats[c],
                     );
                 }
             }
@@ -270,6 +277,7 @@ fn fill_block(book: &mut Spreadsheet, b: &Binding, r0: u32, c0: u16, res: &Colle
                     res.batch.column(ci).as_ref(),
                     row,
                     &res.names[ci],
+                    &res.formats[ci],
                 );
             }
         }
@@ -328,38 +336,44 @@ fn extend_formulas(book: &mut Spreadsheet, block_sheet: &str, reserved: u32, las
     }
 }
 
-fn write_value(ws: &mut Worksheet, coord: (u32, u32), a: &dyn Array, i: usize, column: &str) {
+/// Write one value. An explicit YAML format replaces the cell's number format (keeping its font,
+/// fill and border); a type default only fills a `General` cell, so a template's own format wins.
+fn write_value(
+    ws: &mut Worksheet,
+    coord: (u32, u32),
+    a: &dyn Array,
+    i: usize,
+    column: &str,
+    fmt: &ColumnFormat,
+) {
     let cell = ws.cell_mut(coord);
-    let date_fmt = |cell: &mut umya_spreadsheet::Cell, fmt: &str| {
+    let apply = |cell: &mut umya_spreadsheet::Cell| {
+        let Some(code) = fmt.code() else { return };
         let nf = cell.style_mut().number_format_mut();
-        if nf.format_code() == "General" {
-            nf.set_format_code(fmt);
+        if fmt.is_explicit() || nf.format_code() == "General" {
+            nf.set_format_code(code);
         }
     };
     match excel_value(a, i, column) {
         None => {
             cell.set_value(String::new());
         }
-        Some(Excel::Number(n)) => {
+        Some(Excel::Number(n) | Excel::Date(n) | Excel::DateTime(n) | Excel::Time(n)) => {
             cell.set_value_number(n);
+            apply(cell);
         }
         Some(Excel::Bool(b)) => {
             cell.set_value_bool(b);
-        }
-        Some(Excel::Date(n)) => {
-            cell.set_value_number(n);
-            date_fmt(cell, "yyyy-mm-dd");
-        }
-        Some(Excel::DateTime(n)) => {
-            cell.set_value_number(n);
-            date_fmt(cell, "yyyy-mm-dd hh:mm:ss");
-        }
-        Some(Excel::Time(n)) => {
-            cell.set_value_number(n);
-            date_fmt(cell, "hh:mm:ss");
+            apply(cell);
         }
         Some(Excel::Text(t)) => {
             cell.set_value(t);
+            if Kind::of(a.data_type()) == Kind::Other {
+                apply(cell);
+            } else if fmt.is_explicit() {
+                // A number or date Excel can't hold stays unformatted text.
+                crate::cells::unformatted(column);
+            }
         }
     }
 }

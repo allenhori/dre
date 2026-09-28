@@ -1,8 +1,9 @@
 //! DRE format plugin `xlsx`: one sheet per result set, written in constant memory, or a branded
 //! template filled in place (see `template`).
 //!
-//! Options: `header` (default true), `max_rows_per_sheet` (default 1,000,000). Per result set:
-//! `anchor` (default `A1`) and `header`. A result set longer than `max_rows_per_sheet` continues
+//! Options: `header` (default true), `max_rows_per_sheet` (default 1,000,000), `columns` (per
+//! column name, a number `format`), `date_format`, `datetime_format`, `time_format` (see
+//! `formats`). Per result set: `anchor` (default `A1`), `header` and `columns`. A result set longer than `max_rows_per_sheet` continues
 //! on `Name (2)`, `Name (3)`, ... with the header repeated.
 //!
 //! Values Excel can't hold exactly are written as text, with one warning per column: numbers
@@ -10,6 +11,7 @@
 //! Excel's range, and dates or timestamps before 1900-03-01 or after 9999-12-31 (as ISO text).
 
 mod cells;
+mod formats;
 mod template;
 
 use dre_protocol::options::{OptionField, OptionType};
@@ -18,6 +20,7 @@ use rust_xlsxwriter::{Format as XFormat, Workbook};
 use serde_json::Value;
 
 use cells::{CellWriter, parse_cell};
+use formats::Formats;
 
 pub const EXCEL_MAX_ROWS: u32 = 1_048_576;
 const DEFAULT_MAX_ROWS: u64 = 1_000_000;
@@ -40,7 +43,34 @@ impl Format for Xlsx {
             )
             .range(Some(1.0), Some((EXCEL_MAX_ROWS - 1) as f64))
             .default(DEFAULT_MAX_ROWS),
+            OptionField::new(
+                "columns",
+                OptionType::Map,
+                "per column name, on any sheet: `{format: <Excel number format>}`; a query entry's `columns` wins",
+            ),
+            OptionField::new(
+                "date_format",
+                OptionType::String,
+                "Excel number format for date columns",
+            )
+            .default(formats::DATE_FORMAT),
+            OptionField::new(
+                "datetime_format",
+                OptionType::String,
+                "Excel number format for timestamp columns",
+            )
+            .default(formats::DATETIME_FORMAT),
+            OptionField::new(
+                "time_format",
+                OptionType::String,
+                "Excel number format for time columns",
+            )
+            .default(formats::TIME_FORMAT),
         ]
+    }
+
+    fn validate(&self, options: &serde_json::Map<String, Value>) -> Vec<String> {
+        formats::validate(options)
     }
 
     fn write(&mut self, req: &WriteRequest, sets: &mut ResultSets<'_>) -> Result<Vec<String>> {
@@ -57,10 +87,13 @@ impl Format for Xlsx {
             .get("max_rows_per_sheet")
             .and_then(Value::as_u64)
             .unwrap_or(DEFAULT_MAX_ROWS);
+        let mut fmts = Formats::new(&req.options)?;
         let mut wb = Workbook::new();
         let bold = XFormat::new().set_bold();
-        let cells = CellWriter::new();
+        let mut cells = CellWriter::new();
         while let Some(mut rs) = sets.next_set()? {
+            let normalized = cells::normalize(&arrow::array::RecordBatch::new_empty(rs.schema.clone()))?;
+            let styles = cells.formats(&fmts.for_set(&rs.meta, &normalized.schema())?);
             let (anchor_row, anchor_col) = match &rs.meta.anchor {
                 Some(a) => parse_cell(a).ok_or_else(|| format!("invalid anchor `{a}`"))?,
                 None => (0, 0),
@@ -106,13 +139,15 @@ impl Format for Xlsx {
                         }
                     }
                     for (c, (col, name)) in batch.columns().iter().zip(&names).enumerate() {
-                        cells.write(ws, row, anchor_col + c as u16, col.as_ref(), i, name)?;
+                        let style = styles[c].as_ref();
+                        cells.write(ws, row, anchor_col + c as u16, col.as_ref(), i, name, style)?;
                     }
                     row += 1;
                     written += 1;
                 }
             }
         }
+        fmts.finish()?;
         wb.save(&req.path)
             .map_err(|e| format!("can't save {}: {e}", req.path))?;
         for w in cells::take_warnings() {

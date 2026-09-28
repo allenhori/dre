@@ -587,6 +587,7 @@ fn handle(h: &mut Handler<'_>, name: &str, req: Request, input: &mut Input, out:
                     result_index: 1,
                     anchor: None,
                     header: None,
+                    columns: Default::default(),
                 },
                 schema,
                 first: Some(batches),

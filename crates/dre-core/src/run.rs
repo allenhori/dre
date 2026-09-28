@@ -15,7 +15,7 @@ use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use chrono::NaiveDate;
 use dre_protocol::host::{Execution, LogSink, PluginProcess};
-use dre_protocol::msg::{DeliveryFile, ResultSetMeta};
+use dre_protocol::msg::{ColumnOptions, DeliveryFile, ResultSetMeta};
 use dre_protocol::{CAP_LOAD, CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
 use serde::Serialize;
 use serde_json::{Map as JsonMap, Value as Json, json};
@@ -352,6 +352,7 @@ struct Produced {
     name: String,
     anchor: Option<String>,
     header: Option<bool>,
+    columns: BTreeMap<String, ColumnOptions>,
 }
 
 struct Statement {
@@ -863,6 +864,7 @@ impl<'a> BindingRun<'a> {
                 name: String::new(),
                 anchor: None,
                 header: None,
+                columns: Default::default(),
             });
         }
         Ok(())
@@ -906,6 +908,7 @@ impl<'a> BindingRun<'a> {
             p.name = q.tab_name.clone().unwrap_or_else(|| q.query.clone());
             p.anchor = q.anchor.clone();
             p.header = q.header;
+            p.columns = q.columns.clone();
         }
         if self.b.output.format == "xlsx" {
             let mut seen: BTreeMap<String, String> = BTreeMap::new();
@@ -1043,6 +1046,7 @@ impl<'a> BindingRun<'a> {
                         result_index: 1,
                         anchor: r.anchor.clone(),
                         header: r.header,
+                        columns: r.columns.clone(),
                     }
                 })
                 .collect();

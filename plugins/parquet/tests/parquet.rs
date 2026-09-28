@@ -52,6 +52,7 @@ fn types_and_values_survive_a_round_trip() {
         result_index: 1,
         anchor: None,
         header: None,
+        columns: Default::default(),
     };
     p.write_begin(
         path.to_str().unwrap(),

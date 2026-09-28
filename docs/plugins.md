@@ -168,7 +168,7 @@ format_options:
 | `csv`, `delimited` | `delimiter`, `quote`, `quoting`, `header`, `line_ending`, `encoding`, `null`, `byte_order_mark` |
 | `fixed_width` | `columns` (see [Fixed-width columns](#fixed-width-columns)), `header`, `line_ending`, `encoding`, `line_breaks` |
 | `parquet` | none; Arrow types are preserved |
-| `xlsx` | `header`, `max_rows_per_sheet`; per query `anchor`/`header`; `template` |
+| `xlsx` | `header`, `max_rows_per_sheet`, `columns`, `date_format`, `datetime_format`, `time_format` (see [xlsx column formats](#xlsx-column-formats)); per query `anchor`/`header`/`columns`; `template` |
 
 Every format but xlsx also takes `extension`: the output file's extension (`aba`, `dat`, ...), or
 `""` for none. The file is written the same way; only its name changes.
@@ -193,7 +193,59 @@ Every format but xlsx also takes `extension`: the output file's extension (`aba`
 - `xlsx` keeps every value exact. What Excel can't store as a number or date is written as text,
   with one warning per column: numbers with more than 15 significant digits (large integers,
   wide decimals), numbers beyond Excel's range, and dates or timestamps before 1900-03-01 or
-  after 9999-12-31 (as ISO text).
+  after 9999-12-31 (as ISO text). Those values get no number format, and the warning says so.
+
+### xlsx column formats
+
+Every setting here is optional; a report without them gets numbers in `General` and dates, timestamps and
+times as `yyyy-mm-dd`, `yyyy-mm-dd hh:mm:ss` and `hh:mm:ss`. A format changes only how a cell
+displays: the value stays a real number or date, so Excel can still sum, sort and filter it.
+
+```yaml
+queries:
+  - query: sales
+    columns:
+      amount: {format: "#,##0.00"}
+      share:  {format: "0.0%"}
+  - query: refunds
+output:
+  format: xlsx
+  date_format: "dd/mm/yyyy"
+  columns:
+    amount: {format: "[$€-x-euro2] #,##0.00"}   # default for `amount` on every sheet
+```
+
+Formats are Excel format codes, the text of Excel's Format Cells → Custom dialog. The format a cell
+gets, highest first:
+
+1. its query entry's `columns.<name>.format`;
+2. the output-level `columns.<name>.format`;
+3. in a template, the template cell's own number format, if it isn't `General`;
+4. `date_format`, `datetime_format` or `time_format`, for date, timestamp and time columns;
+5. none (`General`) for numbers, booleans and text.
+
+An explicit format (1 or 2) replaces a template cell's number format and keeps its font, fill and
+border. `date_format` and the other defaults are output options, so `format_options.xlsx` in
+`dre_project.yml` sets them for the project and a report's own value wins. Rows inserted into a
+template's table block, and continuation sheets past `max_rows_per_sheet`, are formatted too.
+Header cells stay bold text, and nulls stay empty.
+
+`dre validate` rejects a malformed code (unbalanced quotes or brackets, more than four `;`
+sections, text that needs quoting) and a date default that doesn't show a date. A run fails,
+naming the sheet and column, when a query entry formats a column the query doesn't return, when
+an output-level name is on no sheet (no workbook is written), or when a code doesn't fit its
+column: a date code on a number, a number code on a date, or either on text or booleans. `@`
+(text) fits any column. `columns:` on a query entry of another format is an error.
+
+| Code | Shows `1234.5` / `0.125` / 2026-01-25 as |
+|---|---|
+| `#,##0.00` | `1,234.50` |
+| `0.0%` | `12.5%` |
+| `[$€-x-euro2] #,##0.00` | `€ 1,234.50` |
+| `#,##0.00;[Red](#,##0.00)` | negatives in red, in parentheses |
+| `dd/mm/yyyy` | `25/01/2026` |
+| `mmm yyyy` | `Jan 2026` |
+| `h:mm AM/PM` | a time as `3:05 PM` |
 
 ### Fixed-width columns
 

@@ -95,7 +95,7 @@ const SET_ENTRY_KEYS: &[&str] = &[
     "output",
     "schedule",
 ];
-const QUERY_ENTRY_KEYS: &[&str] = &["query", "tab", "tab_name", "anchor", "header"];
+const QUERY_ENTRY_KEYS: &[&str] = &["query", "tab", "tab_name", "anchor", "header", "columns"];
 const OUTPUT_SHARED_KEYS: &[&str] = &["format", "destination", "template", "extension"];
 
 // ---------------------------------------------------------------------------------------------
@@ -212,6 +212,9 @@ pub struct QueryEntry {
     pub anchor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<bool>,
+    /// xlsx: per result column, how to show it (`{format: "#,##0.00"}`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub columns: BTreeMap<String, ColumnOptions>,
 }
 
 fn is_true(b: &bool) -> bool {
@@ -312,6 +315,7 @@ pub struct SetDef {
 /// A plugin's kind; the same type the protocol uses.
 pub use dre_protocol::Kind as PluginKind;
 pub use dre_protocol::PluginId;
+pub use dre_protocol::msg::ColumnOptions;
 
 /// A declared plugin package.
 #[derive(Debug, Clone, Serialize)]
@@ -1492,6 +1496,7 @@ impl Loader {
             tab_name: None,
             anchor: None,
             header: None,
+            columns: BTreeMap::new(),
         };
         if let Some(m) = m {
             for k in m.keys().filter_map(Value::as_str) {
@@ -1565,6 +1570,18 @@ impl Loader {
                         format!("report `{report}`: `header` of `{name}` must be true or false"),
                     ),
                 }
+            }
+            if let Some(c) = m.get("columns") {
+                let (columns, errs) = dre_protocol::options::parse_columns(&yaml_to_json(c));
+                for err in errs {
+                    self.diags.error(
+                        "invalid-field",
+                        file.clone(),
+                        line,
+                        format!("report `{report}`: query `{name}`: {err}"),
+                    );
+                }
+                e.columns = columns;
             }
         }
         match index.get(&name) {
@@ -2190,6 +2207,19 @@ impl Loader {
                 Vec::new()
             }
         };
+        if format != "xlsx" {
+            for q in queries.iter().filter(|q| !q.columns.is_empty()) {
+                self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    None,
+                    format!(
+                        "{ctx}: `columns` on query `{}` only applies to the xlsx format",
+                        q.query
+                    ),
+                );
+            }
+        }
         let template = match m.get("template") {
             None | Some(Value::Null) => None,
             Some(t) => {
@@ -2494,6 +2524,7 @@ impl Loader {
             tab_name: None,
             anchor: None,
             header: None,
+            columns: BTreeMap::new(),
         };
         let base = BindingBase {
             profile: profile.clone(),

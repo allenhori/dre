@@ -252,11 +252,13 @@ built from one `VALUES` statement, with a warning. Only sent to plugins advertis
 {"type": "write", "path": "/…/target/run/monthly/client_a/monthly.xlsx", "format": "xlsx",
  "options": {…format options…},
  "result_sets": [{"name": "Summary", "query": "query_01", "result_index": 1,
-                  "anchor": "A1", "header": true}],
+                  "anchor": "A1", "header": true,
+                  "columns": {"amount": {"format": "#,##0.00"}}}],
  "template": {…}}
 ```
 
-`result_index` is always 1: each query contributes at most one result set.
+`result_index` is always 1: each query contributes at most one result set. `anchor`, `header`
+and `columns` (the query entry's per-column options) are left out when not set.
 
 After `write`, core streams each result set in the order listed. Each one is sent as one or more
 data frames (the first carries the schema), then `{"type":"result_set_end"}`. After the last
