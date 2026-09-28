@@ -1,6 +1,7 @@
 //! Slack delivery against a local fake of the Web API endpoints the plugin uses (there's no
 //! official emulator). Against a real workspace when `DRE_TEST_SLACK_TOKEN` and
-//! `DRE_TEST_SLACK_CHANNEL` are set: a manual smoke test, never run in CI.
+//! `DRE_TEST_SLACK_CHANNEL` are set (and a DM with `DRE_TEST_SLACK_USER`): a manual smoke test,
+//! never run in CI.
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -30,7 +31,8 @@ type Calls = Arc<Mutex<Vec<Call>>>;
 
 /// Tokens change the fake's behaviour: `bad` → invalid_auth everywhere, `noscope` → missing_scope
 /// on conversations.list, `slow` → the first upload-URL call is rate limited, `busy` → every
-/// upload-URL call is. Channel `C_OUT` → not_in_channel on completion.
+/// upload-URL call is, `nochat` → missing_scope on chat.postMessage. Channel `C_OUT` →
+/// not_in_channel on completion; user `U_OFF` has the app's Messages tab off.
 fn fake_slack() -> (String, Calls) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -114,6 +116,16 @@ fn fake_slack() -> (String, Calls) {
                     "conversations.list" => json!({
                         "ok": true, "channels": [{"id": "C2", "name": "finance-reports"}],
                         "response_metadata": {"next_cursor": ""}}),
+                    "chat.postMessage" if token == "nochat" => {
+                        json!({"ok": false, "error": "missing_scope", "needed": "chat:write"})
+                    }
+                    "chat.postMessage" if form["channel"] == "D_U_OFF" => {
+                        json!({"ok": false, "error": "messages_tab_disabled"})
+                    }
+                    // The plugin only ever probes a DM with no text.
+                    "chat.postMessage" if !form.contains_key("text") => {
+                        json!({"ok": false, "error": "no_text"})
+                    }
                     "conversations.open" => {
                         json!({"ok": true, "channel": {"id": format!("D_{}", form["users"])}})
                     }
@@ -285,10 +297,58 @@ fn a_user_gets_the_file_in_a_dm() {
     .unwrap();
     assert!(loc.starts_with("slack DM with U42"), "{loc}");
     assert_eq!(calls_to(&calls, "conversations.open")[0].form["users"], "U42");
+    let probe = calls_to(&calls, "chat.postMessage");
+    assert_eq!(probe.len(), 1);
+    assert_eq!(probe[0].form["channel"], "D_U42");
+    assert!(
+        !probe[0].form.contains_key("text"),
+        "the probe must not post anything"
+    );
     assert_eq!(
         calls_to(&calls, "files.completeUploadExternal")[0].form["channel_id"],
         "D_U42"
     );
+}
+
+#[test]
+fn a_dm_with_the_messages_tab_off_fails_before_uploading() {
+    let (base, calls) = fake_slack();
+    let f = Files::new();
+    let err = send(
+        &[f.file("a.csv", b"1")],
+        conn(&base, "xoxb-good"),
+        json!({"user": "U_OFF"}),
+    )
+    .unwrap_err();
+    assert!(err.contains("turn on App Home > Messages Tab"), "{err}");
+    assert!(calls_to(&calls, "files.getUploadURLExternal").is_empty());
+}
+
+#[test]
+fn a_dm_needs_chat_write() {
+    let (base, calls) = fake_slack();
+    let f = Files::new();
+    let err = send(
+        &[f.file("a.csv", b"1")],
+        conn(&base, "nochat"),
+        json!({"user": "U42"}),
+    )
+    .unwrap_err();
+    assert!(err.contains("lacks the `chat:write` scope"), "{err}");
+    assert!(calls_to(&calls, "files.getUploadURLExternal").is_empty());
+}
+
+#[test]
+fn a_channel_is_not_probed() {
+    let (base, calls) = fake_slack();
+    let f = Files::new();
+    send(
+        &[f.file("a.csv", b"1")],
+        conn(&base, "xoxb-good"),
+        json!({"channel": "C7"}),
+    )
+    .unwrap();
+    assert!(calls_to(&calls, "chat.postMessage").is_empty());
 }
 
 #[test]
@@ -399,4 +459,13 @@ fn delivers_to_a_real_workspace() {
     )
     .unwrap();
     assert!(loc.starts_with("slack "), "{loc}");
+    if let Ok(user) = std::env::var("DRE_TEST_SLACK_USER") {
+        let loc = send(
+            &[f.file("dre-smoke-dm.csv", b"n\r\n1\r\n")],
+            json!({"token": std::env::var("DRE_TEST_SLACK_TOKEN").unwrap()}),
+            json!({"user": user, "message": "DRE Slack DM smoke test"}),
+        )
+        .unwrap();
+        assert!(loc.starts_with("slack DM with "), "{loc}");
+    }
 }
