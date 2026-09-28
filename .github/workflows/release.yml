@@ -12,12 +12,12 @@ name: Release
 # plus SHA256SUMS and install.sh.
 #
 # PyPI: the `pypi` job builds the wheels from the same binaries and attaches them to the release.
-# It uploads them to TestPyPI and then PyPI only when the repository variable PYPI_PUBLISH is
-# `true`, through trusted publishing (no token): register this workflow (`release.yml`) as a
-# trusted publisher for `dre-cli` on both indexes, with the environments `testpypi` and `pypi`.
+# It uploads them to PyPI only when the repository variable PYPI_PUBLISH is `true`, through
+# trusted publishing (no token): PyPI trusts this workflow (`release.yml`) in the `pypi`
+# environment as a publisher of `dre-cli`.
 #
 # Run by hand (Actions > Release > Run workflow, or `gh workflow run release.yml -f tag=v…`), it
-# uploads the wheels already attached to that release to TestPyPI and PyPI, and builds and
+# uploads the wheels already attached to that release to PyPI, and builds and
 # publishes nothing else: the release's binaries, and the checksums dre.lock files pin, stay as
 # they are.
 
@@ -221,31 +221,13 @@ jobs:
           name: wheels
           path: wheels/*.whl
 
-  testpypi:
-    name: Upload to TestPyPI
+  pypi-upload:
+    name: Upload to PyPI
     needs: [pypi, release-wheels]
     # `always()`: on a manual run `pypi` is skipped, which would otherwise skip this too.
     if: >-
       always() && vars.PYPI_PUBLISH == 'true' &&
       (needs.pypi.result == 'success' || needs.release-wheels.result == 'success')
-    runs-on: ubuntu-latest
-    environment: testpypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: wheels
-          path: wheels
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          packages-dir: wheels
-
-  pypi-upload:
-    name: Upload to PyPI
-    needs: testpypi
-    if: always() && vars.PYPI_PUBLISH == 'true' && needs.testpypi.result == 'success'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

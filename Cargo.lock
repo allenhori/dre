@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "dre-cli"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "anstyle",
  "anyhow",
@@ -1666,7 +1666,7 @@ dependencies = [
 
 [[package]]
 name = "dre-core"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "anyhow",
  "arrow",
@@ -1692,7 +1692,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-email"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "dre-protocol",
  "lettre",
@@ -1704,7 +1704,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-ftp"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "dre-protocol",
  "rustls",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-object_store"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1736,7 +1736,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-sftp"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "dre-protocol",
  "russh",
@@ -1748,7 +1748,7 @@ dependencies = [
 
 [[package]]
 name = "dre-destination-slack"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "dre-protocol",
  "form_urlencoded",
@@ -1759,7 +1759,7 @@ dependencies = [
 
 [[package]]
 name = "dre-format-csv"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1770,7 +1770,7 @@ dependencies = [
 
 [[package]]
 name = "dre-format-fixed_width"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "arrow",
  "chrono",
@@ -1782,7 +1782,7 @@ dependencies = [
 
 [[package]]
 name = "dre-format-parquet"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1793,7 +1793,7 @@ dependencies = [
 
 [[package]]
 name = "dre-format-xlsx"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "arrow",
  "calamine",
@@ -1809,7 +1809,7 @@ dependencies = [
 
 [[package]]
 name = "dre-protocol"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "arrow",
  "serde",
@@ -1819,7 +1819,7 @@ dependencies = [
 
 [[package]]
 name = "dre-source-duckdb"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "dre-source-postgres"
-version = "0.0.1-alpha-5"
+version = "0.0.1-alpha-6"
 dependencies = [
  "arrow",
  "chrono",
