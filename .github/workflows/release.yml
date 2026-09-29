@@ -2,8 +2,10 @@ name: Release
 
 # Two kinds of release, by tag:
 #
-#   v<version>            DRE itself: the `dre` CLI for each platform, install.sh, and the
-#                         `dre-cli` wheels for PyPI. E.g. v0.1.0, v0.1.0-rc.1.
+#   v<version>            DRE itself: the `dre` CLI for each platform, install.sh, the
+#                         `dre-cli` wheels for PyPI, dre-protocol/dre-core/dre-cli on crates.io,
+#                         and the Homebrew formula and Scoop manifest (package-managers.yml).
+#                         E.g. v0.1.0, v0.1.0-rc.1.
 #   <package>-v<version>  one plugin package, which then goes into the registry index that `dre`
 #                         installs plugins from (the `packages.json` asset of the `registry`
 #                         release, see docs/registry.md). E.g. duckdb-v1.0.0, object_store-v1.2.0.
@@ -234,6 +236,18 @@ jobs:
           gh release download registry -p packages.json -D registry || true
           python3 .github/scripts/registry_index.py registry/packages.json "$GITHUB_REPOSITORY" > packages.json
           gh release upload registry packages.json --clobber
+
+  package-managers:
+    name: Homebrew and Scoop
+    needs: [plan, publish]
+    if: needs.plan.outputs.kind == 'core'
+    # Tested for every DRE release; pushed to the tap and bucket from release candidates on.
+    uses: ./.github/workflows/package-managers.yml
+    with:
+      tag: ${{ github.ref_name }}
+      push: ${{ !contains(needs.plan.outputs.version, '-alpha') }}
+    secrets:
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
 
   crates:
     name: Publish to crates.io

@@ -1,0 +1,153 @@
+name: Package managers
+
+# Renders the Homebrew formula and the Scoop manifest for a published DRE release (from the
+# release's own SHA256SUMS; .github/scripts/package_managers.py), installs `dre` through each on
+# real runners, and, with `push`, commits them to allenhori/homebrew-tap (Formula/dre.rb) and
+# allenhori/scoop-bucket (bucket/dre.json).
+#
+# release.yml calls it for every DRE release: alphas are tested only; release candidates and
+# stable releases are pushed. Run by hand for an existing release, e.g. to retry a failed push
+# (running it for an older release rolls the tap and bucket back to it):
+#
+#   gh workflow run package-managers.yml -f tag=v0.1.0 -f push=true
+#
+# Pushing needs a PACKAGES_TOKEN repository secret: a fine-grained personal access token with
+# Contents read and write on those two repositories (GITHUB_TOKEN can't push to other repos).
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      push:
+        type: boolean
+        default: false
+    secrets:
+      PACKAGES_TOKEN:
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "A DRE release, e.g. v0.1.0"
+        type: string
+        required: true
+      push:
+        description: "Commit the formula and manifest to the tap and bucket"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: Render
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p SHA256SUMS -D release
+          python3 .github/scripts/package_managers.py "${TAG#v}" release/SHA256SUMS packages
+          cat packages/dre.rb packages/dre.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: packages/*
+
+  homebrew:
+    name: Homebrew (${{ matrix.os }})
+    needs: render
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: packages
+      - name: Install from a local tap
+        run: |
+          [[ "$RUNNER_OS" == Linux ]] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          brew tap-new --no-git dre-ci/local
+          cp packages/dre.rb "$(brew --repository dre-ci/local)/Formula/dre.rb"
+          brew install dre-ci/local/dre
+          brew test dre-ci/local/dre
+          dre --version
+          # `dre system update` leaves a Homebrew install to Homebrew.
+          dre system update --check | tee check.txt
+          grep -q "installed with Homebrew" check.txt
+
+  scoop:
+    name: Scoop (${{ matrix.os }})
+    needs: render
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: packages
+      - name: Install from the manifest
+        shell: pwsh
+        run: |
+          Invoke-Expression "& {$(Invoke-RestMethod get.scoop.sh)} -RunAsAdmin"
+          $env:PATH = "$env:USERPROFILE\scoop\shims;$env:PATH"
+          scoop install .\packages\dre.json
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          dre --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $check = (dre system update --check) -join "`n"
+          Write-Output $check
+          # `dre system update` leaves a Scoop install to Scoop.
+          if ($check -notmatch "installed with Scoop") { Write-Error "not detected as a Scoop install"; exit 1 }
+
+  push:
+    name: Push to the tap and bucket
+    needs: [render, homebrew, scoop]
+    if: inputs.push
+    runs-on: ubuntu-latest
+    env:
+      PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+      TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+          path: packages
+      - run: |
+          if [[ -z "$PACKAGES_TOKEN" ]]; then
+            echo "::error::the PACKAGES_TOKEN secret isn't set; see the top of .github/workflows/package-managers.yml"
+            exit 1
+          fi
+          publish() {
+            local repo="$1" src="$2" dest="$3" dir="work/$1"
+            git clone -q --depth 1 "https://x-access-token:$PACKAGES_TOKEN@github.com/allenhori/$repo.git" "$dir"
+            mkdir -p "$dir/$(dirname "$dest")"
+            cp "$src" "$dir/$dest"
+            git -C "$dir" add "$dest"
+            if git -C "$dir" diff --cached --quiet; then
+              echo "$repo: already at $TAG"
+              return
+            fi
+            git -C "$dir" -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -q -m "dre $TAG"
+            git -C "$dir" push -q origin HEAD
+            echo "$repo: dre $TAG"
+          }
+          publish homebrew-tap packages/dre.rb Formula/dre.rb
+          publish scoop-bucket packages/dre.json bucket/dre.json
