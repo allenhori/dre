@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
 """Build the `dre-cli` wheels for PyPI from a release's assets.
 
-One platform wheel per OS/arch, like ruff and uv ship: the `dre` executable and every
-first-party plugin, a `dre` console command, `python -m dre_cli`, and a small Python API
-(`dre_cli.run([...])`). Nothing is compiled here; the wheels repackage the release's binaries.
+One platform wheel per OS/arch, like ruff and uv ship: the `dre` executable, a `dre` console
+command, `python -m dre_cli`, and a small Python API (`dre_cli.run([...])`). Nothing is compiled
+here; the wheels repackage the release's binaries. Plugins aren't in the wheel: `dre` installs
+the ones a project declares on demand, as it does however it was installed.
 
     build_wheels.py --dist dist --version 0.0.1-alpha-3 --out wheels   # the release workflow
     build_wheels.py --from-dir target/release --version 0.0.1-alpha-3   # a local build, this machine
 
 The PyPI name `dre` is taken by an unrelated project, so the distribution is `dre-cli`; the
 command is still `dre`. Versions map to PEP 440: 0.0.1-alpha-3 -> 0.0.1a3.
-
-Each first-party plugin package (.github/scripts/packages.json) is in the wheel once, laid out
-as an installed plugins directory (`plugins/<package>/<version>/` with its `plugin.json`), which
-`dre` uses as DRE_PLUGINS_DIR.
 """
 
 import argparse
@@ -40,10 +37,8 @@ PLATFORMS = {
     "macos-aarch64": "macosx_11_0_arm64",
     "macos-x86_64": "macosx_10_12_x86_64",
     "windows-x86_64": "win_amd64",
+    "windows-aarch64": "win_arm64",
 }
-
-# The first-party plugin packages and what each provides.
-PACKAGES = json.loads((Path(__file__).parent / "packages.json").read_text())
 
 
 def this_platform():
@@ -79,10 +74,8 @@ def member(archive, name, exe):
 
 SHIM = '''"""DRE, the Declarative Reporting Engine, as a Python package.
 
-The package holds the `dre` executable and DRE's first-party plugins. `dre` (the console command)
-runs the executable. When DRE_PLUGINS_DIR isn't set, it points DRE at the bundled plugins, so a
-project needs no download to run; set DRE_PLUGINS_DIR yourself to use another plugins directory
-(or DRE_CLI_BUNDLED_PLUGINS=0 to use DRE's usual per-project plugins).
+The package holds the `dre` executable; `dre` (the console command) runs it. Plugins aren't
+bundled: `dre` installs the ones a project declares on demand.
 """
 
 import os
@@ -102,28 +95,16 @@ def executable() -> str:
     return str(_HERE / "bin" / ("dre" + _EXE))
 
 
-def plugins_dir() -> str:
-    """The bundled plugins directory, laid out as DRE installs packages."""
-    return str(_HERE / "plugins")
-
-
-def environ(env=None):
-    env = dict(os.environ if env is None else env)
-    if not env.get("DRE_PLUGINS_DIR") and env.get("DRE_CLI_BUNDLED_PLUGINS", "1") != "0":
-        env["DRE_PLUGINS_DIR"] = plugins_dir()
-    return env
-
-
 def run(args, **kwargs):
     """Run `dre <args>` and return the CompletedProcess (for Python callers, e.g. a Databricks job)."""
-    return subprocess.run([executable(), *args], env=environ(kwargs.pop("env", None)), **kwargs)
+    return subprocess.run([executable(), *args], **kwargs)
 
 
 def main():
     exe = executable()
     if os.name == "nt":
-        sys.exit(subprocess.run([exe, *sys.argv[1:]], env=environ()).returncode)
-    os.execve(exe, [exe, *sys.argv[1:]], environ())
+        sys.exit(subprocess.run([exe, *sys.argv[1:]]).returncode)
+    os.execv(exe, [exe, *sys.argv[1:]])
 '''
 
 MAIN = "from dre_cli import main\n\nmain()\n"
@@ -139,8 +120,9 @@ pip install dre-cli        # or: uv tool install dre-cli
 dre --help
 ```
 
-This package holds the `dre` {dre_version} executable and its first-party plugins, so a project
-runs without downloading anything. From Python: `dre_cli.run(["run", "-s", "daily"])`.
+This package holds the `dre` {dre_version} executable. Plugins (databases, file formats,
+destinations) are installed by `dre` on demand, for the ones a project declares. From Python:
+`dre_cli.run(["run", "-s", "daily"])`.
 
 In a Databricks job, add `dre-cli` to the job's environment dependencies and run `dre` (or
 `python -m dre_cli`) from a script or notebook. See the
@@ -165,16 +147,6 @@ def build(dre_version, plat, out_dir, dist=None, from_dir=None):
     else:
         core = Path(dist) / f"dre-{dre_version}-{plat}{ext}"
         files[f"{PKG}/bin/dre{exe}"] = (member(core, "dre", exe), True)
-    for package, about in PACKAGES.items():
-        binary = f"dre-plugin-{package}"
-        if from_dir:
-            data = (Path(from_dir) / f"{binary}{exe}").read_bytes()
-        else:
-            data = member(Path(dist) / f"{binary}-{dre_version}-{plat}.tar.gz", binary, exe)
-        vdir = f"{PKG}/plugins/{package}/{dre_version}"
-        files[f"{vdir}/{binary}{exe}"] = (data, True)
-        manifest = {"executable": binary + exe, "provides": about["provides"]}
-        files[f"{vdir}/plugin.json"] = (json.dumps(manifest, indent=2).encode(), False)
     # The install receipt next to the binary, in place of the release archive's: `dre system
     # update` reads it and points at pip / uv / pipx instead of replacing the binary.
     receipt = {"schema": 1, "source": "pypi", "version": dre_version}

@@ -168,7 +168,7 @@ pub fn update(a: UpdateArgs, printer: &output::Printer) -> ExitCode {
             );
             if matches!(install, Install::Pip { .. } | Install::UvTool | Install::Pipx) {
                 println!(
-                    "Upgrading dre-cli also updates the plugins bundled with it. If dre-cli is pinned in a project's or Databricks job's dependencies, bump the pin there too."
+                    "If dre-cli is pinned in a project's or Databricks job's dependencies, bump the pin there too."
                 );
             }
         }
@@ -209,9 +209,7 @@ pub fn update(a: UpdateArgs, printer: &output::Printer) -> ExitCode {
                 "Release notes: https://github.com/{REPO}/releases/tag/{}",
                 wanted.tag
             );
-            println!(
-                "Standalone plugins aren't updated; run `dre plugin update <plugin>` in a project to update them."
-            );
+            println!("Plugins aren't updated; run `dre plugin update <plugin>` in a project to update them.");
             ExitCode::SUCCESS
         }
         Err(e) => {

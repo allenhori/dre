@@ -354,13 +354,10 @@ pub struct Release {
 }
 
 /// `repo`'s releases from the GitHub API (`DRE_GITHUB_API_URL`, `GITHUB_TOKEN`), skipping
-/// drafts and tags that aren't versions, newest first by [`version_order`].
+/// drafts and tags that aren't versions, newest first by [`version_order`]. Every page is read:
+/// a repository that also releases its plugins (`duckdb-v1.0.0`) can list many of those first.
 pub fn github_releases(repo: &str) -> Result<Vec<Release>, String> {
-    let url = format!("{}/repos/{repo}/releases?per_page=100", github_api());
-    let body = fetch(&url)?;
-    let releases: Vec<GithubRelease> =
-        serde_json::from_slice(&body).map_err(|e| format!("{url}: unexpected reply from GitHub: {e}"))?;
-    let mut out: Vec<Release> = releases
+    let mut out: Vec<Release> = list_github_releases(repo)?
         .into_iter()
         .filter(|r| !r.draft)
         .filter_map(|r| {
@@ -374,6 +371,27 @@ pub fn github_releases(repo: &str) -> Result<Vec<Release>, String> {
         .collect();
     out.sort_by(|a, b| version_order(&b.version, &a.version));
     Ok(out)
+}
+
+/// Every release of `repo`, page by page, as the API lists them (newest first).
+fn list_github_releases(repo: &str) -> Result<Vec<GithubRelease>, String> {
+    const PER_PAGE: usize = 100;
+    let mut releases = Vec::new();
+    for page in 1.. {
+        let url = format!(
+            "{}/repos/{repo}/releases?per_page={PER_PAGE}&page={page}",
+            github_api()
+        );
+        let body = fetch(&url)?;
+        let batch: Vec<GithubRelease> =
+            serde_json::from_slice(&body).map_err(|e| format!("{url}: unexpected reply from GitHub: {e}"))?;
+        let last = batch.len() < PER_PAGE;
+        releases.extend(batch);
+        if last {
+            break;
+        }
+    }
+    Ok(releases)
 }
 
 #[derive(Deserialize)]
@@ -393,20 +411,20 @@ struct GithubAsset {
     url: String,
 }
 
-/// A one-package index built from `owner/repo`'s GitHub Releases. A release tagged `v1.2.0` (or
-/// `1.2.0`) offers version 1.2.0 for each platform it has an asset for, named like the
-/// registry's: `dre-plugin-<name>-<version>-<platform>.tar.gz`, or the bare executable. A
-/// single plugin's release named `dre-<kind>-<name>-<version>-<platform>` works too.
+/// A one-package index built from `owner/repo`'s GitHub Releases. A release tagged `v1.2.0`,
+/// `1.2.0` or `<name>-v1.2.0` (a repository releasing several packages) offers version 1.2.0 for
+/// each platform it has an asset for, named like the registry's:
+/// `dre-plugin-<name>-<version>-<platform>.tar.gz`, or the bare executable. A single plugin's
+/// release named `dre-<kind>-<name>-<version>-<platform>` works too.
 fn github_index(repo: &str, name: &str) -> Result<Index, String> {
-    let url = format!("{}/repos/{repo}/releases?per_page=100", github_api());
-    let body = fetch(&url)?;
-    let releases: Vec<GithubRelease> =
-        serde_json::from_slice(&body).map_err(|e| format!("{url}: unexpected reply from GitHub: {e}"))?;
+    let releases = list_github_releases(repo)?;
     let package_stem = format!("dre-plugin-{name}");
+    let own_tag = format!("{name}-v");
     let mut provides: Vec<PluginId> = Vec::new();
     let mut versions = Vec::new();
     for r in releases.iter().filter(|r| !r.draft) {
-        let Ok(version) = Version::parse(r.tag_name.trim_start_matches('v')) else {
+        let tag = r.tag_name.strip_prefix(&own_tag).unwrap_or(&r.tag_name);
+        let Ok(version) = Version::parse(tag.trim_start_matches('v')) else {
             continue;
         };
         let suffix = format!("-{version}-");

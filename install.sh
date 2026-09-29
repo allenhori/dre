@@ -21,7 +21,7 @@ fail() {
 case "$(uname -s)" in
   Darwin) os=macos ;;
   Linux) os=linux ;;
-  *) fail "unsupported OS $(uname -s); on Windows, download dre-<version>-windows-x86_64.zip from https://github.com/$repo/releases" ;;
+  *) fail "unsupported OS $(uname -s); on Windows, download dre-<version>-windows-<arch>.zip from https://github.com/$repo/releases" ;;
 esac
 case "$(uname -m)" in
   arm64 | aarch64) arch=aarch64 ;;
@@ -41,9 +41,16 @@ fi
 
 tag="${DRE_VERSION:-}"
 if [ -z "$tag" ]; then
-  # GitHub's "latest release" skips pre-releases, so take the newest v* tag from the list.
-  tag="$(get "https://api.github.com/repos/$repo/releases?per_page=20" |
-    sed -n 's/.*"tag_name": *"\(v[^"]*\)".*/\1/p' | head -n 1)"
+  # GitHub's "latest release" skips pre-releases, so take the newest v* tag from the list. The
+  # repository also releases its plugins (duckdb-v1.0.0, ...), which can fill whole pages.
+  page=1
+  while [ -z "$tag" ] && [ "$page" -le 10 ]; do
+    list="$(get "https://api.github.com/repos/$repo/releases?per_page=100&page=$page")" ||
+      fail "can't list the releases of $repo"
+    tag="$(printf '%s\n' "$list" | sed -n 's/.*"tag_name": *"\(v[^"]*\)".*/\1/p' | head -n 1)"
+    printf '%s\n' "$list" | grep -q '"tag_name"' || break
+    page=$((page + 1))
+  done
   [ -n "$tag" ] || fail "can't find a release of $repo"
 fi
 case "$tag" in v*) ;; *) tag="v$tag" ;; esac

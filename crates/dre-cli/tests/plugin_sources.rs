@@ -92,7 +92,14 @@ impl Server {
     /// `acme/dre-source-fixture` with releases `v1.0.0` and `v1.1.0` of the fixture source.
     /// `with_sha` publishes a `.sha256` next to each asset.
     fn github_releases(&self, bin: &[u8], with_sha: bool) {
-        let mut releases = Vec::new();
+        self.github_releases_tagged(bin, with_sha, "v")
+    }
+
+    /// Like `github_releases`, with tags `<prefix><version>`, e.g. `fixture-v1.1.0` as a
+    /// repository releasing several packages tags them. Other packages' releases are mixed in.
+    fn github_releases_tagged(&self, bin: &[u8], with_sha: bool, prefix: &str) {
+        let mut releases =
+            vec![serde_json::json!({"tag_name": "other-v9.0.0", "draft": false, "assets": []})];
         for v in ["1.0.0", "1.1.0"] {
             let asset = format!("dre-source-fixture-{v}-{}", platform());
             let url = asset_path(v, &asset);
@@ -103,12 +110,14 @@ impl Server {
                 self.route(&sum, format!("{}  {asset}\n", sha(bin)).into_bytes());
                 assets.push(serde_json::json!({"name": format!("{asset}.sha256"), "url": format!("{}{sum}", self.base)}));
             }
-            releases.push(serde_json::json!({"tag_name": format!("v{v}"), "draft": false, "assets": assets}));
+            releases.push(
+                serde_json::json!({"tag_name": format!("{prefix}{v}"), "draft": false, "assets": assets}),
+            );
         }
         // Not a version: ignored.
         releases.push(serde_json::json!({"tag_name": "nightly", "assets": []}));
         self.route(
-            "/repos/acme/dre-source-fixture/releases?per_page=100",
+            "/repos/acme/dre-source-fixture/releases?per_page=100&page=1",
             serde_json::to_vec(&releases).unwrap(),
         );
     }
@@ -216,6 +225,14 @@ fn github_releases_install_the_newest_match_and_pin_it() {
     e.write("project/dependencies.yml", &GITHUB.replace(">=1.0", "<1.1"));
     std::fs::remove_file(e.p("project/dre.lock")).unwrap();
     e.dre(&["deps"]).ok().says("plugin package `fixture` 1.0.0");
+}
+
+#[test]
+fn github_releases_tagged_per_package_install_that_package() {
+    let e = Env::new(GITHUB);
+    e.server.github_releases_tagged(&fixture_bin(), true, "fixture-v");
+    e.dre(&["deps"]).ok().says("plugin package `fixture` 1.1.0");
+    assert!(e.installed("1.1.0"));
 }
 
 #[test]

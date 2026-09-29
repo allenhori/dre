@@ -1,7 +1,7 @@
 [package]
 name = "dre-plugin-duckdb"
 description = "DRE source plugin: DuckDB"
-version.workspace = true
+version = "1.0.0-alpha-1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
