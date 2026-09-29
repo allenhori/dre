@@ -136,6 +136,11 @@ fn run_case(orig: &Path, json: bool) -> String {
     let code = out.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     let stdout = stdout.replace(&case_str.replace('\\', "/"), "$CASE");
+    // The manifest records the DRE version that wrote it; keep the goldens release-independent.
+    let stdout = stdout.replace(
+        &format!("\"version\": \"{}\"", env!("CARGO_PKG_VERSION")),
+        "\"version\": \"$VERSION\"",
+    );
     format!("exit: {code}\n{stdout}")
 }
 
