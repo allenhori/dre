@@ -1,16 +1,25 @@
 name: Release
 
-# Pushing a `v*` tag (e.g. `v0.0.1-alpha`) builds `dre` and every first-party plugin for each
-# platform, publishes them as one GitHub Release, and adds the plugins to the registry index that
-# `dre` reads (the `packages.json` asset of the `registry` release, see
-# docs/registry.md). A tag with a pre-release suffix (`-alpha`, `-rc.1`) makes a pre-release.
+# Two kinds of release, by tag:
+#
+#   v<version>            DRE itself: the `dre` CLI for each platform, install.sh, and the
+#                         `dre-cli` wheels for PyPI. E.g. v0.1.0, v0.1.0-rc.1.
+#   <package>-v<version>  one plugin package, which then goes into the registry index that `dre`
+#                         installs plugins from (the `packages.json` asset of the `registry`
+#                         release, see docs/registry.md). E.g. duckdb-v1.0.0, object_store-v1.2.0.
+#
+# Plugins have their own versions (plugins/<package>/Cargo.toml, go/databricks/VERSION) and are
+# released only when they change; .github/scripts/release_plan.py checks the tag against them. A
+# version with a pre-release suffix (`-alpha-1`, `-rc.1`) makes a pre-release. Only a stable DRE
+# release is GitHub's "latest".
 #
 # Assets, per platform (`<os>-<arch>` as in the index: macos-aarch64, linux-x86_64, ...):
 #   dre-<version>-<platform>.tar.gz (.zip on Windows)    the dre CLI and its install receipt
 #                                                       (dre-receipt.json), for install.sh
-#   dre-plugin-<package>-<version>-<platform>.tar.gz     one plugin package, for the registry
 #   dre_cli-<pep440 version>-py3-none-<tag>.whl         the `dre-cli` wheels for PyPI
-# plus SHA256SUMS and install.sh.
+#   dre-plugin-<package>-<version>-<platform>.tar.gz     one plugin package (plugin releases)
+# plus SHA256SUMS, and install.sh on DRE releases. An annotated tag's message is added to the
+# release notes, e.g. "Needs the databricks plugin 1.2.0 or later".
 #
 # PyPI: the `pypi` job builds the wheels from the same binaries and attaches them to the release.
 # It uploads them to PyPI only when the repository variable PYPI_PUBLISH is `true`, through
@@ -18,26 +27,40 @@ name: Release
 # environment as a publisher of `dre-cli`.
 #
 # Run by hand (Actions > Release > Run workflow, or `gh workflow run release.yml -f tag=v…`), it
-# uploads the wheels already attached to that release to PyPI, and builds and
-# publishes nothing else: the release's binaries, and the checksums dre.lock files pin, stay as
-# they are.
+# uploads the wheels already attached to that DRE release to PyPI, and builds and publishes
+# nothing else. With `-f tag=registry` it only brings the registry index up to date.
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "*-v[0-9]*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: "An existing release whose attached wheels to upload to PyPI, e.g. v0.0.1-alpha-5"
+        description: "An existing DRE release whose attached wheels to upload to PyPI (e.g. v0.1.0), or `registry` to update the plugin index"
         required: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build (${{ matrix.platform }})
+  plan:
+    name: Plan
     if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      kind: ${{ steps.plan.outputs.kind }}
+      package: ${{ steps.plan.outputs.package }}
+      version: ${{ steps.plan.outputs.version }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      go: ${{ steps.plan.outputs.go }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: plan
+        run: python3 .github/scripts/release_plan.py "$GITHUB_REF_NAME" | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ needs.plan.outputs.package }} (${{ matrix.platform }})
+    needs: plan
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -51,69 +74,71 @@ jobs:
           - {platform: linux-x86_64, os: ubuntu-22.04, target: x86_64-unknown-linux-gnu, goos: linux, goarch: amd64}
           - {platform: linux-aarch64, os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu, goos: linux, goarch: arm64}
           - {platform: windows-x86_64, os: windows-latest, target: x86_64-pc-windows-msvc, goos: windows, goarch: amd64}
+          - {platform: windows-aarch64, os: windows-11-arm, target: aarch64-pc-windows-msvc, goos: windows, goarch: arm64}
+    env:
+      KIND: ${{ needs.plan.outputs.kind }}
+      PACKAGE: ${{ needs.plan.outputs.package }}
+      VERSION: ${{ needs.plan.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
+        if: needs.plan.outputs.go != 'true'
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
+        if: needs.plan.outputs.go != 'true'
         with:
           key: ${{ matrix.target }}
 
       - uses: actions/setup-go@v7
+        if: needs.plan.outputs.go == 'true'
         with:
           go-version-file: go/databricks/go.mod
           cache-dependency-path: go/databricks/go.sum
 
       - name: Install OpenSSL headers
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && needs.plan.outputs.go != 'true'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
 
-      - name: Version
+      - name: Build
         shell: bash
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          crate="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "dre-cli") | .version')"
-          [[ "$version" == "$crate" ]] || { echo "tag $GITHUB_REF_NAME doesn't match the workspace version $crate"; exit 1; }
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-
-      - name: Build dre and the Rust plugin packages
-        run: cargo build --release --locked --workspace --bins --target ${{ matrix.target }}
-
-      # The Databricks package is a Go program.
-      - name: Build the Databricks package
-        shell: bash
-        working-directory: go/databricks
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$RUNNER_TEMP/dre-plugin-databricks" .
+        run: |
+          ext=""; [[ "$RUNNER_OS" == Windows ]] && ext=".exe"
+          out="target/${{ matrix.target }}/release"
+          if [[ "$KIND" == core ]]; then
+            cargo build --release --locked -p dre-cli --bin dre --target ${{ matrix.target }}
+          elif [[ "$PACKAGE" == databricks ]]; then
+            mkdir -p "$out"
+            (cd go/databricks && go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "../../$out/dre-plugin-databricks$ext" .)
+          else
+            cargo build --release --locked -p "dre-plugin-$PACKAGE" --bins --target ${{ matrix.target }}
+          fi
 
       - name: Package
         shell: bash
         run: |
-          ext=""; [[ "${{ runner.os }}" == Windows ]] && ext=".exe"
+          ext=""; [[ "$RUNNER_OS" == Windows ]] && ext=".exe"
           bin="target/${{ matrix.target }}/release"
-          cp "$RUNNER_TEMP/dre-plugin-databricks" "$bin/dre-plugin-databricks$ext"
           mkdir dist
           suffix="$VERSION-${{ matrix.platform }}"
-          # The install receipt: `dre system update` reads it to know this copy is a direct
-          # install it may replace. The wheel builder swaps in a `pypi` one.
-          printf '{"schema": 1, "source": "release_archive", "version": "%s"}\n' "$VERSION" > "$bin/dre-receipt.json"
-          if [[ -n "$ext" ]]; then
-            (cd "$bin" && 7z a -bd "$GITHUB_WORKSPACE/dist/dre-$suffix.zip" dre.exe dre-receipt.json >/dev/null)
+          if [[ "$KIND" == core ]]; then
+            # The install receipt: `dre system update` reads it to know this copy is a direct
+            # install it may replace. The wheel builder swaps in a `pypi` one.
+            printf '{"schema": 1, "source": "release_archive", "version": "%s"}\n' "$VERSION" > "$bin/dre-receipt.json"
+            if [[ -n "$ext" ]]; then
+              (cd "$bin" && 7z a -bd "$GITHUB_WORKSPACE/dist/dre-$suffix.zip" dre.exe dre-receipt.json >/dev/null)
+            else
+              tar -C "$bin" -czf "dist/dre-$suffix.tar.gz" dre dre-receipt.json
+            fi
           else
-            tar -C "$bin" -czf "dist/dre-$suffix.tar.gz" dre dre-receipt.json
+            tar -C "$bin" -czf "dist/dre-plugin-$PACKAGE-$suffix.tar.gz" "dre-plugin-$PACKAGE$ext"
           fi
-          for exe in "$bin"/dre-plugin-*; do
-            file="$(basename "$exe")"
-            name="${file%$ext}"
-            [[ "$file" == "$name$ext" && "$name" != *.d ]] || continue
-            tar -C "$bin" -czf "dist/$name-$suffix.tar.gz" "$file"
-          done
           ls -l dist
 
       - uses: actions/upload-artifact@v7
@@ -123,17 +148,21 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish release and registry
-    needs: build
+    name: Publish the release
+    needs: [plan, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # One registry update at a time: each one rewrites packages.json.
-    concurrency: registry
     env:
       GH_TOKEN: ${{ github.token }}
+      KIND: ${{ needs.plan.outputs.kind }}
+      PACKAGE: ${{ needs.plan.outputs.package }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v8
         with:
@@ -144,21 +173,57 @@ jobs:
       - name: Checksums
         working-directory: dist
         run: |
-          cp ../install.sh .
+          [[ "$KIND" == core ]] && cp ../install.sh .
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create the release
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          pre=(); [[ "$version" == *-* ]] && pre=(--prerelease)
-          gh release create "$GITHUB_REF_NAME" dist/* "${pre[@]}" --verify-tag \
-            --title "DRE $GITHUB_REF_NAME" --generate-notes \
-            --notes "Install: \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh | sh\`"
+          git fetch --force --tags origin
+          # An annotated tag's message goes into the notes (a lightweight tag has none).
+          message=""
+          if [[ "$(git cat-file -t "$GITHUB_REF_NAME")" == tag ]]; then
+            message="$(git for-each-ref "refs/tags/$GITHUB_REF_NAME" --format='%(contents)')"
+          fi
+          flags=(--verify-tag)
+          [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
+          if [[ "$KIND" == core ]]; then
+            [[ "$PRERELEASE" == true ]] || flags+=(--latest)
+            title="DRE $GITHUB_REF_NAME"
+            notes="Install: \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh | sh\`, \`pip install dre-cli\`, or see the README. Plugins are released separately (\`<package>-v<version>\` releases) and installed by \`dre\` on demand."
+            # Changes since the previous DRE release, not since the last plugin release.
+            flags+=(--generate-notes)
+            prev="$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)"
+            [[ -n "$prev" ]] && flags+=(--notes-start-tag "$prev")
+          else
+            flags+=(--latest=false)
+            title="$PACKAGE plugin $VERSION"
+            notes="The \`$PACKAGE\` plugin package, $VERSION. \`dre\` installs it on demand for projects that declare \`$PACKAGE\` under \`plugins:\`; \`dre plugin update $PACKAGE\` moves a project to it."
+          fi
+          [[ -n "$message" ]] && notes="$message"$'\n\n'"$notes"
+          gh release create "$GITHUB_REF_NAME" dist/* "${flags[@]}" --title "$title" --notes "$notes"
 
+  registry:
+    name: Update the registry index
+    needs: [plan, publish]
+    # After a plugin release, or run by hand with `-f tag=registry`.
+    if: >-
+      always() &&
+      ((needs.publish.result == 'success' && needs.plan.outputs.kind == 'plugin') ||
+       (github.event_name == 'workflow_dispatch' && inputs.tag == 'registry'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # One index update at a time: each rewrites packages.json. GitHub cancels all but the last
+    # queued one when several plugin tags are pushed together; that's fine, since each update adds
+    # every plugin release the index is missing (.github/scripts/registry_index.py).
+    concurrency: registry
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
       - name: Update the registry index
         run: |
-          version="${GITHUB_REF_NAME#v}"
           if ! gh release view registry >/dev/null 2>&1; then
             gh release create registry --prerelease --latest=false --target "$GITHUB_SHA" \
               --title "Plugin registry" \
@@ -167,13 +232,13 @@ jobs:
           # packages.json is the index of plugin packages. index.json, the plugin index DRE
           # 0.0.1-alpha-6 and earlier read, is left as it is, so those versions keep working.
           gh release download registry -p packages.json -D registry || true
-          python3 .github/scripts/registry_index.py registry/packages.json dist "$version" \
-            "https://github.com/${{ github.repository }}/releases/download/$GITHUB_REF_NAME" > packages.json
+          python3 .github/scripts/registry_index.py registry/packages.json "$GITHUB_REPOSITORY" > packages.json
           gh release upload registry packages.json --clobber
 
   pypi:
     name: PyPI wheels
-    needs: publish
+    needs: [plan, publish]
+    if: needs.plan.outputs.kind == 'core'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -200,6 +265,17 @@ jobs:
           # The wheel's receipt makes this a pip-managed install (--check changes nothing).
           GITHUB_TOKEN="${{ github.token }}" /tmp/venv/bin/dre system update --check | tee /tmp/check.txt
           grep -q "installed with pip" /tmp/check.txt
+          # The wheel holds no plugins: a project's are downloaded from the registry on demand.
+          p="$RUNNER_TEMP/smoke"
+          mkdir -p "$p/reports/r" && cd "$p"
+          printf 'name: smoke\ndefault_profile: warehouse\n' > dre_project.yml
+          printf 'plugins:\n  - duckdb\n  - csv\n' > dependencies.yml
+          printf 'sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {type: duckdb, path: ":memory:"}\n' > profiles.yml
+          printf "select 1 as n, 'a' as s\n" > reports/r/numbers.sql
+          printf 'queries: [numbers]\noutput: {format: csv}\n' > reports/r/r.yml
+          /tmp/venv/bin/dre run | tee /tmp/run.txt
+          grep -q "Installed  plugin package \`duckdb\`" /tmp/run.txt
+          grep -qx '1,a' target/run/r/default/r.csv
 
       - name: Attach the wheels to the release
         run: gh release upload "$GITHUB_REF_NAME" wheels/*.whl
@@ -211,7 +287,7 @@ jobs:
 
   release-wheels:
     name: Wheels from ${{ inputs.tag }}
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.tag != 'registry'
     runs-on: ubuntu-latest
     permissions:
       contents: read

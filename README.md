@@ -32,17 +32,12 @@ curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | D
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
-container build. On Windows, download `dre-<version>-windows-x86_64.zip` from
-[Releases](https://github.com/allenhori/dre/releases) and put `dre.exe` on your `PATH`.
-
-Only `dre` itself is installed. Plugins come from the same releases, on demand: `dre init`,
-`dre run`, `dre validate` and `dre compile` download the ones a project declares (see
-[the registry docs](docs/registry.md)).
+container build. On Windows, download `dre-<version>-windows-x86_64.zip` (or `-aarch64.zip`)
+from [Releases](https://github.com/allenhori/dre/releases) and put `dre.exe` on your `PATH`.
 
 ### With pip
 
-The `dre-cli` package holds `dre` and every first-party plugin, so a project runs without
-downloading anything (Linux x86_64 and aarch64, macOS, Windows; Python 3.8+):
+The `dre-cli` package holds `dre` (Linux x86_64 and aarch64, macOS, Windows; Python 3.8+):
 
 ```bash
 pip install dre-cli          # or: uv tool install dre-cli
@@ -53,7 +48,22 @@ Each release attaches the wheels (`dre_cli-*.whl`), which install the same way w
 `pip install <wheel URL>` before the version reaches PyPI. From Python, `dre_cli.run(["run",
 "-s", "daily"])` runs `dre` and returns the finished process. In a Databricks job (serverless
 included), add `dre-cli` to the job's environment dependencies and run `dre` from a script or
-notebook. The bundled plugins are used unless `DRE_PLUGINS_DIR` is set.
+notebook.
+
+### Plugins
+
+However DRE is installed, only `dre` itself is. Every source, format and destination is a plugin
+package with its own version and releases (`duckdb-v1.0.0`, `xlsx-v1.0.2`, ...): `dre init`,
+`dre run`, `dre validate` and `dre compile` download the ones a project declares, from GitHub
+Releases, and `dre.lock` pins them (see [the registry docs](docs/registry.md)). A plugin's
+version doesn't follow DRE's: any DRE runs any plugin release that speaks its
+[protocol](docs/protocol.md).
+
+To have them in place before the first run, e.g. on a machine or job that starts empty each time:
+
+- run `dre deps` in the project while building the image, or as its own CI or job step;
+- or point `DRE_PLUGINS_DIR` at a folder that outlives the run (a Databricks Volume, a shared
+  mount, a folder in the image) and run `dre deps` once to fill it.
 
 ### Updating
 
@@ -66,8 +76,7 @@ notebook. The bundled plugins are used unless `DRE_PLUGINS_DIR` is set.
   was. Plugins aren't touched; `dre plugin update` updates those.
 - **pip, uv or pipx**: `dre` changes nothing and prints the command to run:
   `<python> -m pip install -U dre-cli`, `uv tool upgrade dre-cli` or `pipx upgrade dre-cli`.
-  Upgrading `dre-cli` also updates its bundled plugins. If `dre-cli` is pinned in a project's or
-  a Databricks job's dependencies, bump the pin there.
+  If `dre-cli` is pinned in a project's or a Databricks job's dependencies, bump the pin there.
 - **A build of your own** (`cargo build`, `cargo install`): `dre` refuses to overwrite it.
 
 While every release is a pre-release, "newest" includes pre-releases. Once there are stable

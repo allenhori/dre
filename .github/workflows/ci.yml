@@ -23,6 +23,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  plugin-versions:
+    # A warning, never a failure, for a plugin whose code changed without a version bump.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: python3 .github/scripts/plugin_versions.py "origin/${{ github.base_ref }}"
+
   lint:
     runs-on: ubuntu-latest
     steps:

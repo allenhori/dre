@@ -83,12 +83,22 @@ artifacts hold `dre-<kind>-<name>`.
 
 ## Publishing a release
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`. It builds `dre` and every first-party
-package for each platform, publishes them as one GitHub Release (a pre-release when the tag has
-a suffix such as `-alpha`), and adds each package's new version to `packages.json` on the
-`registry` release, which it creates the first time. The tag must match the workspace version
-in `Cargo.toml`. What each first-party package provides, and its description, is in
-`.github/scripts/packages.json`.
+Each first-party package has its own version, independent of DRE's: `plugins/<package>/Cargo.toml`,
+or `go/databricks/VERSION` for the Databricks package. Compatibility between DRE and a package
+comes from the [protocol](protocol.md) version, never from matching numbers: DRE 0.1.0 runs
+`duckdb` 1.0.0 and whatever `duckdb` releases later that speak the same protocol.
+
+A package is released when it changes, by pushing a `<package>-v<version>` tag, e.g.
+`duckdb-v1.0.1` or `object_store-v1.2.0-rc.1`. `.github/workflows/release.yml` checks the tag
+against the package's version, builds that package alone for each platform, publishes it as a
+GitHub Release (a pre-release when the version has a suffix such as `-rc.1`), and adds it to
+`packages.json` on the `registry` release, which it creates the first time. A `v<version>` tag
+releases DRE itself and touches no package. What each first-party package provides, and its
+description, is in `.github/scripts/packages.json`.
+
+The index update adds every package release it doesn't list yet, not only the one just made, so
+several packages can be tagged at once. `gh workflow run release.yml -f tag=registry` runs it on
+its own.
 
 For a package released some other way:
 

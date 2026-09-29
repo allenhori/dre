@@ -102,7 +102,21 @@ impl Server {
 
     /// Like `releases`, with the SHA256SUMS text of each release passed through `sums`.
     fn releases_with(&self, versions: &[&str], sums: impl Fn(&str, String) -> String) {
-        let mut listed = Vec::new();
+        self.releases_after(0, versions, sums)
+    }
+
+    /// Like `releases_with`, listed after `plugins` newer plugin releases (`duckdb-v1.0.<n>`), as
+    /// the API lists them: newest first, 100 to a page.
+    fn releases_after(&self, plugins: usize, versions: &[&str], sums: impl Fn(&str, String) -> String) {
+        let mut listed: Vec<serde_json::Value> = (0..plugins)
+            .map(|n| {
+                serde_json::json!({
+                    "tag_name": format!("duckdb-v1.0.{n}"),
+                    "draft": false,
+                    "assets": [{"name": "SHA256SUMS", "url": format!("{}/nowhere", self.base)}],
+                })
+            })
+            .collect();
         for v in versions {
             let ext = if cfg!(windows) { "zip" } else { "tar.gz" };
             let name = format!("dre-{v}-{}.{ext}", platform());
@@ -124,10 +138,15 @@ impl Server {
         }
         listed.push(serde_json::json!({"tag_name": "v9.9.9", "draft": true, "assets": []}));
         listed.push(serde_json::json!({"tag_name": "registry", "assets": []}));
-        self.route(
-            "/repos/allenhori/dre/releases?per_page=100",
-            serde_json::to_vec(&listed).unwrap(),
-        );
+        // A full last page is followed by an empty one.
+        let pages = listed.len() / 100 + 1;
+        for page in 1..=pages {
+            let chunk: Vec<_> = listed.iter().skip((page - 1) * 100).take(100).collect();
+            self.route(
+                &format!("/repos/allenhori/dre/releases?per_page=100&page={page}"),
+                serde_json::to_vec(&chunk).unwrap(),
+            );
+        }
     }
 }
 
@@ -279,6 +298,20 @@ fn check_reports_an_update_and_changes_nothing() {
         .says("Update available: 0.0.1-alpha-11 → 0.0.1-alpha-12, run `dre system update`");
     assert!(d.unchanged());
     assert!(s.downloaded().is_empty());
+}
+
+#[test]
+fn releases_listed_after_many_plugin_releases_are_found() {
+    let s = Server::start();
+    // 150 plugin releases push every DRE release onto the second page.
+    s.releases_after(150, &["0.1.0", "0.1.1"], |_, sums| sums);
+    let d = Installed::direct();
+    d.update(&s, "0.1.0", &["--check"])
+        .ok()
+        .says("Update available: 0.1.0 → 0.1.1");
+    d.update(&s, "0.1.1", &["0.1.0", "--check"])
+        .ok()
+        .says("0.1.1 → 0.1.0");
 }
 
 #[test]
@@ -501,8 +534,7 @@ fn pip_names_the_environments_python() {
     managed(&d, &s, &format!("{} -m pip install -U dre-cli", python.display()));
     d.update(&s, "0.0.1-alpha-11", &[])
         .says("installed with pip")
-        .says("bundled")
-        .says("pin");
+        .says("bump the pin");
 }
 
 #[test]
