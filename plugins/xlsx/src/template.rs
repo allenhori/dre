@@ -7,6 +7,8 @@
 //! rows after it: content below shifts down, the reserved row's formatting is copied to each new
 //! row, and formulas whose range ends on the reserved row (a totals `SUM(C5:C5)`) are extended
 //! over the new rows. Ranges spanning the insertion point are adjusted by the insert itself.
+//! Formulas authored in the reserved row itself, outside the block's columns, are filled down to
+//! the new rows the way Excel's fill-down does: relative row references shift, absolute ones stay.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -279,9 +281,20 @@ fn fill_block(book: &mut Spreadsheet, b: &Binding, r0: u32, c0: u16, res: &Colle
                 .into_iter()
                 .map(|c| (c.coordinate().col_num(), c.style().clone()))
                 .collect();
+            // The reserved row's own formulas, except where the block's data goes.
+            let block = u32::from(c0) + 1..u32::from(c0) + 1 + cols.len() as u32;
+            let formulas: Vec<(u32, String)> = ws
+                .collection_by_row(first)
+                .into_iter()
+                .filter(|c| !c.formula().is_empty() && !block.contains(&c.coordinate().col_num()))
+                .map(|c| (c.coordinate().col_num(), c.formula().to_string()))
+                .collect();
             for row in first + 1..first + n {
                 for (col, style) in &styled {
                     ws.cell_mut((*col, row)).set_style(style.clone());
+                }
+                for (col, f) in &formulas {
+                    ws.cell_mut((*col, row)).set_formula(shift_rows(f, row - first));
                 }
             }
         }
@@ -337,6 +350,7 @@ static RANGE: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Extend every range ending on the block's reserved row `reserved` (and starting at or above
 /// it) down to `last`, in formulas on the block's sheet and in other sheets referring to it.
+/// Formulas on the block's own rows are row formulas (`SUM(D5:F5)`), filled down instead.
 fn extend_formulas(book: &mut Spreadsheet, block_sheet: &str, reserved: u32, last: u32) {
     for ws in book.sheet_collection_mut() {
         let same = ws.name() == block_sheet;
@@ -344,6 +358,7 @@ fn extend_formulas(book: &mut Spreadsheet, block_sheet: &str, reserved: u32, las
             .cells()
             .into_iter()
             .filter(|c| !c.formula().is_empty())
+            .filter(|c| !(same && (reserved..=last).contains(&c.coordinate().row_num())))
             .map(|c| {
                 (
                     c.coordinate().col_num(),
@@ -377,6 +392,61 @@ fn extend_formulas(book: &mut Spreadsheet, block_sheet: &str, reserved: u32, las
             }
         }
     }
+}
+
+static CELL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\$?[A-Z]{1,3}(?P<abs>\$?)(?P<row>\d+)").unwrap());
+
+/// `f` filled down `by` rows, as Excel's fill-down does: every relative row reference moves
+/// (`D5` → `D6`, `SUM(D$5:D5)` → `SUM(D$5:D6)`), absolute rows (`$D$5`, `D$5`) stay. Text in
+/// double quotes and quoted sheet names are left alone.
+fn shift_rows(f: &str, by: u32) -> String {
+    let mut out = String::with_capacity(f.len());
+    let mut rest = f;
+    while !rest.is_empty() {
+        // Split off the next quoted part ("text" or 'sheet name', quotes doubled inside).
+        let start = rest.find(['"', '\'']).unwrap_or(rest.len());
+        let (plain, quoted) = rest.split_at(start);
+        out.push_str(&shift_plain(plain, by));
+        let Some(q) = quoted.chars().next() else { break };
+        let mut end = 1;
+        loop {
+            match quoted[end..].find(q) {
+                Some(i) if quoted[end + i + 1..].starts_with(q) => end += i + 2,
+                Some(i) => {
+                    end += i + 1;
+                    break;
+                }
+                None => {
+                    end = quoted.len();
+                    break;
+                }
+            }
+        }
+        out.push_str(&quoted[..end]);
+        rest = &quoted[end..];
+    }
+    out
+}
+
+fn shift_plain(s: &str, by: u32) -> String {
+    let word = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '$');
+    CELL.replace_all(s, |caps: &regex::Captures<'_>| {
+        let m = caps.get(0).unwrap();
+        let before = s[..m.start()].chars().next_back();
+        let after = s[m.end()..].chars().next();
+        // Part of a name (`LOG10(`, `Q1_total`, `Sheet1!`), not a cell reference.
+        if before.is_some_and(word) || after.is_some_and(|c| word(c) || matches!(c, '(' | '!')) {
+            return m.as_str().to_string();
+        }
+        if !caps["abs"].is_empty() {
+            return m.as_str().to_string();
+        }
+        let row: u32 = caps["row"].parse().unwrap_or(0);
+        let at = caps.name("row").unwrap().start() - m.start();
+        format!("{}{}", &m.as_str()[..at], row + by)
+    })
+    .into_owned()
 }
 
 /// A column's row formula for 0-based sheet row `row`, if it has one; `Err(name)` for a
@@ -436,5 +506,23 @@ fn write_value(
     } // Setting the formula keeps the value just written as its cached result.
     if let Some(f) = formula {
         cell.set_formula(f.strip_prefix('=').unwrap_or(f));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shift_rows;
+
+    #[test]
+    fn fill_down_shifts_relative_rows_only() {
+        assert_eq!(shift_rows("D5*E5", 1), "D6*E6");
+        assert_eq!(shift_rows("D5*$E$5+E$5+$F5", 3), "D8*$E$5+E$5+$F8");
+        assert_eq!(shift_rows("SUM(D$5:D5)", 2), "SUM(D$5:D7)");
+        assert_eq!(shift_rows("D5/Rates!B2", 1), "D6/Rates!B3");
+        assert_eq!(shift_rows("D5&\" A1 \"&'Q1 A1'!B2", 1), "D6&\" A1 \"&'Q1 A1'!B3");
+        assert_eq!(
+            shift_rows("'It''s A1'!C4+LOG10(D5)+Q1_rate", 1),
+            "'It''s A1'!C5+LOG10(D6)+Q1_rate"
+        );
     }
 }
