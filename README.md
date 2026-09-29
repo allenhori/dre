@@ -37,6 +37,8 @@ from [Releases](https://github.com/allenhori/dre/releases) and put `dre.exe` on 
 
 ### With Homebrew or Scoop
 
+From 0.1.0-rc.1 on:
+
 ```bash
 brew install allenhori/tap/dre                                   # macOS and Linux
 ```

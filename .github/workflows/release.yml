@@ -58,6 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: plan
+        shell: bash  # with pipefail: a rejected tag fails here, not in the build
         run: python3 .github/scripts/release_plan.py "$GITHUB_REF_NAME" | tee -a "$GITHUB_OUTPUT"
 
   build:
@@ -81,27 +82,28 @@ jobs:
       KIND: ${{ needs.plan.outputs.kind }}
       PACKAGE: ${{ needs.plan.outputs.package }}
       VERSION: ${{ needs.plan.outputs.version }}
+      GO_DIR: ${{ needs.plan.outputs.go }}
     steps:
       - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
-        if: needs.plan.outputs.go != 'true'
+        if: needs.plan.outputs.go == ''
         with:
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
-        if: needs.plan.outputs.go != 'true'
+        if: needs.plan.outputs.go == ''
         with:
           key: ${{ matrix.target }}
 
       - uses: actions/setup-go@v7
-        if: needs.plan.outputs.go == 'true'
+        if: needs.plan.outputs.go != ''
         with:
-          go-version-file: go/databricks/go.mod
-          cache-dependency-path: go/databricks/go.sum
+          go-version-file: ${{ needs.plan.outputs.go }}/go.mod
+          cache-dependency-path: ${{ needs.plan.outputs.go }}/go.sum
 
       - name: Install OpenSSL headers
-        if: runner.os == 'Linux' && needs.plan.outputs.go != 'true'
+        if: runner.os == 'Linux' && needs.plan.outputs.go == ''
         run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
 
       - name: Build
@@ -115,9 +117,9 @@ jobs:
           out="target/${{ matrix.target }}/release"
           if [[ "$KIND" == core ]]; then
             cargo build --release --locked -p dre-cli --bin dre --target ${{ matrix.target }}
-          elif [[ "$PACKAGE" == databricks ]]; then
+          elif [[ -n "$GO_DIR" ]]; then
             mkdir -p "$out"
-            (cd go/databricks && go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "../../$out/dre-plugin-databricks$ext" .)
+            go -C "$GO_DIR" build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$PWD/$out/dre-plugin-$PACKAGE$ext" .
           else
             cargo build --release --locked -p "dre-plugin-$PACKAGE" --bins --target ${{ matrix.target }}
           fi
@@ -151,7 +153,12 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [plan, build]
+    # After crates.io (DRE releases): a publish there can't be undone, so if it fails, no GitHub
+    # release points people at crates that don't exist.
+    needs: [plan, build, crates]
+    if: >-
+      always() && needs.build.result == 'success' &&
+      (needs.crates.result == 'success' || needs.crates.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -251,7 +258,7 @@ jobs:
 
   crates:
     name: Publish to crates.io
-    needs: [plan, publish]
+    needs: [plan, build]
     if: needs.plan.outputs.kind == 'core'
     runs-on: ubuntu-latest
     steps:

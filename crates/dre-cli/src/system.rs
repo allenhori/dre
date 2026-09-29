@@ -123,7 +123,7 @@ pub fn update(a: UpdateArgs, printer: &output::Printer) -> ExitCode {
              curl -fsSL https://raw.githubusercontent.com/{REPO}/master/install.sh | sh\n    \
              pip install dre-cli   (or: uv tool install dre-cli, pipx install dre-cli)\n    \
              cargo install dre-cli --locked\n    \
-             on Windows, unpack dre-<version>-windows-x86_64.zip from https://github.com/{REPO}/releases",
+             on Windows, unpack dre-<version>-windows-<arch>.zip from https://github.com/{REPO}/releases",
             exe.display()
         ));
         return ExitCode::FAILURE;
@@ -319,7 +319,7 @@ fn detect(exe: &Path) -> Install {
 }
 
 /// Whether cargo's install record (`.crates2.json`) lists `dre` as installed from crates.io's
-/// `dre-cli`, rather than from a path or git checkout.
+/// `dre-cli`, rather than from a path or git checkout, or another registry.
 fn from_crates_io(record: &[u8]) -> bool {
     #[derive(Deserialize)]
     struct Record {
@@ -334,7 +334,8 @@ fn from_crates_io(record: &[u8]) -> bool {
     serde_json::from_slice::<Record>(record).is_ok_and(|r| {
         r.installs.iter().any(|(key, i)| {
             key.starts_with("dre-cli ")
-                && key.contains("(registry+")
+                && (key.contains("(registry+https://github.com/rust-lang/crates.io-index)")
+                    || key.contains("(sparse+https://index.crates.io/)"))
                 && i.bins.iter().any(|b| b.trim_end_matches(".exe") == "dre")
         })
     })

@@ -3,7 +3,8 @@
   "postgres": {"description": "PostgreSQL", "provides": ["source/postgres"]},
   "databricks": {
     "description": "Databricks SQL warehouses, Unity Catalog Volumes and workspace files",
-    "provides": ["source/databricks", "destination/databricks"]
+    "provides": ["source/databricks", "destination/databricks"],
+    "go": "go/databricks"
   },
   "csv": {"description": "Comma-separated and other delimited text", "provides": ["format/csv", "format/delimited"]},
   "fixed_width": {"description": "Fixed-width text", "provides": ["format/fixed_width"]},
