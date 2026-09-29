@@ -26,74 +26,77 @@ exit: 0
     }
   ],
   "project": {
-    "name": "acme_reports",
-    "default_profile": "local_dev",
-    "vars": {},
-    "run_query_max_rows": 10000,
-    "reports": [
+    "plugins": [
       {
-        "name": "daily",
-        "managed": true,
+        "package": "csv",
+        "source": {
+          "type": "registry"
+        },
+        "version": "^0, >=0.1"
+      },
+      {
+        "package": "duckdb",
+        "source": {
+          "type": "registry"
+        },
+        "version": ">=0.0"
+      },
+      {
+        "package": "xlsx",
+        "source": {
+          "type": "registry"
+        },
+        "version": "*"
+      }
+    ],
+    "project": {
+      "checksum": "527820ad3e7bd91eac355ddfbdeb2681bc9965132a734f6cd119d65a2012d876",
+      "default_profile": "local_dev",
+      "name": "acme_reports"
+    },
+    "reports": {
+      "daily": {
+        "bindings": [
+          {
+            "destinations": [],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/ops/daily/summary.sql",
+                "query": "summary",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {}
+          }
+        ],
+        "checksum": "32c9aeb70056c0b839c162f7f6ae49904bbbf509b95be367453731ee4441fa14",
         "file": "reports/ops/daily/daily.yml",
         "folder": [
           "ops",
           "daily"
         ],
-        "tags": [],
+        "managed": true,
+        "name": "daily",
         "queries": [
           {
+            "file": "reports/ops/daily/summary.sql",
             "query": "summary",
-            "path": "reports/ops/daily/summary.sql"
+            "tab": true
           }
         ],
-        "has_sets": false,
-        "bindings": [
-          {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {},
-            "queries": [
-              {
-                "query": "summary",
-                "path": "reports/ops/daily/summary.sql"
-              }
-            ],
-            "output": {
-              "format": "csv",
-              "options": {}
-            }
-          }
-        ]
+        "tags": [],
+        "valid": true
       }
-    ],
-    "sets": {},
-    "plugins": [
-      {
-        "name": "csv",
-        "version": "^0, >=0.1",
-        "declared_in": [
-          "dependencies.yml",
-          "reports/ops/daily/daily.yml"
-        ]
-      },
-      {
-        "name": "duckdb",
-        "version": ">=0.0",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      },
-      {
-        "name": "xlsx",
-        "version": "*",
-        "declared_in": [
-          "reports/ops/daily/daily.yml"
-        ]
-      }
-    ],
-    "macros": [],
-    "packages": [],
-    "mask_secrets": true,
-    "lookup_inline_max_rows": 200
+    },
+    "schedules": {},
+    "schema": 1,
+    "version": "0.0.1-alpha-11"
   }
 }

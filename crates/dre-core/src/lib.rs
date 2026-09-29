@@ -6,6 +6,7 @@ pub mod diag;
 pub mod lock;
 pub mod lookups;
 pub mod manager;
+pub mod manifest;
 pub mod options;
 pub mod packages;
 pub mod plugins;
@@ -18,6 +19,7 @@ pub mod schedule;
 pub mod secrets;
 pub mod selector;
 pub mod sqlsplit;
+pub mod target;
 pub mod values;
 pub mod yaml;
 

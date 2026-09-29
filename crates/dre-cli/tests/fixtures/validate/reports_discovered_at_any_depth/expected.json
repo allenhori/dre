@@ -40,48 +40,89 @@ exit: 0
     }
   ],
   "project": {
-    "name": "acme_reports",
-    "default_profile": "local_dev",
-    "vars": {},
-    "run_query_max_rows": 10000,
-    "reports": [
+    "plugins": [
       {
-        "name": "daily_summary",
-        "managed": true,
+        "package": "csv",
+        "source": {
+          "type": "registry"
+        },
+        "version": "*"
+      },
+      {
+        "package": "duckdb",
+        "source": {
+          "type": "registry"
+        },
+        "version": ">=0.0"
+      }
+    ],
+    "project": {
+      "checksum": "c0bb111ae2422a80a4e6ae4a0cd385c004763ad4dbb65ba5b2be2092b2c3b8de",
+      "default_profile": "local_dev",
+      "name": "acme_reports"
+    },
+    "reports": {
+      "daily_summary": {
+        "bindings": [
+          {
+            "destinations": [],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/ops/daily_summary/summary.sql",
+                "query": "summary",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {}
+          }
+        ],
+        "checksum": "3d7d62d173a660af1b5245acaca8c568aefc0f7dfe5aa9ae75c1ba03ccba8e33",
         "file": "reports/ops/daily_summary/daily_summary.yml",
         "folder": [
           "ops",
           "daily_summary"
         ],
-        "tags": [],
+        "managed": true,
+        "name": "daily_summary",
         "queries": [
           {
+            "file": "reports/ops/daily_summary/summary.sql",
             "query": "summary",
-            "path": "reports/ops/daily_summary/summary.sql"
+            "tab": true
           }
         ],
-        "has_sets": false,
+        "tags": [],
+        "valid": true
+      },
+      "quarterly_filing": {
         "bindings": [
           {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {},
-            "queries": [
-              {
-                "query": "summary",
-                "path": "reports/ops/daily_summary/summary.sql"
-              }
-            ],
+            "destinations": [],
             "output": {
               "format": "csv",
               "options": {}
-            }
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/finance/regulatory/quarterly/filing/filing_q.sql",
+                "query": "filing_q",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {}
           }
-        ]
-      },
-      {
-        "name": "quarterly_filing",
-        "managed": true,
+        ],
+        "checksum": "e2ce17c05bee6144ac1f84ff479eec7e0120197e13eefd9e107ce8d2a0f5a270",
         "file": "reports/finance/regulatory/quarterly/filing/filing.yml",
         "folder": [
           "finance",
@@ -89,53 +130,21 @@ exit: 0
           "quarterly",
           "filing"
         ],
-        "tags": [],
+        "managed": true,
+        "name": "quarterly_filing",
         "queries": [
           {
+            "file": "reports/finance/regulatory/quarterly/filing/filing_q.sql",
             "query": "filing_q",
-            "path": "reports/finance/regulatory/quarterly/filing/filing_q.sql"
+            "tab": true
           }
         ],
-        "has_sets": false,
-        "bindings": [
-          {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {},
-            "queries": [
-              {
-                "query": "filing_q",
-                "path": "reports/finance/regulatory/quarterly/filing/filing_q.sql"
-              }
-            ],
-            "output": {
-              "format": "csv",
-              "options": {}
-            }
-          }
-        ]
+        "tags": [],
+        "valid": true
       }
-    ],
-    "sets": {},
-    "plugins": [
-      {
-        "name": "csv",
-        "version": "*",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      },
-      {
-        "name": "duckdb",
-        "version": ">=0.0",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      }
-    ],
-    "macros": [],
-    "packages": [],
-    "mask_secrets": true,
-    "lookup_inline_max_rows": 200
+    },
+    "schedules": {},
+    "schema": 1,
+    "version": "0.0.1-alpha-11"
   }
 }

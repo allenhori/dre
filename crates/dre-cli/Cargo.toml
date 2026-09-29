@@ -23,9 +23,15 @@ chrono-tz.workspace = true
 indicatif = "0.18"
 anstyle = "1"
 serde_yaml_ng.workspace = true
+serde.workspace = true
+sha2 = "0.11"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true
+jsonschema = { version = "0.33", default-features = false }
 tempfile.workspace = true
 duckdb.workspace = true
 serde_json.workspace = true
@@ -36,3 +42,4 @@ parquet.workspace = true
 sha2 = "0.11"
 flate2 = "1"
 tar = "0.4"
+zip = { version = "8", default-features = false, features = ["deflate"] }

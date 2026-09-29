@@ -55,6 +55,26 @@ Each release attaches the wheels (`dre_cli-*.whl`), which install the same way w
 included), add `dre-cli` to the job's environment dependencies and run `dre` from a script or
 notebook. The bundled plugins are used unless `DRE_PLUGINS_DIR` is set.
 
+### Updating
+
+`dre system update` checks GitHub Releases and updates DRE the way it was installed.
+`dre system update --check` only reports whether a newer release exists, and
+`dre system update <version>` installs that release (to pin one, or to roll back):
+
+- **install.sh or the release zip**: `dre` downloads the new release, checks it against the
+  release's `SHA256SUMS`, and replaces its own binary. A failed update leaves the old one as it
+  was. Plugins aren't touched; `dre plugin update` updates those.
+- **pip, uv or pipx**: `dre` changes nothing and prints the command to run:
+  `<python> -m pip install -U dre-cli`, `uv tool upgrade dre-cli` or `pipx upgrade dre-cli`.
+  Upgrading `dre-cli` also updates its bundled plugins. If `dre-cli` is pinned in a project's or
+  a Databricks job's dependencies, bump the pin there.
+- **A build of your own** (`cargo build`, `cargo install`): `dre` refuses to overwrite it.
+
+While every release is a pre-release, "newest" includes pre-releases. Once there are stable
+releases, a stable `dre` updates to the newest stable one. Only `dre system update` checks for
+new versions; no other command calls the network for it. `GITHUB_TOKEN` is sent when set, which
+avoids GitHub's anonymous rate limit on shared IPs and CI runners.
+
 ## Concepts
 
 - **Report**: one or more Jinja-templated SQL queries plus an output config, declared in YAML.
@@ -89,7 +109,11 @@ notebook. The bundled plugins are used unless `DRE_PLUGINS_DIR` is set.
   destination (non-dev targets stand out). `dre compile` just renders the SQL into
   `target/compiled/` and lists the files. `dre validate --live` checks every statement against
   the database. `--preview` and schema-drift detection check a report before it reaches anyone.
-- **Selecting**: `run`, `compile` and `validate` take report names, `tag:<tag>`, folder names
+- **Generated files**: everything DRE writes goes in the *target path*, `target/` in the project
+  by default: compiled SQL, each run's output files, schema snapshots, `run_results.json` and the
+  [manifest](docs/manifest.md). `--target-path`, `DRE_TARGET_PATH` or `target_path:` in
+  `dre_project.yml` move it (see [below](#the-target-path)).
+- **Selecting**: `run`, `compile`, `validate` and `ls` take report names, `tag:<tag>`, folder names
   or dotted folder paths, as arguments (`dre run daily monthly`) or with `-s`/`--select`. Several
   match any of them: `-s daily monthly`, `-s daily,monthly`, or repeated `-s` (a semicolon works
   too, quoted: `-s "daily;monthly"`).
@@ -106,6 +130,9 @@ dre run                  # run every report; output lands in target/run/
 dre run monthly --preview 50       # sample 50 rows, never delivered
 dre run -s tag:regulatory --set all  # every regulatory report, for every Set
 dre validate --live      # check every statement against the database without running it
+dre ls --schedule close_monthly    # list the Bindings a schedule runs (--output json for tools)
+dre clean                # remove the target folder
+dre system update        # update DRE itself
 ```
 
 A report is a YAML file next to its `.sql` files:
@@ -234,6 +261,51 @@ below `--var`, and `run.schedule` renders as its name, so SQL can say
 render the same. `run_results.json`, the JSON events and `logs/dre.log` record the schedule, its
 vars, every var the run used and the command's parameters.
 
+## The project manifest
+
+`dre compile`, `dre validate` and `dre run` write `target/manifest.json`: the whole project as
+DRE resolves it, whatever was selected. It lists every report with its Sets and Bindings (merged
+vars, queries, output, destinations), every schedule with the Bindings it runs, the declared
+plugins, and checksums for change detection. It's built offline, with no connection or
+`profiles.yml`, never contains secrets or connection settings, and is the same byte for byte for
+the same project. An orchestrator can generate one task per schedule from it (each runs
+`dre run --schedule <name>`), and CI can compare two manifests to find the reports a change
+touched. `dre ls` prints slices of it: `dre ls -s tag:regulatory`, `dre ls --schedule
+close_monthly --output json`. See [the manifest](docs/manifest.md) and its
+[JSON Schema](docs/manifest.schema.json).
+
+## The target path
+
+The target path is the folder DRE writes its generated files to. It has nothing to do with a
+profile's `target` (the environment a connection uses). It's `target/` in the project unless set,
+highest first, by:
+
+1. `--target-path <path>` on `compile`, `validate`, `run`, `clean` and `ls`;
+2. `DRE_TARGET_PATH`;
+3. `target_path:` in `dre_project.yml`.
+
+A relative path is relative to the project root, whichever of the three sets it; `~` is your home
+directory. Compiled SQL, run outputs, schema snapshots, `run_results.json` and the manifest move
+together. The path must be local or mounted: object storage URLs (`s3://`, `gs://`, `abfss://`)
+are refused, but a filesystem mount that supports renames works, such as an NFS/EFS share or a
+gcsfuse mount. DRE refuses a target path that is the
+project root, contains the project, or sits inside `reports/`, `macros/`, `lookups/` or
+`dre_deps/`. A path elsewhere inside the project is skipped when DRE reads the project; add it to
+`.gitignore` (a new project's `.gitignore` covers `target/` only).
+
+Schema-drift detection compares each run with the snapshot the last successful run left in the
+target path, so on an ephemeral runner (a job cluster, a CI runner) point it at a folder that
+outlives the run:
+
+```bash
+dre run --schedule close_monthly --target-path /mnt/shared/dre/target
+```
+
+Give each job that runs at the same time its own target path; two runs sharing one overwrite
+each other's files and snapshots. `dre clean` deletes the target folder only if DRE created it
+(it leaves a `.dre_target` file there) or it's the project's own `target/`, so a mistyped
+`--target-path` can't delete anything else.
+
 ## Environment variables
 
 | Variable | Effect |
@@ -241,6 +313,9 @@ vars, every var the run used and the command's parameters.
 | `DRE_PROFILES_DIR` | Directory holding `profiles.yml` (default: the project directory if it has one, else `~/.dre`). `--profiles-dir` overrides it. |
 | `DRE_PLUGINS_DIR` | One plugins directory for every project, instead of each project's `dre_deps/plugins`. |
 | `DRE_REGISTRY_URL` | The plugin package registry index (a URL or a local path). |
+| `DRE_TARGET_PATH` | Where DRE writes its generated files (default: `target/` in the project). `--target-path` overrides it; it overrides `target_path:` in `dre_project.yml`. |
+| `GITHUB_TOKEN` | Sent to GitHub by `dre system update` and `github:` plugin sources (private repositories, rate limits). |
+| `DRE_GITHUB_API_URL` | The GitHub API for `github:` plugin sources and `dre system update` (GitHub Enterprise, a mirror). |
 | `DRE_RUN_DATE` | The run date (`YYYY-MM-DD`) behind `run.date`, instead of today. |
 | `DRE_TIMEZONE` | The run's timezone (IANA name), above every `timezone:` setting. `--timezone` overrides it. |
 | `DRE_LOG_MAX_LINES` | Lines per `logs/dre.log` before it rotates (default 10,000). |
@@ -255,6 +330,8 @@ vars, every var the run used and the command's parameters.
 - [Plugins and their profile fields](docs/plugins.md)
 - [Plugin protocol](docs/protocol.md), for writing a plugin in any language
 - [Plugin packages, the registry and `dre.lock`](docs/registry.md)
+- [The manifest and `run_results.json`](docs/manifest.md), with the manifest's
+  [JSON Schema](docs/manifest.schema.json)
 
 ## Building from source
 

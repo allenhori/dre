@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/allenhori/dre/blob/master/docs/manifest.schema.json",
+  "title": "DRE project manifest, schema 1",
+  "description": "target/manifest.json, written by `dre compile`, `dre validate` and `dre run`, and the document `dre ls --output json` prints (holding only the matching reports and schedules). New optional fields may appear within schema 1; consumers should ignore fields they don't know. See docs/manifest.md.",
+  "type": "object",
+  "required": ["schema", "version", "project", "reports", "schedules", "plugins"],
+  "properties": {
+    "schema": {"const": 1, "description": "The manifest format's version."},
+    "version": {"type": "string", "description": "The DRE version that wrote it."},
+    "project": {
+      "type": "object",
+      "required": ["name", "checksum"],
+      "properties": {
+        "name": {"type": "string"},
+        "default_profile": {"type": "string", "description": "The default source profile's name."},
+        "timezone": {"type": "string", "description": "The project's `timezone:` (IANA name)."},
+        "checksum": {
+          "$ref": "#/$defs/sha256",
+          "description": "Over the shared inputs: dre_project.yml, folder config, schedules.yml, dependencies.yml and other YAML that isn't a report's own, macros/, lookups/, and every .sql under reports/ that isn't a declared query. When it changes, every report may have changed."
+        }
+      }
+    },
+    "reports": {
+      "type": "object",
+      "description": "By report name.",
+      "additionalProperties": {"$ref": "#/$defs/report"}
+    },
+    "schedules": {
+      "type": "object",
+      "description": "By schedule name (schedules.yml).",
+      "additionalProperties": {"$ref": "#/$defs/schedule"}
+    },
+    "plugins": {
+      "type": "array",
+      "description": "The plugin packages the project declares.",
+      "items": {
+        "type": "object",
+        "required": ["package", "version", "source"],
+        "properties": {
+          "package": {"type": "string"},
+          "version": {"type": "string", "description": "The version requirement (`*` for any)."},
+          "source": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {"enum": ["registry", "github", "local"]},
+              "location": {"type": "string", "description": "Another registry's URL or path, a GitHub `owner/repo`, or a local executable's path. Absent for DRE's default registry."}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "path": {"type": "string", "description": "Relative to the project root, with forward slashes."},
+    "query": {
+      "type": "object",
+      "required": ["query", "file", "tab"],
+      "properties": {
+        "query": {"type": "string"},
+        "file": {"$ref": "#/$defs/path"},
+        "tab": {"type": "boolean", "description": "Whether its result becomes a tab (false: run for its effects only)."},
+        "tab_name": {"type": "string"},
+        "anchor": {"type": "string"},
+        "header": {"type": "boolean"},
+        "columns": {"type": "object", "description": "Per result column, how to show it (xlsx)."}
+      }
+    },
+    "report": {
+      "type": "object",
+      "required": ["name", "managed", "file", "folder", "tags", "queries", "checksum", "valid", "bindings"],
+      "properties": {
+        "name": {"type": "string"},
+        "managed": {"type": "boolean", "description": "False for a bare .sql under reports/ (an unmanaged report)."},
+        "file": {"$ref": "#/$defs/path", "description": "The defining YAML, or the .sql of an unmanaged report."},
+        "folder": {"type": "array", "items": {"type": "string"}, "description": "Folder segments under reports/."},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "timezone": {"type": "string"},
+        "default_set": {"type": "string"},
+        "queries": {"type": "array", "items": {"$ref": "#/$defs/query"}},
+        "checksum": {"$ref": "#/$defs/sha256", "description": "Over the defining file, every query file and any template."},
+        "valid": {"type": "boolean"},
+        "errors": {"type": "array", "items": {"type": "string"}, "description": "Present when invalid: what's wrong."},
+        "bindings": {"type": "array", "items": {"$ref": "#/$defs/binding"}}
+      }
+    },
+    "binding": {
+      "type": "object",
+      "required": ["set", "profile", "vars", "queries", "output", "destinations", "schedules"],
+      "properties": {
+        "set": {"type": ["string", "null"], "description": "Null for a report without Sets."},
+        "profile": {"type": ["string", "null"], "description": "The source profile's name."},
+        "vars": {"type": "object", "description": "Fully merged: project < folders < report < Set."},
+        "queries": {"type": "array", "items": {"$ref": "#/$defs/query"}},
+        "output": {
+          "type": "object",
+          "required": ["format", "options"],
+          "properties": {
+            "format": {"type": "string"},
+            "options": {"type": "object"},
+            "extension": {"type": "string"},
+            "template": {"$ref": "#/$defs/path", "description": "The template file, as declared."}
+          }
+        },
+        "destinations": {
+          "type": "array",
+          "description": "In delivery order.",
+          "items": {
+            "type": "object",
+            "required": ["profile"],
+            "properties": {
+              "profile": {"type": "string"},
+              "path": {"type": "string", "description": "The path template, unrendered."}
+            }
+          }
+        },
+        "schedules": {"type": "array", "items": {"type": "string"}, "description": "The schedules that run this Binding."}
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "required": ["name", "schedule", "vars", "bindings"],
+      "properties": {
+        "name": {"type": "string"},
+        "report": {"type": "string"},
+        "select": {"type": "string"},
+        "set": {"type": "string"},
+        "schedule": {"type": "object", "description": "As declared: `cron`, `every`, `rrule`, `calendar`, ..."},
+        "vars": {"type": "object"},
+        "timezone": {"type": "string"},
+        "bindings": {
+          "type": "array",
+          "description": "What `dre run --schedule <name>` runs.",
+          "items": {
+            "type": "object",
+            "required": ["report", "set"],
+            "properties": {
+              "report": {"type": "string"},
+              "set": {"type": ["string", "null"]}
+            }
+          }
+        }
+      }
+    }
+  }
+}

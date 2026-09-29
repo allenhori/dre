@@ -23,7 +23,7 @@ use serde_json::{Map as JsonMap, Value as Json, json};
 use crate::dates::Calendar;
 use crate::lookups::Table;
 use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Profiles, Role};
-use crate::project::{Binding, PluginKind, Project, QueryEntry, Report, TARGET_DIR};
+use crate::project::{Binding, PluginKind, Project, QueryEntry, Report};
 use crate::render::{
     Column, Connection, Connections, QueryRows, QueryRunner, RenderError, Renderer, RendererConfig,
     RunContext,
@@ -56,6 +56,8 @@ pub struct RunOptions {
     pub schedule: Option<String>,
     /// `--timezone` or `DRE_TIMEZONE`: above every configured `timezone:`.
     pub timezone: Option<String>,
+    /// SHA-256 of the manifest this command wrote, for `run_results.json`.
+    pub manifest_checksum: Option<String>,
 }
 
 impl RunOptions {
@@ -193,6 +195,14 @@ impl RunSummary {
 
 pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary {
     let mut summary = RunSummary::default();
+    if let Err(e) = crate::target::ensure(&project.target_dir) {
+        summary.error = Some(format!(
+            "can't write to the target path {} (from {}): {e}",
+            project.target_dir.display(),
+            project.target_source
+        ));
+        return summary;
+    }
     if let Some(name) = &opts.schedule {
         if !project.schedules.iter().any(|e| &e.name == name) {
             summary.error = Some(unknown_schedule(project, name));
@@ -415,7 +425,7 @@ impl<'a> BindingRun<'a> {
         opts: &'a RunOptions,
         ui: &'a mut dyn Ui,
     ) -> Self {
-        let t = project.root.join(TARGET_DIR);
+        let t = &project.target_dir;
         let rel = Path::new(&report.name).join(b.dir_name());
         let schedule = opts
             .schedule
@@ -1423,7 +1433,7 @@ impl<'a> BindingRun<'a> {
             .iter()
             .map(|(f, delivered)| {
                 json!({
-                    "path": rel(&self.project.root, f),
+                    "path": record_path(self.project, f),
                     "size": std::fs::metadata(f).map(|m| m.len()).unwrap_or(0),
                     "delivered_to": delivered,
                 })
@@ -1458,6 +1468,8 @@ impl<'a> BindingRun<'a> {
             "delivery": self.delivery_note,
             "deliveries": self.deliveries,
             "schema_drift": self.drift,
+            "target_path": self.project.target_dir,
+            "manifest_checksum": self.opts.manifest_checksum,
         });
         std::fs::write(
             self.run_dir.join("run_results.json"),
@@ -1917,6 +1929,16 @@ fn rel(root: &Path, p: &Path) -> PathBuf {
     crate::slash(p.strip_prefix(root).unwrap_or(p))
 }
 
+/// How a generated file is recorded in `run_results.json`: relative to the project root when
+/// it's inside it, else relative to the target path, so moving the target folder doesn't
+/// change what's recorded.
+fn record_path(project: &Project, p: &Path) -> PathBuf {
+    match p.strip_prefix(&project.root) {
+        Ok(r) => crate::slash(r),
+        Err(_) => rel(&project.target_dir, p),
+    }
+}
+
 impl BindingRun<'_> {
     /// What this Binding produced, for its end-of-run line.
     fn summary_line(&self) -> String {
@@ -1978,11 +2000,10 @@ fn human_bytes(n: u64) -> String {
     }
 }
 
-/// `dre clean`: remove `target/`.
-pub fn clean(root: &Path) -> std::io::Result<bool> {
-    let t = root.join(TARGET_DIR);
+/// `dre clean`: remove the target folder `t`.
+pub fn clean(t: &Path) -> std::io::Result<bool> {
     if t.exists() {
-        std::fs::remove_dir_all(&t)?;
+        std::fs::remove_dir_all(t)?;
         Ok(true)
     } else {
         Ok(false)

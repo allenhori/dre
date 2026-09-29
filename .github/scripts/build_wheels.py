@@ -175,6 +175,10 @@ def build(dre_version, plat, out_dir, dist=None, from_dir=None):
         files[f"{vdir}/{binary}{exe}"] = (data, True)
         manifest = {"executable": binary + exe, "provides": about["provides"]}
         files[f"{vdir}/plugin.json"] = (json.dumps(manifest, indent=2).encode(), False)
+    # The install receipt next to the binary, in place of the release archive's: `dre system
+    # update` reads it and points at pip / uv / pipx instead of replacing the binary.
+    receipt = {"schema": 1, "source": "pypi", "version": dre_version}
+    files[f"{PKG}/bin/dre-receipt.json"] = ((json.dumps(receipt) + "\n").encode(), False)
     shim = SHIM.format(version=version, dre_version=dre_version)
     files[f"{PKG}/__init__.py"] = (shim.encode(), False)
     files[f"{PKG}/__main__.py"] = (MAIN.encode(), False)
