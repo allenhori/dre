@@ -208,6 +208,6 @@ exit: 1
     },
     "schedules": {},
     "schema": 1,
-    "version": "0.0.1-alpha-11"
+    "version": "$VERSION"
   }
 }
