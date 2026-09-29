@@ -6,10 +6,10 @@
 `v<version>` releases DRE itself (the `dre` CLI); `<package>-v<version>` releases one plugin
 package, e.g. `duckdb-v1.0.0` or `object_store-v1.2.0-rc.1`. The tag's version must be the one
 in the source: the workspace version for DRE, the package's own `Cargo.toml` version for a Rust
-plugin, `go/databricks/VERSION` for the Databricks package.
+plugin, the VERSION file in its folder for a Go one (packages.json names it under `go`).
 
 Prints `key=value` lines for $GITHUB_OUTPUT: kind (core or plugin), package, version, prerelease
-(true or false) and go (true for the Go package).
+(true or false), and go (the Go package's folder, empty for Rust).
 """
 
 import json
@@ -41,7 +41,8 @@ def cargo_version(crate):
 def plan(tag):
     if tag.startswith("v"):
         kind, package, version = "core", "dre", tag[1:]
-        source, where = cargo_version("dre-cli"), "the workspace version"
+        cli = metadata("dre-cli")
+        source, where = cli["version"], "the workspace version"
     else:
         m = re.fullmatch(r"([a-z0-9_]+)-v(.+)", tag)
         if not m:
@@ -49,9 +50,9 @@ def plan(tag):
         kind, (package, version) = "plugin", m.groups()
         if package not in PACKAGES:
             sys.exit(f"tag {tag}: `{package}` isn't a plugin package (.github/scripts/packages.json)")
-        if package == "databricks":
-            f = ROOT / "go/databricks/VERSION"
-            source, where = f.read_text().strip(), "go/databricks/VERSION"
+        go = PACKAGES[package].get("go")
+        if go:
+            source, where = (ROOT / go / "VERSION").read_text().strip(), f"{go}/VERSION"
         else:
             source = cargo_version(f"dre-plugin-{package}")
             where = f"plugins/{package}/Cargo.toml"
@@ -61,7 +62,7 @@ def plan(tag):
         sys.exit(f"tag {tag} is version {version}, but {where} says {source}")
     if kind == "core":
         # dre-cli, as published to crates.io, must depend on the dre-core of the same release.
-        req = next(d["req"] for d in metadata("dre-cli")["dependencies"] if d["name"] == "dre-core")
+        req = next(d["req"] for d in cli["dependencies"] if d["name"] == "dre-core")
         if req != f"={version}":
             sys.exit(f"tag {tag}: the workspace's dre-core dependency is `{req}`; make it `={version}` in Cargo.toml")
     return {
@@ -69,7 +70,7 @@ def plan(tag):
         "package": package,
         "version": version,
         "prerelease": str("-" in version).lower(),
-        "go": str(package == "databricks").lower(),
+        "go": PACKAGES.get(package, {}).get("go", ""),
     }
 
 

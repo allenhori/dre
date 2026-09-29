@@ -35,6 +35,19 @@ The same line works in a Databricks job (a cluster init script or a `%sh` cell),
 container build. On Windows, download `dre-<version>-windows-x86_64.zip` (or `-aarch64.zip`)
 from [Releases](https://github.com/allenhori/dre/releases) and put `dre.exe` on your `PATH`.
 
+### With Homebrew or Scoop
+
+From 0.1.0-rc.1 on:
+
+```bash
+brew install allenhori/tap/dre                                   # macOS and Linux
+```
+
+```powershell
+scoop bucket add allenhori https://github.com/allenhori/scoop-bucket   # Windows
+scoop install allenhori/dre
+```
+
 ### With pip
 
 The `dre-cli` package holds `dre` (Linux x86_64 and aarch64, macOS, Windows; Python 3.8+):
@@ -82,6 +95,7 @@ To have them in place before the first run, e.g. on a machine or job that starts
 - **install.sh or the release zip**: `dre` downloads the new release, checks it against the
   release's `SHA256SUMS`, and replaces its own binary. A failed update leaves the old one as it
   was. Plugins aren't touched; `dre plugin update` updates those.
+- **Homebrew or Scoop**: `dre` changes nothing and prints `brew upgrade dre` or `scoop update dre`.
 - **pip, uv or pipx**: `dre` changes nothing and prints the command to run:
   `<python> -m pip install -U dre-cli`, `uv tool upgrade dre-cli` or `pipx upgrade dre-cli`.
   If `dre-cli` is pinned in a project's or a Databricks job's dependencies, bump the pin there.

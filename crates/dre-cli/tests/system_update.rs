@@ -600,6 +600,11 @@ fn cargo_install_from_crates_io() {
     d.update(&s, "0.0.1-alpha-12", &["0.0.1-alpha-10", "--check"])
         .ok()
         .says("cargo install dre-cli --locked --version 0.0.1-alpha-10");
+    // Another registry's dre-cli isn't DRE's.
+    installs("registry+https://mirror.example.com/index");
+    d.update(&s, "0.0.1-alpha-11", &[])
+        .failed()
+        .says("wasn't installed from a DRE release");
     // `cargo install --path`: a build of a checkout, not a release, so it isn't touched.
     installs("path+file:///src/dre/crates/dre-cli");
     d.update(&s, "0.0.1-alpha-11", &[])
