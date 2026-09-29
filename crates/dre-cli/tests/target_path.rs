@@ -94,7 +94,7 @@ fn everything_moves_to_the_flags_folder_and_delivery_still_works() {
     // Messages show the real path, in full.
     p.dre("validate", &["--target-path", &arg(&t)])
         .ok()
-        .says(&arg(&t.join("compiled")));
+        .says(&arg(&t.join("compiled")).replace('\\', "/"));
 }
 
 #[test]

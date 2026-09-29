@@ -360,12 +360,19 @@ fn an_update_replaces_the_binary_and_its_receipt() {
         "{}",
         d.receipt()
     );
-    // No temp files left behind.
-    let left: Vec<_> = std::fs::read_dir(d.exe.parent().unwrap())
+    // No temp files left behind. Windows can't delete the running exe it moved aside, so
+    // `dre.old` stays there until the next update clears it.
+    let mut left: Vec<_> = std::fs::read_dir(d.exe.parent().unwrap())
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(left.len(), 2, "{left:?}");
+    left.sort();
+    let mut want = vec![RECEIPT.to_string(), format!("dre{EXE}")];
+    if cfg!(windows) {
+        want.push("dre.old".into());
+    }
+    want.sort();
+    assert_eq!(left, want);
 }
 
 #[test]
