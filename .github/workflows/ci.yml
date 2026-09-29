@@ -1,9 +1,23 @@
 name: CI
 
+# Only for changes that can affect the build or tests. Docs, the licence and release-only files
+# don't run it; a change that mixes them with code runs everything.
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/**"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/**"
 
 env:
   CARGO_TERM_COLOR: always
