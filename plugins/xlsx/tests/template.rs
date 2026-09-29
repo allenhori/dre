@@ -67,12 +67,21 @@ fn fill_with(
     bindings: Value,
     options: Value,
 ) -> Result<(tempfile::TempDir, Workbook), String> {
+    fill_from(&template(), sets, bindings, options)
+}
+
+fn fill_from(
+    template: &Path,
+    sets: Vec<(ResultSetMeta, RecordBatch)>,
+    bindings: Value,
+    options: Value,
+) -> Result<(tempfile::TempDir, Workbook), String> {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("out.xlsx");
     let log: LogSink = Arc::new(|_, _| {});
     let mut p = PluginProcess::start(bin(), log).unwrap();
     let payload = json!({
-        "file": template().to_str().unwrap(),
+        "file": template.to_str().unwrap(),
         "bindings": bindings,
         "values": {"Summary!B2": "2026-01-25"},
     });
@@ -194,6 +203,41 @@ fn formatting_merges_and_images_survive_and_new_rows_copy_the_reserved_row() {
         ["A1:C1"]
     );
     assert_eq!(s.image_collection().len(), 1, "the logo is kept");
+}
+
+#[test]
+fn the_reserved_rows_own_formulas_fill_down_to_inserted_rows() {
+    // The branded template plus formulas authored beside the block's reserved row (A5:C5).
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("formulas.xlsx");
+    let mut t = umya_spreadsheet::reader::xlsx::read(template()).unwrap();
+    let s = t.sheet_by_name_mut("Summary").unwrap();
+    s.cell_mut("D5").set_formula("C5*$F$1");
+    s.cell_mut("E5").set_formula("SUM(C$5:C5)");
+    s.cell_mut("F5").set_formula("SUM(A5:C5)");
+    umya_spreadsheet::writer::xlsx::write(&t, &path).unwrap();
+
+    let (_d, book) = fill_from(
+        &path,
+        vec![
+            (meta("accounts", "Accounts"), accounts(3)),
+            (meta("count_q", "Count"), count(3)),
+        ],
+        standard_bindings(),
+        json!({}),
+    )
+    .unwrap();
+    let f = |c: &str| formula(&book, "Summary", c);
+    assert_eq!(
+        (f("D5"), f("D6"), f("D7")),
+        ("C5*$F$1".into(), "C6*$F$1".into(), "C7*$F$1".into())
+    );
+    // A running total keeps its anchored start.
+    assert_eq!((f("E5"), f("E7")), ("SUM(C$5:C5)".into(), "SUM(C$5:C7)".into()));
+    // A row formula over a range on its own row isn't mistaken for a totals range and extended.
+    assert_eq!((f("F5"), f("F7")), ("SUM(A5:C5)".into(), "SUM(A7:C7)".into()));
+    // The totals row under the block is still extended, and gains nothing.
+    assert_eq!((f("C8"), f("D8")), ("SUM(C5:C7)".into(), String::new()));
 }
 
 #[test]

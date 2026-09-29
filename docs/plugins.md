@@ -288,7 +288,11 @@ column, when a reference names a column the query doesn't return or a total does
 column. In a template, row formulas work in table blocks and use the block's columns (a
 reference to a column the block doesn't place is an error); a single-cell binding takes the
 value, not the formula. Templates don't take `total`: put the totals row under the block in the
-template, and DRE extends a `SUM` ending on the block's row over every inserted row.
+template, and DRE extends a `SUM` ending on the block's row over every inserted row. Formulas
+written in the block's row itself, in columns the block doesn't fill (e.g. `D5: =B5*C5` beside a
+block in `A5:C5`), are filled down to every inserted row the way Excel's fill-down does: relative
+row references move (`=B6*C6`, and a running total `=SUM(C$5:C5)` becomes `=SUM(C$5:C6)`),
+absolute rows (`$B$5`, `B$5`) stay. Excel works out their values when the file is opened.
 
 ### Fixed-width columns
 
