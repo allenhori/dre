@@ -28,92 +28,98 @@ exit: 0
     }
   ],
   "project": {
-    "name": "acme_reports",
-    "default_profile": "local_dev",
-    "vars": {},
-    "run_query_max_rows": 10000,
-    "reports": [
+    "plugins": [
       {
-        "name": "daily",
-        "managed": true,
+        "package": "csv",
+        "source": {
+          "type": "registry"
+        },
+        "version": "*"
+      },
+      {
+        "package": "duckdb",
+        "source": {
+          "type": "registry"
+        },
+        "version": ">=0.0"
+      }
+    ],
+    "project": {
+      "checksum": "c0bb111ae2422a80a4e6ae4a0cd385c004763ad4dbb65ba5b2be2092b2c3b8de",
+      "default_profile": "local_dev",
+      "name": "acme_reports"
+    },
+    "reports": {
+      "daily": {
+        "bindings": [
+          {
+            "destinations": [],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/ops/daily/setup.sql",
+                "query": "setup",
+                "tab": false
+              },
+              {
+                "file": "reports/ops/daily/summary.sql",
+                "query": "summary",
+                "tab": true,
+                "tab_name": "Account Summary"
+              },
+              {
+                "anchor": "B3",
+                "file": "reports/ops/daily/multi.sql",
+                "header": false,
+                "query": "multi",
+                "tab": true,
+                "tab_name": "Detail"
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {}
+          }
+        ],
+        "checksum": "230bb99a8abd4425a2b8b1dfd7369f678109d7c9f663c556d02ece08b908d68f",
         "file": "reports/ops/daily/daily.yml",
         "folder": [
           "ops",
           "daily"
         ],
-        "tags": [],
+        "managed": true,
+        "name": "daily",
         "queries": [
           {
+            "file": "reports/ops/daily/setup.sql",
             "query": "setup",
-            "path": "reports/ops/daily/setup.sql",
             "tab": false
           },
           {
+            "file": "reports/ops/daily/summary.sql",
             "query": "summary",
-            "path": "reports/ops/daily/summary.sql",
+            "tab": true,
             "tab_name": "Account Summary"
           },
           {
-            "query": "multi",
-            "path": "reports/ops/daily/multi.sql",
-            "tab_name": "Detail",
             "anchor": "B3",
-            "header": false
+            "file": "reports/ops/daily/multi.sql",
+            "header": false,
+            "query": "multi",
+            "tab": true,
+            "tab_name": "Detail"
           }
         ],
-        "has_sets": false,
-        "bindings": [
-          {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {},
-            "queries": [
-              {
-                "query": "setup",
-                "path": "reports/ops/daily/setup.sql",
-                "tab": false
-              },
-              {
-                "query": "summary",
-                "path": "reports/ops/daily/summary.sql",
-                "tab_name": "Account Summary"
-              },
-              {
-                "query": "multi",
-                "path": "reports/ops/daily/multi.sql",
-                "tab_name": "Detail",
-                "anchor": "B3",
-                "header": false
-              }
-            ],
-            "output": {
-              "format": "csv",
-              "options": {}
-            }
-          }
-        ]
+        "tags": [],
+        "valid": true
       }
-    ],
-    "sets": {},
-    "plugins": [
-      {
-        "name": "csv",
-        "version": "*",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      },
-      {
-        "name": "duckdb",
-        "version": ">=0.0",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      }
-    ],
-    "macros": [],
-    "packages": [],
-    "mask_secrets": true,
-    "lookup_inline_max_rows": 200
+    },
+    "schedules": {},
+    "schema": 1,
+    "version": "0.0.1-alpha-11"
   }
 }

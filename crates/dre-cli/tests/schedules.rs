@@ -89,12 +89,7 @@ fn several_schedules_on_one_binding_validate_and_are_listed() {
     let v = p.dre("validate", &["--json"]);
     v.ok();
     let j: serde_json::Value = serde_json::from_str(&v.stdout).unwrap();
-    let report = j["project"]["reports"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["name"] == "sales_summary")
-        .unwrap();
+    let report = &j["project"]["reports"]["sales_summary"];
     let a = report["bindings"]
         .as_array()
         .unwrap()

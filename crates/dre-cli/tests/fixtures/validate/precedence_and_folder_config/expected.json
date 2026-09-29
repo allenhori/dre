@@ -62,174 +62,177 @@ exit: 0
     }
   ],
   "project": {
-    "name": "acme_reports",
-    "default_profile": "local_dev",
-    "vars": {
-      "region": "AU",
-      "level": "project",
-      "schema": "public"
-    },
-    "run_query_max_rows": 10000,
-    "reports": [
+    "plugins": [
       {
-        "name": "bare",
-        "managed": false,
-        "file": "reports/ops/bare.sql",
-        "folder": [
-          "ops"
-        ],
-        "tags": [],
-        "queries": [
-          {
-            "query": "bare",
-            "path": "reports/ops/bare.sql"
-          }
-        ],
-        "has_sets": false,
+        "package": "csv",
+        "source": {
+          "type": "registry"
+        },
+        "version": "*"
+      },
+      {
+        "package": "duckdb",
+        "source": {
+          "type": "registry"
+        },
+        "version": ">=0.0"
+      },
+      {
+        "package": "xlsx",
+        "source": {
+          "type": "registry"
+        },
+        "version": "*"
+      }
+    ],
+    "project": {
+      "checksum": "6ec8fdedd7eb1db3756c41d8278fa7e0e4cbae4b2bf8eb9e41668fcb819276ca",
+      "default_profile": "local_dev",
+      "name": "acme_reports"
+    },
+    "reports": {
+      "bare": {
         "bindings": [
           {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {
-              "region": "AU",
-              "level": "project",
-              "schema": "public"
-            },
-            "queries": [
-              {
-                "query": "bare",
-                "path": "reports/ops/bare.sql"
-              }
-            ],
+            "destinations": [],
             "output": {
               "format": "csv",
               "options": {
                 "delimiter": ";"
               }
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/ops/bare.sql",
+                "query": "bare",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {
+              "level": "project",
+              "region": "AU",
+              "schema": "public"
             }
           }
-        ]
+        ],
+        "checksum": "a0392ead938d32970cb61275ff094cbcd5cab0fbd0c502b04d92a30ef7002ac4",
+        "file": "reports/ops/bare.sql",
+        "folder": [
+          "ops"
+        ],
+        "managed": false,
+        "name": "bare",
+        "queries": [
+          {
+            "file": "reports/ops/bare.sql",
+            "query": "bare",
+            "tab": true
+          }
+        ],
+        "tags": [],
+        "valid": true
       },
-      {
-        "name": "filing",
-        "managed": true,
+      "filing": {
+        "bindings": [
+          {
+            "destinations": [],
+            "output": {
+              "format": "xlsx",
+              "options": {}
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/finance/regulatory/filing/filing_q.sql",
+                "query": "filing_q",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": "client_a",
+            "vars": {
+              "level": "binding",
+              "region": "AU",
+              "report_only": "yes",
+              "schema": "client_a"
+            }
+          }
+        ],
+        "checksum": "ced5cbe84b0364b0a24470ef076b3be5a138047bce35a9b5267ab6e3525657d4",
         "file": "reports/finance/regulatory/filing/filing.yml",
         "folder": [
           "finance",
           "regulatory",
           "filing"
         ],
+        "managed": true,
+        "name": "filing",
+        "queries": [
+          {
+            "file": "reports/finance/regulatory/filing/filing_q.sql",
+            "query": "filing_q",
+            "tab": true
+          }
+        ],
         "tags": [
           "finance",
           "regulatory"
         ],
-        "queries": [
-          {
-            "query": "filing_q",
-            "path": "reports/finance/regulatory/filing/filing_q.sql"
-          }
-        ],
-        "has_sets": true,
-        "bindings": [
-          {
-            "set": "client_a",
-            "profile": "local_dev",
-            "vars": {
-              "region": "AU",
-              "level": "binding",
-              "schema": "client_a",
-              "report_only": "yes"
-            },
-            "queries": [
-              {
-                "query": "filing_q",
-                "path": "reports/finance/regulatory/filing/filing_q.sql"
-              }
-            ],
-            "output": {
-              "format": "xlsx",
-              "options": {}
-            }
-          }
-        ]
+        "valid": true
       },
-      {
-        "name": "ledger",
-        "managed": true,
-        "file": "reports/finance/ledger/ledger.yml",
-        "folder": [
-          "finance",
-          "ledger"
-        ],
-        "tags": [
-          "finance"
-        ],
-        "queries": [
-          {
-            "query": "ledger_q",
-            "path": "reports/finance/ledger/ledger_q.sql"
-          }
-        ],
-        "has_sets": false,
+      "ledger": {
         "bindings": [
           {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {
-              "region": "AU",
-              "level": "finance",
-              "schema": "public"
-            },
-            "queries": [
-              {
-                "query": "ledger_q",
-                "path": "reports/finance/ledger/ledger_q.sql"
-              }
-            ],
+            "destinations": [],
             "output": {
               "format": "csv",
               "options": {
                 "delimiter": ";"
               }
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/finance/ledger/ledger_q.sql",
+                "query": "ledger_q",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {
+              "level": "finance",
+              "region": "AU",
+              "schema": "public"
             }
           }
-        ]
-      }
-    ],
-    "sets": {
-      "client_a": {
-        "profile": "local_dev",
-        "vars": {
-          "schema": "client_a"
-        }
+        ],
+        "checksum": "02aa89a69ad4e129d1429d0b98ac5529d374c826cbb43de5c10374a6c4359c9c",
+        "file": "reports/finance/ledger/ledger.yml",
+        "folder": [
+          "finance",
+          "ledger"
+        ],
+        "managed": true,
+        "name": "ledger",
+        "queries": [
+          {
+            "file": "reports/finance/ledger/ledger_q.sql",
+            "query": "ledger_q",
+            "tab": true
+          }
+        ],
+        "tags": [
+          "finance"
+        ],
+        "valid": true
       }
     },
-    "plugins": [
-      {
-        "name": "csv",
-        "version": "*",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      },
-      {
-        "name": "duckdb",
-        "version": ">=0.0",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      },
-      {
-        "name": "xlsx",
-        "version": "*",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      }
-    ],
-    "macros": [],
-    "packages": [],
-    "mask_secrets": true,
-    "lookup_inline_max_rows": 200
+    "schedules": {},
+    "schema": 1,
+    "version": "0.0.1-alpha-11"
   }
 }

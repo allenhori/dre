@@ -69,131 +69,145 @@ exit: 1
     }
   ],
   "project": {
-    "name": "acme_reports",
-    "default_profile": "local_dev",
-    "vars": {},
-    "run_query_max_rows": 10000,
-    "reports": [
+    "plugins": [
       {
-        "name": "quick_look",
-        "managed": false,
+        "package": "csv",
+        "source": {
+          "type": "registry"
+        },
+        "version": "*"
+      },
+      {
+        "package": "duckdb",
+        "source": {
+          "type": "registry"
+        },
+        "version": ">=0.0"
+      }
+    ],
+    "project": {
+      "checksum": "69dd82f8a1c39e54c656e8036959643e1cc9e27e76c7ba51b39ced8c748a1d0e",
+      "default_profile": "local_dev",
+      "name": "acme_reports"
+    },
+    "reports": {
+      "quick_look": {
+        "bindings": [
+          {
+            "destinations": [],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/scratch/quick_look.sql",
+                "query": "quick_look",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {}
+          }
+        ],
+        "checksum": "964b1958b7e163e32bc94a68b07fac2b43b141b18bbcc6980e90e4953b52ccf7",
         "file": "reports/scratch/quick_look.sql",
         "folder": [
           "scratch"
         ],
-        "tags": [],
+        "managed": false,
+        "name": "quick_look",
         "queries": [
           {
+            "file": "reports/scratch/quick_look.sql",
             "query": "quick_look",
-            "path": "reports/scratch/quick_look.sql"
+            "tab": true
           }
         ],
-        "has_sets": false,
+        "tags": [],
+        "valid": true
+      },
+      "temp_then_select": {
         "bindings": [
           {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {},
-            "queries": [
-              {
-                "query": "quick_look",
-                "path": "reports/scratch/quick_look.sql"
-              }
-            ],
+            "destinations": [],
             "output": {
               "format": "csv",
               "options": {}
-            }
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/scratch/temp_then_select.sql",
+                "query": "temp_then_select",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {}
           }
-        ]
-      },
-      {
-        "name": "temp_then_select",
-        "managed": false,
+        ],
+        "checksum": "fcfee10458cc0d411b0e9c2df6ee040650b48ed084b9805a9f0ad2227999288e",
         "file": "reports/scratch/temp_then_select.sql",
         "folder": [
           "scratch"
         ],
-        "tags": [],
+        "managed": false,
+        "name": "temp_then_select",
         "queries": [
           {
+            "file": "reports/scratch/temp_then_select.sql",
             "query": "temp_then_select",
-            "path": "reports/scratch/temp_then_select.sql"
+            "tab": true
           }
         ],
-        "has_sets": false,
+        "tags": [],
+        "valid": true
+      },
+      "templated": {
         "bindings": [
           {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {},
-            "queries": [
-              {
-                "query": "temp_then_select",
-                "path": "reports/scratch/temp_then_select.sql"
-              }
-            ],
+            "destinations": [],
             "output": {
               "format": "csv",
               "options": {}
-            }
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/scratch/templated.sql",
+                "query": "templated",
+                "tab": true
+              }
+            ],
+            "schedules": [],
+            "set": null,
+            "vars": {}
           }
-        ]
-      },
-      {
-        "name": "templated",
-        "managed": false,
+        ],
+        "checksum": "57092b3c9772d37b18ec27908025135b523a8e91e1f0abe91a482358ecfa0efb",
         "file": "reports/scratch/templated.sql",
         "folder": [
           "scratch"
         ],
-        "tags": [],
+        "managed": false,
+        "name": "templated",
         "queries": [
           {
+            "file": "reports/scratch/templated.sql",
             "query": "templated",
-            "path": "reports/scratch/templated.sql"
+            "tab": true
           }
         ],
-        "has_sets": false,
-        "bindings": [
-          {
-            "set": null,
-            "profile": "local_dev",
-            "vars": {},
-            "queries": [
-              {
-                "query": "templated",
-                "path": "reports/scratch/templated.sql"
-              }
-            ],
-            "output": {
-              "format": "csv",
-              "options": {}
-            }
-          }
-        ]
+        "tags": [],
+        "valid": true
       }
-    ],
-    "sets": {},
-    "plugins": [
-      {
-        "name": "csv",
-        "version": "*",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      },
-      {
-        "name": "duckdb",
-        "version": ">=0.0",
-        "declared_in": [
-          "dependencies.yml"
-        ]
-      }
-    ],
-    "macros": [],
-    "packages": [],
-    "mask_secrets": true,
-    "lookup_inline_max_rows": 200
+    },
+    "schedules": {},
+    "schema": 1,
+    "version": "0.0.1-alpha-11"
   }
 }

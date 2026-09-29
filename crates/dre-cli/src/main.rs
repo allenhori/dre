@@ -1,6 +1,8 @@
 mod init;
+mod ls;
 mod output;
 mod plugins;
+mod system;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -48,12 +50,14 @@ impl Cli {
 enum Command {
     /// Check the project (config, references, templates, schedules) and compile its SQL.
     Validate(ValidateArgs),
-    /// Run reports: render, execute, format into target/, and deliver.
+    /// Run reports: render, execute, format into the target folder, and deliver.
     Run(RunArgs),
-    /// Render reports' SQL into target/compiled/ without running it, and list the files.
+    /// Render reports' SQL into <target path>/compiled/ without running it, and list the files.
     Compile(CompileArgs),
-    /// Remove target/ (compiled SQL, run outputs, schema snapshots).
+    /// Remove the target folder (compiled SQL, run outputs, schema snapshots, the manifest).
     Clean(CleanArgs),
+    /// List the reports and Bindings a selection or schedule covers, without running anything.
+    Ls(ls::LsArgs),
     /// Set up a connection (installing its plugin) and optionally a starter project, interactively.
     Init(InitArgs),
     /// Create a starter project in a new directory.
@@ -63,6 +67,9 @@ enum Command {
     /// Manage plugins (sources, formats, destinations).
     #[command(subcommand)]
     Plugin(PluginCommand),
+    /// Commands about DRE itself rather than a project.
+    #[command(subcommand)]
+    System(system::SystemCommand),
 }
 
 #[derive(Args)]
@@ -99,7 +106,8 @@ struct RunArgs {
     #[arg(long, value_name = "ROWS", num_args = 0..=1, default_missing_value = "100")]
     preview: Option<u64>,
     /// Deliver even if the output schema changed since the last successful run, and accept
-    /// the new schema. Snapshots live in target/, so a fresh CI runner has no history.
+    /// the new schema. Snapshots live in the target path, so a fresh CI runner has no history
+    /// unless `--target-path` (or DRE_TARGET_PATH) points at a folder that persists.
     #[arg(long)]
     accept_schema_change: bool,
 }
@@ -109,6 +117,10 @@ struct CleanArgs {
     /// Project directory (default: the current directory).
     #[arg(long, default_value = ".")]
     project_dir: PathBuf,
+    /// The folder to clean (default: $DRE_TARGET_PATH, then `target_path` in dre_project.yml,
+    /// then target/). Only a folder DRE created is deleted.
+    #[arg(long, value_name = "PATH")]
+    target_path: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -174,6 +186,11 @@ struct ProjectArgs {
     /// Use this target (environment) of every profile instead of each profile's default `target`.
     #[arg(long)]
     target: Option<String>,
+    /// Where DRE writes its generated files (default: $DRE_TARGET_PATH, then `target_path` in
+    /// dre_project.yml, then target/). A local or mounted path, absolute or relative to the
+    /// project root. Unrelated to `--target`.
+    #[arg(long, value_name = "PATH")]
+    target_path: Option<String>,
     /// Set a variable for `var()`, overriding every other level: `--var name=value`.
     #[arg(long = "var", value_name = "NAME=VALUE", value_parser = parse_var)]
     vars: Vec<(String, String)>,
@@ -196,6 +213,7 @@ impl ProjectArgs {
             profiles_dir: self.profiles_dir.clone(),
             target: self.target.clone(),
             vars: self.vars.iter().cloned().collect(),
+            target_path: self.target_path.clone(),
         }
     }
 }
@@ -273,6 +291,8 @@ fn main() -> ExitCode {
         Command::Run(a) => run(a, printer),
         Command::Compile(a) => compile(a, printer),
         Command::Clean(a) => clean(a),
+        Command::Ls(a) => ls::ls(a),
+        Command::System(system::SystemCommand::Update(a)) => system::update(a, &printer),
         Command::Deps(a) => deps(a, &printer),
         Command::Init(a) => init::init(a.profiles_dir, &printer),
         Command::New(a) => init::new(a.dir, a.profile, a.source, &printer),
@@ -294,8 +314,17 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     }
     let selector = selection(&a.select, &a.selector);
     let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
+    let report_errors = project
+        .as_ref()
+        .map(|p| dre_core::manifest::report_errors(p, &diags))
+        .unwrap_or_default();
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
+    }
+    if let Err(e) = write_manifest(project.as_ref(), &report_errors, &a.project) {
+        diags.error("target-path-unwritable", None, None, e);
+    }
+    if let Some(p) = &project {
         // Plugins aren't installed when the project already has errors, so a missing one is then
         // only a warning; the option checks run either way, so every problem shows in one pass.
         let offline = a.project.no_auto_install || diags.has_errors();
@@ -321,7 +350,7 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
             "warnings": diags.warning_count(),
             "diagnostics": diags.sorted(),
             "compiled": plans,
-            "project": project,
+            "project": project.as_ref().map(|p| dre_core::manifest::build(p, &report_errors)),
         });
         println!(
             "{}",
@@ -335,11 +364,14 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
             for p in &plans {
                 printer.plan(p);
             }
-        } else if !plans.is_empty() {
+        } else if !plans.is_empty()
+            && let Some(p) = &project
+        {
             println!(
-                "Compiled {} Binding{} into target/compiled/",
+                "Compiled {} Binding{} into {}/",
                 plans.len(),
-                plural(plans.len())
+                plural(plans.len()),
+                shown(p, &p.target_dir.join("compiled")).display()
             );
         }
         if let Some(p) = &project {
@@ -449,7 +481,7 @@ fn compile(a: CompileArgs, mut printer: output::Printer) -> ExitCode {
     if !a.project.no_auto_install && !plugins::sync_packages(&a.project.project_dir, &printer) {
         return ExitCode::FAILURE;
     }
-    let Some(project) = load_for_run(&a.project, &printer) else {
+    let Some((project, manifest_checksum)) = load_for_run(&a.project, &printer) else {
         return ExitCode::FAILURE;
     };
     printer.log_to(&project.root);
@@ -475,6 +507,7 @@ fn compile(a: CompileArgs, mut printer: output::Printer) -> ExitCode {
             use std::io::IsTerminal;
             std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
         },
+        manifest_checksum,
         ..Default::default()
     };
     let summary = dre_core::run::run(&project, &opts, &mut printer);
@@ -592,11 +625,27 @@ fn profiles_line(p: &dre_core::profiles::Profiles) -> String {
     format!("{} (from {}{missing})", p.path.display(), p.found_by)
 }
 
-fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::project::Project> {
-    let (project, diags) = project::load(&p.project_dir, &p.load_options());
+/// Load the project for `compile` and `run`, writing its manifest; `None` (after printing
+/// why) when it can't run. Also returns the SHA-256 of the manifest written.
+fn load_for_run(
+    args: &ProjectArgs,
+    printer: &output::Printer,
+) -> Option<(dre_core::project::Project, Option<String>)> {
+    let (project, diags) = project::load(&args.project_dir, &args.load_options());
     if let Some(p) = &project {
         dre_core::secrets::set_enabled(p.mask_secrets);
     }
+    let errors = project
+        .as_ref()
+        .map(|p| dre_core::manifest::report_errors(p, &diags))
+        .unwrap_or_default();
+    let checksum = match write_manifest(project.as_ref(), &errors, args) {
+        Ok(c) => c,
+        Err(e) => {
+            printer.error(&e);
+            return None;
+        }
+    };
     for d in diags.sorted() {
         // Unmanaged reports warn again when they run, and a selected Binding whose profile
         // lacks the `--target` fails with its own error; the rest aren't this run's concern.
@@ -614,7 +663,32 @@ fn load_for_run(p: &ProjectArgs, printer: &output::Printer) -> Option<dre_core::
         ));
         return None;
     }
-    project
+    project.map(|p| (p, checksum))
+}
+
+/// Write the whole project's manifest into its target folder, or, when the project didn't load,
+/// remove a stale one. The error names the target path and where it was set.
+fn write_manifest(
+    project: Option<&dre_core::project::Project>,
+    errors: &dre_core::manifest::ReportErrors,
+    args: &ProjectArgs,
+) -> Result<Option<String>, String> {
+    let Some(p) = project else {
+        let root = &args.project_dir;
+        let from_file = dre_core::target::project_value(root);
+        if let Ok(t) = dre_core::target::resolve(root, args.target_path.as_deref(), from_file.as_deref()) {
+            dre_core::manifest::remove(&t.dir);
+        }
+        return Ok(None);
+    };
+    dre_core::manifest::write(p, errors)
+        .map(Some)
+        .map_err(|e| format!("{e} (target path from {})", p.target_source))
+}
+
+/// A path under the project as people read it: relative to the project when it's inside it.
+fn shown(project: &dre_core::project::Project, p: &std::path::Path) -> PathBuf {
+    dre_core::slash(p.strip_prefix(&project.root).unwrap_or(p))
 }
 
 /// Check that the declared plugin packages provide every plugin the project uses, naming the
@@ -656,7 +730,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     if !a.project.no_auto_install && !plugins::sync_packages(&a.project.project_dir, &printer) {
         return ExitCode::FAILURE;
     }
-    let Some(project) = load_for_run(&a.project, &printer) else {
+    let Some((project, manifest_checksum)) = load_for_run(&a.project, &printer) else {
         return ExitCode::FAILURE;
     };
     printer.log_to(&project.root);
@@ -687,6 +761,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         timezone: a.project.timezone(),
         live_check: false,
         schedule: a.schedule,
+        manifest_checksum,
     };
     if let Some(name) = &opts.schedule
         && !project.schedules.iter().any(|e| &e.name == name)
@@ -698,6 +773,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     let date = opts.date.unwrap_or_else(|| chrono::Utc::now().date_naive());
     let mut params = opts.params(date);
     params["profiles"] = serde_json::json!(project.profiles.path);
+    params["target_path"] = serde_json::json!(project.target_dir);
     printer.log_params(&params);
     printer.detail(output::Tone::Note, "Profiles", &profiles_line(&project.profiles));
     let summary = dre_core::run::run(&project, &opts, &mut printer);
@@ -714,17 +790,27 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
 }
 
 fn clean(a: CleanArgs) -> ExitCode {
-    match dre_core::run::clean(&a.project_dir) {
-        Ok(true) => {
-            eprintln!("Removed target/");
+    let root = &a.project_dir;
+    let from_file = dre_core::target::project_value(root);
+    let t = match dre_core::target::resolve(root, a.target_path.as_deref(), from_file.as_deref()) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let shown = dre_core::slash(t.dir.strip_prefix(root).unwrap_or(&t.dir));
+    match dre_core::target::clean_dir(root, &t) {
+        Ok(dre_core::target::Cleaned::Removed) => {
+            eprintln!("Removed {}/", shown.display());
             ExitCode::SUCCESS
         }
-        Ok(false) => {
-            eprintln!("Nothing to clean: no target/ directory");
+        Ok(dre_core::target::Cleaned::Missing) => {
+            eprintln!("Nothing to clean: no {}/ directory", shown.display());
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("error: can't remove target/: {e}");
+            eprintln!("error: {e}");
             ExitCode::FAILURE
         }
     }

@@ -156,7 +156,7 @@ pub fn registry_url() -> String {
 }
 
 /// The GitHub API DRE talks to: `DRE_GITHUB_API_URL` (GitHub Enterprise, tests), else GitHub's.
-fn github_api() -> String {
+pub fn github_api() -> String {
     std::env::var("DRE_GITHUB_API_URL")
         .ok()
         .filter(|s| !s.is_empty())
@@ -170,7 +170,7 @@ fn is_github(url: &str) -> bool {
     url.starts_with("https://github.com/") || url.starts_with(&format!("{}/", github_api()))
 }
 
-fn fetch(url: &str) -> Result<Vec<u8>, String> {
+pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
     if url.starts_with("http://") || url.starts_with("https://") {
         let mut req = ureq::get(url).header("User-Agent", "dre");
         if is_github(url) {
@@ -342,6 +342,38 @@ fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
         }
     }
     ra.len().cmp(&rb.len())
+}
+
+/// One published (non-draft) release of a GitHub repository whose tag is a version.
+#[derive(Debug, Clone)]
+pub struct Release {
+    pub tag: String,
+    pub version: Version,
+    /// Asset names and their API URLs (which [`fetch`] downloads).
+    pub assets: Vec<(String, String)>,
+}
+
+/// `repo`'s releases from the GitHub API (`DRE_GITHUB_API_URL`, `GITHUB_TOKEN`), skipping
+/// drafts and tags that aren't versions, newest first by [`version_order`].
+pub fn github_releases(repo: &str) -> Result<Vec<Release>, String> {
+    let url = format!("{}/repos/{repo}/releases?per_page=100", github_api());
+    let body = fetch(&url)?;
+    let releases: Vec<GithubRelease> =
+        serde_json::from_slice(&body).map_err(|e| format!("{url}: unexpected reply from GitHub: {e}"))?;
+    let mut out: Vec<Release> = releases
+        .into_iter()
+        .filter(|r| !r.draft)
+        .filter_map(|r| {
+            let version = Version::parse(r.tag_name.trim_start_matches('v')).ok()?;
+            Some(Release {
+                tag: r.tag_name,
+                version,
+                assets: r.assets.into_iter().map(|a| (a.name, a.url)).collect(),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| version_order(&b.version, &a.version));
+    Ok(out)
 }
 
 #[derive(Deserialize)]

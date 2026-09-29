@@ -70,6 +70,10 @@ tar -xzf "$tmp/$archive" -C "$tmp"
 mkdir -p "$dir"
 mv "$tmp/dre" "$dir/dre"
 chmod 755 "$dir/dre"
+# The receipt tells `dre system update` this is a direct install it may replace.
+if [ -f "$tmp/dre-receipt.json" ]; then
+  mv "$tmp/dre-receipt.json" "$dir/dre-receipt.json"
+fi
 echo "Installed $("$dir/dre" --version) to $dir/dre"
 
 case ":$PATH:" in

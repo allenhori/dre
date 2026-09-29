@@ -83,6 +83,7 @@ const PROJECT_KEYS: &[&str] = &[
     "week_start",
     "week_numbering",
     "reports",
+    crate::target::KEY,
 ];
 const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars", "+timezone"];
 const SET_ENTRY_KEYS: &[&str] = &[
@@ -107,6 +108,13 @@ pub struct Project {
     pub name: String,
     #[serde(skip)]
     pub root: PathBuf,
+    /// The folder DRE writes its generated files to (compiled SQL, run outputs, schema
+    /// snapshots, `run_results.json`, the manifest): `target/` in the root by default.
+    #[serde(skip)]
+    pub target_dir: PathBuf,
+    /// Where the target path was set, for messages.
+    #[serde(skip)]
+    pub target_source: crate::target::Source,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_profile: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -157,6 +165,11 @@ pub struct Project {
     /// Every folder under `reports/`, as path segments.
     #[serde(skip)]
     pub folders: Vec<Vec<String>>,
+    /// The project's own source files, relative to the root with forward slashes, sorted:
+    /// every YAML file (not a root `profiles.yml`) and everything under `reports/`, `macros/`
+    /// and `lookups/`.
+    #[serde(skip)]
+    pub sources: Vec<PathBuf>,
     #[serde(skip)]
     pub profiles: Profiles,
 }
@@ -411,6 +424,8 @@ pub struct LoadOptions {
     pub target: Option<String>,
     /// `--var name=value`, the top of every `var()` chain.
     pub vars: BTreeMap<String, String>,
+    /// `--target-path`, above `DRE_TARGET_PATH` and `target_path:`.
+    pub target_path: Option<String>,
 }
 
 /// Parse and validate the project at `root`. Returns the resolved project when it could be
@@ -418,6 +433,8 @@ pub struct LoadOptions {
 pub fn load(root: &Path, opts: &LoadOptions) -> (Option<Project>, Diagnostics) {
     let mut l = Loader {
         root: root.to_path_buf(),
+        target: crate::target::TargetPath::default_for(root),
+        target_inside: Some(PathBuf::from(TARGET_DIR)),
         opts: opts.clone(),
         diags: Diagnostics::default(),
         format_options: Mapping::new(),
@@ -428,6 +445,10 @@ pub fn load(root: &Path, opts: &LoadOptions) -> (Option<Project>, Diagnostics) {
 
 struct Loader {
     root: PathBuf,
+    /// The resolved target folder.
+    target: crate::target::TargetPath,
+    /// The target folder relative to the root, when it's inside the project: discovery skips it.
+    target_inside: Option<PathBuf>,
     opts: LoadOptions,
     diags: Diagnostics,
     /// `format_options:` from the project file: per format, defaults under every output of it.
@@ -461,6 +482,8 @@ struct Discovered {
     /// Files under `lookups/`, relative paths.
     lookups: Vec<PathBuf>,
     folders: Vec<Vec<String>>,
+    /// Every project source file, relative: see [`Project::sources`].
+    sources: Vec<PathBuf>,
 }
 
 /// Where a report-level value came from, for error messages.
@@ -493,11 +516,43 @@ impl Loader {
             PathBuf::from(PROJECT_FILE),
             &mut self.diags,
         )?);
+        let project_target = pyaml.value.get(crate::target::KEY).and_then(Value::as_str);
+        if let Some(v) = pyaml.value.get(crate::target::KEY)
+            && !v.is_string()
+        {
+            self.diags.error(
+                "invalid-field",
+                Some(PathBuf::from(PROJECT_FILE)),
+                pyaml.line_of(crate::target::KEY, None),
+                "`target_path` must be a path",
+            );
+            return None;
+        }
+        match crate::target::resolve(&self.root, self.opts.target_path.as_deref(), project_target) {
+            Ok(t) => {
+                self.target_inside = crate::target::inside(&self.root, &t.dir);
+                self.target = t;
+            }
+            Err(e) => {
+                let from_file = self.opts.target_path.is_none()
+                    && std::env::var(crate::target::ENV).map_or(true, |v| v.is_empty());
+                self.diags.error(
+                    "invalid-target-path",
+                    from_file.then(|| PathBuf::from(PROJECT_FILE)),
+                    from_file
+                        .then(|| pyaml.line_of(crate::target::KEY, None))
+                        .flatten(),
+                    e,
+                );
+                return None;
+            }
+        }
         let mut project = self.parse_project_file(&pyaml)?;
 
         let found = self.discover();
         project.folders = found.folders.clone();
         project.macros = found.macros.clone();
+        project.sources = found.sources.clone();
         let declared = packages::declared(&self.root, &mut self.diags);
         project.packages = packages::resolve(&self.root, &declared, &mut self.diags);
         self.check_macro_namespaces(&project);
@@ -759,6 +814,8 @@ impl Loader {
         Some(Project {
             name: name?,
             root: self.root.clone(),
+            target_dir: self.target.dir.clone(),
+            target_source: self.target.source,
             default_profile,
             default_set,
             vars,
@@ -785,6 +842,7 @@ impl Loader {
                 .filter_map(|(k, v)| Some((k.as_str()?.to_string(), yaml_map_to_json(v.as_mapping()?))))
                 .collect(),
             folders: Vec::new(),
+            sources: Vec::new(),
             profiles: Profiles::default(),
         })
     }
@@ -1021,7 +1079,10 @@ impl Loader {
             macros: Vec::new(),
             lookups: Vec::new(),
             folders: Vec::new(),
+            sources: Vec::new(),
         };
+        let target_inside = self.target_inside.clone();
+        let root = self.root.clone();
         let walker = walkdir::WalkDir::new(&self.root)
             .sort_by_file_name()
             .into_iter()
@@ -1030,6 +1091,9 @@ impl Loader {
                 // Generated or installed, never part of the project's own sources.
                 e.depth() == 0
                     || !(name.starts_with('.')
+                        || target_inside
+                            .as_deref()
+                            .is_some_and(|t| e.path().strip_prefix(&root).is_ok_and(|r| r == t))
                         || (e.depth() == 1 && [TARGET_DIR, DEPS_DIR, LOGS_DIR].contains(&name.as_ref())))
             });
         for e in walker.filter_map(Result::ok) {
@@ -1042,6 +1106,10 @@ impl Loader {
                 continue;
             }
             let ext = e.path().extension().and_then(|x| x.to_str()).unwrap_or("");
+            let yaml = matches!(ext, "yml" | "yaml") && rel != Path::new(crate::profiles::PROFILES_FILE);
+            if yaml || in_reports || rel.starts_with(MACROS_DIR) || rel.starts_with(LOOKUPS_DIR) {
+                d.sources.push(rel.clone());
+            }
             if rel.starts_with(LOOKUPS_DIR) {
                 d.lookups.push(rel);
                 continue;

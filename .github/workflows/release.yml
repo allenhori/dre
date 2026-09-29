@@ -6,7 +6,8 @@ name: Release
 # docs/registry.md). A tag with a pre-release suffix (`-alpha`, `-rc.1`) makes a pre-release.
 #
 # Assets, per platform (`<os>-<arch>` as in the index: macos-aarch64, linux-x86_64, ...):
-#   dre-<version>-<platform>.tar.gz (.zip on Windows)    the dre CLI, for install.sh
+#   dre-<version>-<platform>.tar.gz (.zip on Windows)    the dre CLI and its install receipt
+#                                                       (dre-receipt.json), for install.sh
 #   dre-plugin-<package>-<version>-<platform>.tar.gz     one plugin package, for the registry
 #   dre_cli-<pep440 version>-py3-none-<tag>.whl         the `dre-cli` wheels for PyPI
 # plus SHA256SUMS and install.sh.
@@ -99,10 +100,13 @@ jobs:
           cp "$RUNNER_TEMP/dre-plugin-databricks" "$bin/dre-plugin-databricks$ext"
           mkdir dist
           suffix="$VERSION-${{ matrix.platform }}"
+          # The install receipt: `dre system update` reads it to know this copy is a direct
+          # install it may replace. The wheel builder swaps in a `pypi` one.
+          printf '{"schema": 1, "source": "release_archive", "version": "%s"}\n' "$VERSION" > "$bin/dre-receipt.json"
           if [[ -n "$ext" ]]; then
-            (cd "$bin" && 7z a -bd "$GITHUB_WORKSPACE/dist/dre-$suffix.zip" dre.exe >/dev/null)
+            (cd "$bin" && 7z a -bd "$GITHUB_WORKSPACE/dist/dre-$suffix.zip" dre.exe dre-receipt.json >/dev/null)
           else
-            tar -C "$bin" -czf "dist/dre-$suffix.tar.gz" dre
+            tar -C "$bin" -czf "dist/dre-$suffix.tar.gz" dre dre-receipt.json
           fi
           for exe in "$bin"/dre-plugin-*; do
             file="$(basename "$exe")"
@@ -193,6 +197,9 @@ jobs:
           /tmp/venv/bin/pip install -q wheels/*manylinux*_x86_64.whl
           /tmp/venv/bin/dre --version
           /tmp/venv/bin/python -m dre_cli plugin list
+          # The wheel's receipt makes this a pip-managed install (--check changes nothing).
+          GITHUB_TOKEN="${{ github.token }}" /tmp/venv/bin/dre system update --check | tee /tmp/check.txt
+          grep -q "installed with pip" /tmp/check.txt
 
       - name: Attach the wheels to the release
         run: gh release upload "$GITHUB_REF_NAME" wheels/*.whl
