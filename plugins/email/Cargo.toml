@@ -8,7 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-dre-protocol = { path = "../../crates/dre-protocol" }
+dre-protocol.workspace = true
 serde_json.workspace = true
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "hostname", "native-tls"] }
 

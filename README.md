@@ -50,6 +50,14 @@ Each release attaches the wheels (`dre_cli-*.whl`), which install the same way w
 included), add `dre-cli` to the job's environment dependencies and run `dre` from a script or
 notebook.
 
+### With cargo
+
+```bash
+cargo install dre-cli --locked          # builds `dre` from crates.io
+```
+
+A pre-release installs only when named: `cargo install dre-cli --locked --version 0.1.0-rc.1`.
+
 ### Plugins
 
 However DRE is installed, only `dre` itself is. Every source, format and destination is a plugin
@@ -77,7 +85,8 @@ To have them in place before the first run, e.g. on a machine or job that starts
 - **pip, uv or pipx**: `dre` changes nothing and prints the command to run:
   `<python> -m pip install -U dre-cli`, `uv tool upgrade dre-cli` or `pipx upgrade dre-cli`.
   If `dre-cli` is pinned in a project's or a Databricks job's dependencies, bump the pin there.
-- **A build of your own** (`cargo build`, `cargo install`): `dre` refuses to overwrite it.
+- **cargo**: `dre` changes nothing and prints the `cargo install` command for the new version.
+- **A build of your own** (`cargo build`, `cargo install --path`): `dre` refuses to overwrite it.
 
 While every release is a pre-release, "newest" includes pre-releases. Once there are stable
 releases, a stable `dre` updates to the newest stable one. Only `dre system update` checks for

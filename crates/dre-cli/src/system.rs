@@ -1,7 +1,8 @@
 //! `dre system`: commands about DRE itself rather than a project. `dre system update` updates
 //! DRE the way this copy was installed: a direct install (a release archive, install.sh) replaces
 //! its own binary after checking it against the release's SHA256SUMS; a package manager's
-//! install is left alone, with that manager's command printed; anything else is refused.
+//! install (pip, uv, pipx, Homebrew, Scoop, `cargo install` from crates.io) is left alone, with
+//! that manager's command printed; anything else is refused.
 //!
 //! This is the only command that checks for a newer DRE: nothing else calls the network for it.
 
@@ -47,14 +48,16 @@ enum Install {
     Pipx,
     Homebrew,
     Scoop,
+    /// `cargo install dre-cli` from crates.io.
+    Cargo,
     Unknown,
 }
 
 impl Install {
-    /// A package manager's name and the command that updates DRE through it: to the newest
-    /// version, or to `pinned`.
-    fn manager(&self, pinned: Option<&Version>) -> Option<(&'static str, String)> {
-        let pin = pinned.map(pep440);
+    /// A package manager's name and the command that updates DRE through it to `wanted`: the
+    /// newest version, or one the user `pinned`.
+    fn manager(&self, wanted: &Version, pinned: bool) -> Option<(&'static str, String)> {
+        let pin = pinned.then(|| pep440(wanted));
         Some(match (self, pin) {
             (Install::Pip { python }, None) => {
                 ("pip", format!("{} -m pip install -U dre-cli", python.display()))
@@ -72,7 +75,12 @@ impl Install {
                 "brew upgrade dre (Homebrew installs only the formula's current version)".into(),
             ),
             (Install::Scoop, None) => ("Scoop", "scoop update dre".into()),
-            (Install::Scoop, Some(_)) => ("Scoop", format!("scoop install dre@{}", pinned.unwrap())),
+            (Install::Scoop, Some(_)) => ("Scoop", format!("scoop install dre@{wanted}")),
+            // cargo only installs a pre-release named by version, so always name it.
+            (Install::Cargo, _) => (
+                "cargo",
+                format!("cargo install dre-cli --locked --version {wanted}"),
+            ),
             (Install::Direct | Install::Unknown, _) => return None,
         })
     }
@@ -110,10 +118,11 @@ pub fn update(a: UpdateArgs, printer: &output::Printer) -> ExitCode {
     let install = detect(&exe);
     if install == Install::Unknown {
         printer.error(&format!(
-            "can't update this dre ({}): it wasn't installed from a DRE release (a `cargo build` or `cargo install`, or a copied binary), so it isn't replaced.\n  \
+            "can't update this dre ({}): it wasn't installed from a DRE release (a `cargo build`, a `cargo install` from a checkout, or a copied binary), so it isn't replaced.\n  \
              Install a copy that updates, one of:\n    \
              curl -fsSL https://raw.githubusercontent.com/{REPO}/master/install.sh | sh\n    \
              pip install dre-cli   (or: uv tool install dre-cli, pipx install dre-cli)\n    \
+             cargo install dre-cli --locked\n    \
              on Windows, unpack dre-<version>-windows-x86_64.zip from https://github.com/{REPO}/releases",
             exe.display()
         ));
@@ -152,7 +161,7 @@ pub fn update(a: UpdateArgs, printer: &output::Printer) -> ExitCode {
     };
     let newer = manager::version_order(&wanted.version, &current) == std::cmp::Ordering::Greater;
     let same = wanted.version == current;
-    if let Some((name, command)) = install.manager(a.version.as_ref().map(|_| &wanted.version)) {
+    if let Some((name, command)) = install.manager(&wanted.version, a.version.is_some()) {
         // Newer than every release (a build of the next one): nothing to point at.
         let same = same || (!newer && a.version.is_none());
         if same {
@@ -280,6 +289,15 @@ fn detect(exe: &Path) -> Install {
     if has(&["scoop", "apps"]) || under_env("SCOOP") || under_env("SCOOP_GLOBAL") {
         return Install::Scoop;
     }
+    // `cargo install` puts the binary in <root>/bin and records it in <root>/.crates2.json.
+    if exe
+        .parent()
+        .and_then(Path::parent)
+        .and_then(|root| std::fs::read(root.join(".crates2.json")).ok())
+        .is_some_and(|b| from_crates_io(&b))
+    {
+        return Install::Cargo;
+    }
     let receipt = std::fs::read(exe.with_file_name(RECEIPT))
         .ok()
         .and_then(|b| serde_json::from_slice::<Receipt>(&b).ok());
@@ -298,6 +316,28 @@ fn detect(exe: &Path) -> Install {
         }
         _ => Install::Unknown,
     }
+}
+
+/// Whether cargo's install record (`.crates2.json`) lists `dre` as installed from crates.io's
+/// `dre-cli`, rather than from a path or git checkout.
+fn from_crates_io(record: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct Record {
+        #[serde(default)]
+        installs: std::collections::BTreeMap<String, Installed>,
+    }
+    #[derive(Deserialize)]
+    struct Installed {
+        #[serde(default)]
+        bins: Vec<String>,
+    }
+    serde_json::from_slice::<Record>(record).is_ok_and(|r| {
+        r.installs.iter().any(|(key, i)| {
+            key.starts_with("dre-cli ")
+                && key.contains("(registry+")
+                && i.bins.iter().any(|b| b.trim_end_matches(".exe") == "dre")
+        })
+    })
 }
 
 /// The interpreter of the Python environment holding `exe` (`<env>/lib/pythonX.Y/site-packages/

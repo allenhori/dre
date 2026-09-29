@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use arrow::array::RecordBatch;
@@ -842,9 +842,14 @@ impl Drop for PluginProcess {
     }
 }
 
+static CORE_VERSION: OnceLock<String> = OnceLock::new();
+
+/// Set the DRE version sent to plugins in the handshake (`core_version`). This crate is versioned
+/// on its own, so the host names the version of DRE it's part of; unset, it's "unreleased".
+pub fn set_core_version(version: &str) {
+    let _ = CORE_VERSION.set(version.to_string());
+}
+
 fn core_version() -> String {
-    match env!("CARGO_PKG_VERSION") {
-        "0.0.0" => "unreleased".into(),
-        v => v.into(),
-    }
+    CORE_VERSION.get().cloned().unwrap_or_else(|| "unreleased".into())
 }

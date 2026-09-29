@@ -8,7 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-dre-protocol = { path = "../../crates/dre-protocol" }
+dre-protocol.workspace = true
 arrow = { workspace = true, features = ["chrono-tz"] }
 serde_json.workspace = true
 encoding_rs = "0.8"

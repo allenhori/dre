@@ -267,6 +267,7 @@ struct CompileArgs {
 }
 
 fn main() -> ExitCode {
+    dre_protocol::host::set_core_version(dre_core::version());
     let cli = Cli::parse();
     let printer = cli.printer();
     let project_args = match &cli.command {

@@ -23,15 +23,19 @@ PACKAGES = json.loads((ROOT / ".github/scripts/packages.json").read_text())
 SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?")
 
 
-def cargo_version(crate):
-    """A workspace crate's version, as Cargo resolves it."""
+def metadata(crate):
+    """A workspace crate's metadata, as Cargo resolves it."""
     meta = json.loads(
         subprocess.run(
             ["cargo", "metadata", "--no-deps", "--format-version", "1"],
             cwd=ROOT, check=True, capture_output=True, text=True,
         ).stdout
     )
-    return next(p["version"] for p in meta["packages"] if p["name"] == crate)
+    return next(p for p in meta["packages"] if p["name"] == crate)
+
+
+def cargo_version(crate):
+    return metadata(crate)["version"]
 
 
 def plan(tag):
@@ -55,6 +59,11 @@ def plan(tag):
         sys.exit(f"tag {tag}: `{version}` isn't a version")
     if version != source:
         sys.exit(f"tag {tag} is version {version}, but {where} says {source}")
+    if kind == "core":
+        # dre-cli, as published to crates.io, must depend on the dre-core of the same release.
+        req = next(d["req"] for d in metadata("dre-cli")["dependencies"] if d["name"] == "dre-core")
+        if req != f"={version}":
+            sys.exit(f"tag {tag}: the workspace's dre-core dependency is `{req}`; make it `={version}` in Cargo.toml")
     return {
         "kind": kind,
         "package": package,

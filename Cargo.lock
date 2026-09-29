@@ -1851,7 +1851,7 @@ dependencies = [
 
 [[package]]
 name = "dre-protocol"
-version = "0.0.1-alpha-12"
+version = "0.1.0-alpha-1"
 dependencies = [
  "arrow",
  "serde",

@@ -10,6 +10,10 @@ repository = "https://github.com/allenhori/dre"
 publish = false
 
 [workspace.dependencies]
+# DRE's own crates, published to crates.io. dre-core's version is DRE's (above; bump both
+# together, release_plan.py checks it). dre-protocol has its own version.
+dre-core = { path = "crates/dre-core", version = "=0.0.1-alpha-12" }
+dre-protocol = { path = "crates/dre-protocol", version = "0.1.0-alpha-1" }
 anyhow = "1"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
