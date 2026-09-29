@@ -319,9 +319,10 @@ jobs:
           printf 'sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {type: duckdb, path: ":memory:"}\n' > profiles.yml
           printf "select 1 as n, 'a' as s\n" > reports/r/numbers.sql
           printf 'queries: [numbers]\noutput: {format: csv}\n' > reports/r/r.yml
-          /tmp/venv/bin/dre run | tee /tmp/run.txt
+          # Progress ("Installed  plugin package ...") goes to stderr.
+          /tmp/venv/bin/dre run 2>&1 | tee /tmp/run.txt
           grep -q "Installed  plugin package \`duckdb\`" /tmp/run.txt
-          grep -qx '1,a' target/run/r/default/r.csv
+          grep -q '^1,a' target/run/r/default/r.csv  # CRLF line endings, as RFC 4180 has them
 
       - name: Attach the wheels to the release
         run: gh release upload "$GITHUB_REF_NAME" wheels/*.whl
