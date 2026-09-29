@@ -5,7 +5,10 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+readme = "README.md"
+keywords = ["dre", "reporting", "sql", "excel", "jinja"]
+categories = ["command-line-utilities", "database"]
+exclude = ["tests/"]
 
 [dependencies]
 anyhow.workspace = true
@@ -21,7 +24,7 @@ chrono-tz.workspace = true
 encoding_rs = "0.8"
 calamine = { version = "0.36", features = ["dates"] }
 csv = "1"
-dre-protocol = { path = "../dre-protocol" }
+dre-protocol.workspace = true
 arrow.workspace = true
 ureq = "3"
 sha2 = "0.11"

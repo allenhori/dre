@@ -22,6 +22,9 @@ pub mod plugin;
 pub mod sessions;
 pub mod util;
 
+/// This crate's version (its own, not DRE's); the fixture plugins report it.
+pub const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Protocol versions this build speaks.
 pub const MIN_VERSION: u32 = 0;
 pub const MAX_VERSION: u32 = 0;

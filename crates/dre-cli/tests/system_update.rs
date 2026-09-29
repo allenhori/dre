@@ -580,6 +580,35 @@ fn scoop_by_layout_or_root() {
 }
 
 #[test]
+fn cargo_install_from_crates_io() {
+    let s = Server::start();
+    s.releases(&["0.0.1-alpha-10", "0.0.1-alpha-12"]);
+    let d = Installed::at(".cargo/bin", None);
+    let installs = |source: &str| {
+        std::fs::write(
+            d.dir.path().join(".cargo/.crates2.json"),
+            format!(r#"{{"installs": {{"dre-cli 0.0.1-alpha-11 ({source})": {{"bins": ["dre"]}}}}}}"#),
+        )
+        .unwrap()
+    };
+    installs("registry+https://github.com/rust-lang/crates.io-index");
+    // cargo installs a pre-release only when asked for it by version, so the command names one.
+    managed(&d, &s, "cargo install dre-cli --locked --version 0.0.1-alpha-12");
+    d.update(&s, "0.0.1-alpha-11", &["--check"])
+        .ok()
+        .says("installed with cargo");
+    d.update(&s, "0.0.1-alpha-12", &["0.0.1-alpha-10", "--check"])
+        .ok()
+        .says("cargo install dre-cli --locked --version 0.0.1-alpha-10");
+    // `cargo install --path`: a build of a checkout, not a release, so it isn't touched.
+    installs("path+file:///src/dre/crates/dre-cli");
+    d.update(&s, "0.0.1-alpha-11", &[])
+        .failed()
+        .says("wasn't installed from a DRE release");
+    assert!(d.unchanged());
+}
+
+#[test]
 fn a_managed_install_gets_the_command_for_a_pinned_version() {
     let s = Server::start();
     s.releases(&["0.0.1-alpha-10", "0.0.1-alpha-12"]);

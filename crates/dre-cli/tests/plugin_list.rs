@@ -39,7 +39,7 @@ fn plugin_list_shows_package_provides_version_and_protocol() {
     let cols = |l: &str| l.split_whitespace().map(str::to_string).collect::<Vec<_>>();
     assert_eq!(
         &cols(lines[1])[..4],
-        &["fixture", "source/fixture", env!("CARGO_PKG_VERSION"), "v0"],
+        &["fixture", "source/fixture", dre_protocol::CRATE_VERSION, "v0"],
         "{text}"
     );
     assert_eq!(
@@ -48,7 +48,7 @@ fn plugin_list_shows_package_provides_version_and_protocol() {
             "fixture",
             "source/fixture,",
             "destination/inbox",
-            env!("CARGO_PKG_VERSION"),
+            dre_protocol::CRATE_VERSION,
             "v0"
         ],
         "{text}"

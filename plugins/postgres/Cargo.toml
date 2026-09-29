@@ -8,7 +8,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-dre-protocol = { path = "../../crates/dre-protocol" }
+dre-protocol.workspace = true
 arrow.workspace = true
 serde_json.workspace = true
 postgres = { version = "0.19", features = ["with-chrono-0_4", "with-uuid-1", "with-serde_json-1"] }

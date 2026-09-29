@@ -235,6 +235,31 @@ jobs:
           python3 .github/scripts/registry_index.py registry/packages.json "$GITHUB_REPOSITORY" > packages.json
           gh release upload registry packages.json --clobber
 
+  crates:
+    name: Publish to crates.io
+    needs: [plan, publish]
+    if: needs.plan.outputs.kind == 'core'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # dre-protocol has its own version: it's published only when that version is new. dre-core
+      # and dre-cli carry DRE's. `cargo publish` waits for each to be in the index before the next.
+      - name: Publish dre-protocol, dre-core and dre-cli
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_RELEASE_SECRET }}
+        run: |
+          [[ -n "$CARGO_REGISTRY_TOKEN" ]] || { echo "::error::the CRATES_RELEASE_SECRET secret isn't set"; exit 1; }
+          for crate in dre-protocol dre-core dre-cli; do
+            version="$(cargo metadata --no-deps --format-version 1 | jq -r --arg c "$crate" '.packages[] | select(.name == $c) | .version')"
+            if curl -sfo /dev/null -A "dre-release (github.com/${{ github.repository }})" "https://crates.io/api/v1/crates/$crate/$version"; then
+              echo "$crate $version is already on crates.io"
+            else
+              cargo publish -p "$crate" --locked
+            fi
+          done
+
   pypi:
     name: PyPI wheels
     needs: [plan, publish]

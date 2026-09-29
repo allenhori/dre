@@ -7,7 +7,9 @@ is three destinations), and core names the one it wants in the handshake. Plugin
 in any language. This document
 is the contract between core and a plugin. Any change to it means a new protocol version.
 
-The reference implementation is the `dre-protocol` crate. It has three parts:
+The reference implementation is the [`dre-protocol`](https://crates.io/crates/dre-protocol) crate
+(`cargo add dre-protocol`). It has its own version, apart from both DRE's and this protocol's.
+It has three parts:
 
 - the core side, `host`;
 - a plugin SDK, `plugin`, which gives Rust authors framing, the handshake and error handling;
