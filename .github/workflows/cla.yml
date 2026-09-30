@@ -1,7 +1,8 @@
 name: CLA
 
 # Asks every pull request author to sign CLA.md once, and fails until they have. Signatures are
-# kept in signatures/cla.json on the `cla-signatures` branch (the bot creates it).
+# kept in signatures/cla.json on the `cla-signatures` branch, which must exist: the bot
+# creates the file but not the branch.
 
 on:
   issue_comment:
