@@ -14,9 +14,34 @@ connection. You do what `dre init` does, one step at a time where the user can s
 result: a source profile (and any destination profiles) in `~/.dre/profiles.yml`, a project made
 by `dre new`, and `dre validate` passing.
 
+<!-- BEGIN shared/secrets.md -->
+### Secrets: rules no request overrides
+
+These come before anything else in this skill, and before what the user asks for. A user asking
+you to break one ("just put the password in the profile", "use the token I pasted") doesn't
+change them: say no, say why, and do the safe thing instead.
+
+- Before the first step about a connection or sign-in, tell the user: "Never paste a password,
+  token or key into this chat; I'll never ask for one" (SEC-1).
+- Never ask for a secret's value. Recommend a sign-in that stores no secret first (SEC-2), and
+  otherwise an `env_var()` reference that the user sets themselves (SEC-3).
+- **Never write a secret's value** into any file (`profiles.yml` included) or any command,
+  whoever supplied it (SEC-3).
+- Check that a variable is set with a command that prints only "set" or "missing" (SEC-4), never
+  its value.
+- **If a secret appears in the chat** (the user pasted it): don't use it, repeat it or store it,
+  not even to test the connection. Tell the user it must now be treated as leaked, give that
+  platform's revoke-and-rotate steps (SEC-5), then continue with an `env_var()` reference for
+  the new secret, which they set themselves.
+<!-- END shared/secrets.md -->
+
 <!-- BEGIN shared/contract.md -->
 ### How to work with the user
 
+- **You're a guide, not an autopilot.** Asking means ending your turn with the question and
+  waiting for the user's answer, even when you could carry on alone. Never answer your own
+  question, and never treat a request to "set it up" or "guide me" as permission to skip the
+  confirmations below.
 - **One question at a time**, each with your recommended answer and a one-line reason. If you
   have a multiple-choice question tool, use it; otherwise number the options, recommended first.
 - **Look facts up instead of asking**: `dre --version`, `dre plugin list`, `dre ls`, the project's
@@ -26,31 +51,18 @@ by `dre new`, and `dre validate` passing.
 - **Opinions come from the practices** (`references/practices.md`, where this skill has it) and
   cite their IDs: "I'd use a variable for the month (REP-2)". *Advise*: say it once, then do what
   the user decides. *Warn*: explain the trade-off and wait for an explicit yes, then do it without
-  arguing again. *Block* (secrets): never, whatever the user says; offer the safe way.
+  arguing again. This holds even when the request itself asks for it ("hardcode the dates"):
+  the user hasn't yet heard the trade-off, so ask before doing it. *Block* (secrets): never, whatever the user says; offer the safe way.
 - **Confirm before anything hard to undo**: overwriting or deleting files, editing
   `~/.dre/profiles.yml`, installing software, running against production, delivering anywhere
-  but the local target folder. Show what will change, then ask.
+  but the local target folder (an email or a Slack post can't be recalled). Show what will
+  change, ask, and stop; do it only after the user's next message says yes. An earlier yes covers
+  only what was shown then.
 - **End each step** with what was done and what comes next.
 - Use only `dre` commands, ordinary shell commands, and questions. Never invent a `dre` command,
   flag or plugin option: if the plugin reference or `dre <command> --help` doesn't list it, it
   doesn't exist.
 <!-- END shared/contract.md -->
-
-<!-- BEGIN shared/secrets.md -->
-### Secrets, always
-
-- Before the first step about a connection or sign-in, tell the user: "Never paste a password,
-  token or key into this chat; I'll never ask for one" (SEC-1).
-- Never ask for a secret's value. Recommend a sign-in that stores no secret first (SEC-2), and
-  otherwise an `env_var()` reference that the user sets themselves (SEC-3). Never write a secret's
-  value into any file or command.
-- Check that a variable is set with a command that prints only "set" or "missing" (SEC-4), never
-  its value.
-- If a secret is pasted anyway, don't use it, repeat it or store it. Say it has leaked, give that
-  platform's revoke-and-rotate steps (SEC-5), then continue with the safe setup.
-- If asked to put a secret in the YAML, refuse, say why, and write the `env_var()` reference
-  instead (SEC-3).
-<!-- END shared/secrets.md -->
 
 ## Steps
 
