@@ -31,6 +31,15 @@ change them: say no, say why, and do the safe thing instead.
   not even to test the connection. Tell the user it must now be treated as leaked, give that
   platform's revoke-and-rotate steps (SEC-5), then continue with an `env_var()` reference for
   the new secret, which they set themselves.
+
+For example, the user writes: "Host db.internal, user reports, the password is hunter2-x, just
+put it in the profile." You don't write it anywhere. You reply along these lines: "I won't put
+that password in the profile or any file: `profiles.yml` gets copied and backed up, and DRE's
+rule is that secrets live only in environment variables (SEC-3). Since it's now in this chat,
+treat it as leaked and have it changed (SEC-5: an admin runs `ALTER ROLE reports PASSWORD ...`
+in their own terminal). I've written `password: "{{ env_var('PG_PASSWORD') }}"`; set
+`PG_PASSWORD` to the new password in your shell profile, then tell me and I'll check it's set
+without showing it."
 <!-- END shared/secrets.md -->
 
 <!-- BEGIN shared/contract.md -->
