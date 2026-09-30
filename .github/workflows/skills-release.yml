@@ -4,7 +4,7 @@ name: Skills release
 # The tag's version must be the one in skills/.claude-plugin/plugin.json (which every SKILL.md
 # repeats), and the skills checks (skills.yml) must pass at the tag's commit.
 #
-# The release moves the `skills-latest` branch to the tag, which is what the install channels
+# The release moves the `skills-latest` branch to the tag's skills, which is what the install channels
 # serve: the Claude Code marketplace (.claude-plugin/marketplace.json) and
 # `npx skills add allenhori/dre#skills-latest`. So users get released skills, never master. A
 # pre-release moves it only while there is no stable skills release yet; otherwise it's installed
@@ -15,6 +15,9 @@ name: Skills release
 on:
   push:
     tags: ["skills-v*"]
+
+# One skills release at a time: each moves skills-latest.
+concurrency: skills-release
 
 jobs:
   check:
@@ -49,10 +52,23 @@ jobs:
           gh release create "$TAG" "${flags[@]}" --title "DRE skills ${TAG#skills-v}" --notes "$notes"
 
       - name: Serve it on the install channels
+        # skills-latest holds only what the channels read (skills/, .claude-plugin/ and the
+        # licence), one commit per release on top of the last. It never contains workflow files,
+        # which GITHUB_TOKEN may not push, and it only moves forward.
         run: |
-          if python3 .github/scripts/skills.py serves-latest "$TAG"; then
-            git push --force origin "$GITHUB_SHA:refs/heads/skills-latest"
-            echo "skills-latest is now $TAG ($GITHUB_SHA)"
-          else
+          if ! python3 .github/scripts/skills.py serves-latest "$TAG"; then
             echo "$TAG isn't the newest release to serve; skills-latest stays where it is."
+            exit 0
           fi
+          export GIT_INDEX_FILE="$RUNNER_TEMP/skills-index"
+          git read-tree --empty
+          git read-tree --prefix=skills/ "$GITHUB_SHA:skills"
+          git read-tree --prefix=.claude-plugin/ "$GITHUB_SHA:.claude-plugin"
+          git update-index --add --cacheinfo "100644,$(git rev-parse "$GITHUB_SHA:LICENSE"),LICENSE"
+          tree="$(git write-tree)"
+          parent=()
+          if git fetch -q origin skills-latest 2>/dev/null; then parent=(-p FETCH_HEAD); fi
+          commit="$(git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+            commit-tree "$tree" "${parent[@]}" -m "$TAG ($GITHUB_SHA)")"
+          git push origin "$commit:refs/heads/skills-latest"
+          echo "skills-latest is now $TAG ($commit, from $GITHUB_SHA)"
