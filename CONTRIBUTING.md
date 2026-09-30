@@ -30,8 +30,17 @@ DRE is released under the GPL-3.0, and is also offered under a commercial licens
 to do both with your contribution, we need you to sign the [CLA](CLA.md) once. You keep the
 copyright in your work.
 
-On your first pull request, the CLA bot posts a comment. Reply with the sentence it asks for,
-and it records your signature. Pull requests can't be merged until every author has signed.
+On your first pull request, the CLA check fails and the CLA bot posts a comment. To sign, post
+this sentence as a new comment on the pull request, exactly as written and with nothing else in
+the comment:
+
+```text
+I have read the CLA Document and I hereby sign the CLA
+```
+
+The bot records your signature and the check turns green. If it stays red, post a comment
+containing only `recheck`. You sign once; later pull requests pass without it. Pull requests
+can't be merged until every author has signed.
 
 ## Building and testing
 
