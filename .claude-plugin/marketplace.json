@@ -1,0 +1,17 @@
+{
+  "name": "dre",
+  "description": "DRE's agent skills: an interactive guide from installing DRE to a delivered report.",
+  "owner": {"name": "allenhori", "url": "https://github.com/allenhori"},
+  "plugins": [
+    {
+      "name": "dre",
+      "description": "An interactive guide to DRE: install, set up, write reports, run and deliver them, and upgrade.",
+      "source": {
+        "source": "git-subdir",
+        "url": "allenhori/dre",
+        "path": "skills",
+        "ref": "skills-latest"
+      }
+    }
+  ]
+}

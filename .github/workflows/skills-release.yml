@@ -1,0 +1,58 @@
+name: Skills release
+
+# `skills-v<version>` (an annotated tag, e.g. skills-v1.0.0) releases the agent skills in skills/.
+# The tag's version must be the one in skills/.claude-plugin/plugin.json (which every SKILL.md
+# repeats), and the skills checks (skills.yml) must pass at the tag's commit.
+#
+# The release moves the `skills-latest` branch to the tag, which is what the install channels
+# serve: the Claude Code marketplace (.claude-plugin/marketplace.json) and
+# `npx skills add allenhori/dre#skills-latest`. So users get released skills, never master. A
+# pre-release moves it only while there is no stable skills release yet; otherwise it's installed
+# by its tag (`npx skills add allenhori/dre#skills-v1.1.0-rc.1`).
+#
+# The skills release is never GitHub's "latest" release; that stays DRE's.
+
+on:
+  push:
+    tags: ["skills-v*"]
+
+jobs:
+  check:
+    uses: ./.github/workflows/skills.yml
+
+  release:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag
+        run: python3 .github/scripts/skills.py release-check "$TAG"
+
+      - name: Create the release
+        run: |
+          git fetch --force --tags origin
+          notes="$(python3 .github/scripts/skills.py release-notes "$TAG")"
+          # An annotated tag's message goes first (a lightweight tag has none).
+          if [[ "$(git cat-file -t "$TAG")" == tag ]]; then
+            notes="$(git for-each-ref "refs/tags/$TAG" --format='%(contents)')"$'\n\n'"$notes"
+          fi
+          flags=(--verify-tag --latest=false)
+          [[ "$TAG" == skills-v*-* ]] && flags+=(--prerelease)
+          gh release create "$TAG" "${flags[@]}" --title "DRE skills ${TAG#skills-v}" --notes "$notes"
+
+      - name: Serve it on the install channels
+        run: |
+          if python3 .github/scripts/skills.py serves-latest "$TAG"; then
+            git push --force origin "$GITHUB_SHA:refs/heads/skills-latest"
+            echo "skills-latest is now $TAG ($GITHUB_SHA)"
+          else
+            echo "$TAG isn't the newest release to serve; skills-latest stays where it is."
+          fi
