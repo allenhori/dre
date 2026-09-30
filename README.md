@@ -12,8 +12,8 @@ csv, delimited, fixed-width, parquet or xlsx (including multi-sheet workbooks, n
 formulas and totals rows, and branded Excel templates), and delivers the file wherever it needs
 to go. It runs on whatever scheduler you already have: cron, Airflow, Dagster, Databricks Jobs.
 
-Status: under active development. The pre-releases (`v0.0.1-alpha-<n>`) are for trying DRE out;
-expect breaking changes.
+Status: under active development. 0.1.0 is in release candidates (`v0.1.0-rc.<n>`); from 0.1.0
+on, a patch release never breaks a project.
 
 ## Use it with your coding agent
 
