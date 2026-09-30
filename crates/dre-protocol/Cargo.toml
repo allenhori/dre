@@ -3,7 +3,7 @@ name = "dre-protocol"
 description = "The DRE plugin protocol: frames, messages, host side, plugin SDK and conformance suite"
 # Versioned on its own, not with DRE: plugins depend on it. The wire protocol has its own
 # integer version too (MIN_VERSION/MAX_VERSION), which changes only when the messages do.
-version = "0.1.0-alpha-1"
+version = "0.1.0-rc.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
