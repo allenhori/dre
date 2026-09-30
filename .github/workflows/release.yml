@@ -34,7 +34,8 @@ name: Release
 
 on:
   push:
-    tags: ["v*", "*-v[0-9]*"]
+    # skills-v<version> releases the agent skills instead (skills-release.yml).
+    tags: ["v*", "*-v[0-9]*", "!skills-v*"]
   workflow_dispatch:
     inputs:
       tag:

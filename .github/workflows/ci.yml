@@ -11,6 +11,9 @@ on:
       - "LICENSE"
       - ".github/workflows/release.yml"
       - ".github/scripts/**"
+      - "skills/**"
+      - ".claude-plugin/**"
+      - ".github/workflows/skills*.yml"
   pull_request:
     paths-ignore:
       - "**.md"
@@ -18,6 +21,9 @@ on:
       - "LICENSE"
       - ".github/workflows/release.yml"
       - ".github/scripts/**"
+      - "skills/**"
+      - ".claude-plugin/**"
+      - ".github/workflows/skills*.yml"
 
 env:
   CARGO_TERM_COLOR: always

@@ -1,0 +1,1 @@
+- For data tools and lakes: column types are kept, and there's nothing to configure.

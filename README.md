@@ -15,6 +15,24 @@ to go. It runs on whatever scheduler you already have: cron, Airflow, Dagster, D
 Status: under active development. The pre-releases (`v0.0.1-alpha-<n>`) are for trying DRE out;
 expect breaking changes.
 
+## Use it with your coding agent
+
+DRE is built to be driven by coding agents as well as people: everything is plain YAML and SQL
+files, every command but `dre init` runs without prompts, and `--log-format json`, `dre validate --json`,
+`dre ls --output json` and the [manifest](docs/manifest.md) give tools machine-readable output.
+
+DRE's [agent skills](skills/README.md) turn Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI
+or any agent that reads Agent Skills into a guide, from installing DRE to a delivered report. They
+ask one question at a time with a recommendation, follow [DRE's practices](docs/practices.md),
+confirm before anything is delivered, and never ask for your passwords or tokens.
+
+```bash
+claude plugin marketplace add allenhori/dre && claude plugin install dre@dre   # Claude Code
+npx skills add allenhori/dre#skills-latest                                     # other agents
+```
+
+Then ask: "help me with dre".
+
 ## Install
 
 macOS and Linux (x86_64 and ARM):
@@ -371,6 +389,8 @@ each other's files and snapshots. `dre clean` deletes the target folder only if 
 - [Plugin packages, the registry and `dre.lock`](docs/registry.md)
 - [The manifest and `run_results.json`](docs/manifest.md), with the manifest's
   [JSON Schema](docs/manifest.schema.json)
+- [Practices: how to set up, write and run reports well](docs/practices.md)
+- [Agent skills: DRE in your coding agent](skills/README.md)
 
 ## Building from source
 

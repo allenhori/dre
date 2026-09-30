@@ -1,0 +1,65 @@
+name: Skills
+
+# The agent skills in skills/ (see skills/README.md): their frontmatter and versions, the `dre`
+# commands and flags they name (against the `dre` built here), the practices they cite, and that
+# the shared snippets, the practices copy and the generated plugin references are up to date. It
+# also fails when a plugin declares a field or option that docs/plugins.md doesn't document.
+# .github/scripts/skills.py does the work. The skills release (skills-release.yml) runs it at the
+# tag.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "skills/**"
+      - ".claude-plugin/**"
+      - "README.md"
+      - "docs/**"
+      - "crates/**"
+      - "plugins/**"
+      - "go/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/scripts/skills.py"
+      - ".github/scripts/test_skills.py"
+      - ".github/scripts/packages.json"
+      - ".github/workflows/skills.yml"
+  pull_request:
+    paths:
+      - "skills/**"
+      - ".claude-plugin/**"
+      - "README.md"
+      - "docs/**"
+      - "crates/**"
+      - "plugins/**"
+      - "go/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/scripts/skills.py"
+      - ".github/scripts/test_skills.py"
+      - ".github/scripts/packages.json"
+      - ".github/workflows/skills.yml"
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test the checker
+        run: python3 .github/scripts/test_skills.py
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/databricks/go.mod
+          cache-dependency-path: go/databricks/go.sum
+      - name: Build dre and every plugin package
+        run: |
+          cargo build --locked --workspace --bins
+          (cd go/databricks && go build -o ../../target/debug/dre-plugin-databricks .)
+      - name: Check the skills
+        run: python3 .github/scripts/skills.py check --dre target/debug/dre --plugins-dir target/debug
