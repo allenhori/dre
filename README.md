@@ -15,7 +15,11 @@ to go. It runs on whatever scheduler you already have: cron, Airflow, Dagster, D
 Status: under active development. 0.1.0 is in release candidates (`v0.1.0-rc.<n>`); from 0.1.0
 on, a patch release never breaks a project.
 
-## Use it with your coding agent
+## Start here
+
+Choose the path you want to use. Both create the same plain YAML and SQL project.
+
+### With a coding agent
 
 DRE is built to be driven by coding agents as well as people: everything is plain YAML and SQL
 files, every command but `dre init` runs without prompts, and `--log-format json`, `dre validate --json`,
@@ -32,6 +36,25 @@ npx skills add allenhori/dre#skills-latest                                     #
 ```
 
 Then ask: "help me with dre".
+
+### From the command line
+
+1. [Install DRE](#install) for your platform.
+2. Create a starter project:
+
+   ```bash
+   dre init
+   cd my_reports
+   ```
+
+3. Check that the project works before editing it:
+
+   ```bash
+   dre validate
+   ```
+
+A successful validation means the project configuration and SQL compile. Continue with
+[Build and run reports](#build-and-run-reports) to add reports, preview output and deliver files.
 
 ## Install
 
@@ -89,42 +112,6 @@ cargo install dre-cli --locked          # builds `dre` from crates.io
 
 A pre-release installs only when named: `cargo install dre-cli --locked --version 0.1.0-rc.1`.
 
-### Plugins
-
-However DRE is installed, only `dre` itself is. Every source, format and destination is a plugin
-package with its own version and releases (`duckdb-v1.0.0`, `xlsx-v1.0.2`, ...): `dre init`,
-`dre run`, `dre validate` and `dre compile` download the ones a project declares, from GitHub
-Releases, and `dre.lock` pins them (see [the registry docs](docs/registry.md)). A plugin's
-version doesn't follow DRE's: any DRE runs any plugin release that speaks its
-[protocol](docs/protocol.md).
-
-To have them in place before the first run, e.g. on a machine or job that starts empty each time:
-
-- run `dre deps` in the project while building the image, or as its own CI or job step;
-- or point `DRE_PLUGINS_DIR` at a folder that outlives the run (a Databricks Volume, a shared
-  mount, a folder in the image) and run `dre deps` once to fill it.
-
-### Updating
-
-`dre system update` checks GitHub Releases and updates DRE the way it was installed.
-`dre system update --check` only reports whether a newer release exists, and
-`dre system update <version>` installs that release (to pin one, or to roll back):
-
-- **install.sh or the release zip**: `dre` downloads the new release, checks it against the
-  release's `SHA256SUMS`, and replaces its own binary. A failed update leaves the old one as it
-  was. Plugins aren't touched; `dre plugin update` updates those.
-- **Homebrew or Scoop**: `dre` changes nothing and prints `brew upgrade dre` or `scoop update dre`.
-- **pip, uv or pipx**: `dre` changes nothing and prints the command to run:
-  `<python> -m pip install -U dre-cli`, `uv tool upgrade dre-cli` or `pipx upgrade dre-cli`.
-  If `dre-cli` is pinned in a project's or a Databricks job's dependencies, bump the pin there.
-- **cargo**: `dre` changes nothing and prints the `cargo install` command for the new version.
-- **A build of your own** (`cargo build`, `cargo install --path`): `dre` refuses to overwrite it.
-
-While every release is a pre-release, "newest" includes pre-releases. Once there are stable
-releases, a stable `dre` updates to the newest stable one. Only `dre system update` checks for
-new versions; no other command calls the network for it. `GITHUB_TOKEN` is sent when set, which
-avoids GitHub's anonymous rate limit on shared IPs and CI runners.
-
 ## Concepts
 
 - **Report**: one or more Jinja-templated SQL queries plus an output config, declared in YAML.
@@ -168,7 +155,7 @@ avoids GitHub's anonymous rate limit on shared IPs and CI runners.
   match any of them: `-s daily monthly`, `-s daily,monthly`, or repeated `-s` (a semicolon works
   too, quoted: `-s "daily;monthly"`).
 
-## Quick start
+## Build and run reports
 
 ```bash
 dre init                 # pick a source, enter its connection, optionally start a project
@@ -362,6 +349,42 @@ Give each job that runs at the same time its own target path; two runs sharing o
 each other's files and snapshots. `dre clean` deletes the target folder only if DRE created it
 (it leaves a `.dre_target` file there) or it's the project's own `target/`, so a mistyped
 `--target-path` can't delete anything else.
+
+## Managing plugins
+
+However DRE is installed, only `dre` itself is. Every source, format and destination is a plugin
+package with its own version and releases (`duckdb-v1.0.0`, `xlsx-v1.0.2`, ...): `dre init`,
+`dre run`, `dre validate` and `dre compile` download the ones a project declares, from GitHub
+Releases, and `dre.lock` pins them (see [the registry docs](docs/registry.md)). A plugin's
+version doesn't follow DRE's: any DRE runs any plugin release that speaks its
+[protocol](docs/protocol.md).
+
+To have them in place before the first run, e.g. on a machine or job that starts empty each time:
+
+- run `dre deps` in the project while building the image, or as its own CI or job step;
+- or point `DRE_PLUGINS_DIR` at a folder that outlives the run (a Databricks Volume, a shared
+  mount, a folder in the image) and run `dre deps` once to fill it.
+
+## Updating DRE
+
+`dre system update` checks GitHub Releases and updates DRE the way it was installed.
+`dre system update --check` only reports whether a newer release exists, and
+`dre system update <version>` installs that release (to pin one, or to roll back):
+
+- **install.sh or the release zip**: `dre` downloads the new release, checks it against the
+  release's `SHA256SUMS`, and replaces its own binary. A failed update leaves the old one as it
+  was. Plugins aren't touched; `dre plugin update` updates those.
+- **Homebrew or Scoop**: `dre` changes nothing and prints `brew upgrade dre` or `scoop update dre`.
+- **pip, uv or pipx**: `dre` changes nothing and prints the command to run:
+  `<python> -m pip install -U dre-cli`, `uv tool upgrade dre-cli` or `pipx upgrade dre-cli`.
+  If `dre-cli` is pinned in a project's or a Databricks job's dependencies, bump the pin there.
+- **cargo**: `dre` changes nothing and prints the `cargo install` command for the new version.
+- **A build of your own** (`cargo build`, `cargo install --path`): `dre` refuses to overwrite it.
+
+While every release is a pre-release, "newest" includes pre-releases. Once there are stable
+releases, a stable `dre` updates to the newest stable one. Only `dre system update` checks for
+new versions; no other command calls the network for it. `GITHUB_TOKEN` is sent when set, which
+avoids GitHub's anonymous rate limit on shared IPs and CI runners.
 
 ## Environment variables
 
