@@ -412,6 +412,11 @@ go build -o ../../target/release/dre-plugin-databricks .
 Put them in a project's `dre_deps/plugins/` (or point `DRE_PLUGINS_DIR` at them) to use them
 without a registry.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests need a signed [CLA](CLA.md) and a
+maintainer's approval.
+
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
