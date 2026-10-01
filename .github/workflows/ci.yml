@@ -39,6 +39,13 @@ jobs:
           fetch-depth: 0
       - run: python3 .github/scripts/plugin_versions.py "origin/${{ github.base_ref }}"
 
+  schema-docs:
+    # The YAML reference pages are generated from the JSON Schemas in docs/schemas/.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 .github/scripts/schema_docs.py check
+
   lint:
     runs-on: ubuntu-latest
     steps:

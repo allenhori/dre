@@ -51,7 +51,7 @@ pub const LOGS_DIR: &str = "logs";
 pub use crate::plugins::DEPS_DIR;
 pub const DEFAULT_RUN_QUERY_MAX_ROWS: u64 = 10_000;
 
-const REPORT_KEYS: &[&str] = &[
+pub const REPORT_KEYS: &[&str] = &[
     "name",
     "tags",
     "queries",
@@ -65,10 +65,10 @@ const REPORT_KEYS: &[&str] = &[
 ];
 /// Declares the project's plugin packages, in any project YAML file.
 const PLUGINS_KEY: &str = "plugins";
-const PLUGIN_KEYS: &[&str] = &[PLUGINS_KEY];
+pub const PLUGIN_KEYS: &[&str] = &[PLUGINS_KEY];
 /// Where plugins were declared before packages; now an error pointing at `plugins:`.
 const OLD_PLUGIN_KEYS: &[&str] = &["sources", "destinations", "formats"];
-const PROJECT_KEYS: &[&str] = &[
+pub const PROJECT_KEYS: &[&str] = &[
     "name",
     "default_profile",
     "default_output",
@@ -85,8 +85,8 @@ const PROJECT_KEYS: &[&str] = &[
     "reports",
     crate::target::KEY,
 ];
-const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars", "+timezone"];
-const SET_ENTRY_KEYS: &[&str] = &[
+pub const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars", "+timezone"];
+pub const SET_ENTRY_KEYS: &[&str] = &[
     "name",
     "profile",
     "vars",
@@ -96,8 +96,22 @@ const SET_ENTRY_KEYS: &[&str] = &[
     "output",
     "schedule",
 ];
-const QUERY_ENTRY_KEYS: &[&str] = &["query", "tab", "tab_name", "anchor", "header", "columns"];
-const OUTPUT_SHARED_KEYS: &[&str] = &["format", "destination", "template", "extension"];
+pub const QUERY_ENTRY_KEYS: &[&str] = &["query", "tab", "tab_name", "anchor", "header", "columns"];
+pub const OUTPUT_SHARED_KEYS: &[&str] = &["format", "destination", "template", "extension"];
+/// Keys of one `output.template.bindings` entry.
+pub const TEMPLATE_BINDING_KEYS: &[&str] = &[
+    "sheet",
+    "query",
+    "result_index",
+    "anchor",
+    "header",
+    "columns",
+    "cell",
+    "value",
+    "column",
+];
+/// Keys of a `plugins:` entry written as a map.
+pub const PLUGIN_ENTRY_KEYS: &[&str] = &["name", "version", "github", "local", "registry"];
 
 // ---------------------------------------------------------------------------------------------
 // The resolved project: the stable contract every later consumer uses.
@@ -2422,19 +2436,7 @@ impl Loader {
             };
             let s = |k: &str| m.get(k).and_then(Value::as_str).map(str::to_string);
             for k in m.keys().filter_map(Value::as_str) {
-                if ![
-                    "sheet",
-                    "query",
-                    "result_index",
-                    "anchor",
-                    "header",
-                    "columns",
-                    "cell",
-                    "value",
-                    "column",
-                ]
-                .contains(&k)
-                {
+                if !TEMPLATE_BINDING_KEYS.contains(&k) {
                     err(self, format!("template binding {n} has unknown key `{k}`"));
                 }
             }
@@ -3076,7 +3078,7 @@ impl Loader {
             return None;
         }
         for k in m.keys().filter_map(Value::as_str) {
-            if !["name", "version", "github", "local", "registry"].contains(&k) {
+            if !PLUGIN_ENTRY_KEYS.contains(&k) {
                 err(
                     self,
                     format!(

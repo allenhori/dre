@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-dre-schema-version": "0.1",
+  "title": "DRE profiles",
+  "description": "Connections, in `profiles.yml`: database sources and delivery destinations. Kept outside the project (`~/.dre`, `--profiles-dir` or `DRE_PROFILES_DIR`).",
+  "type": "object",
+  "properties": {
+    "sources": {
+      "type": "object",
+      "description": "Database connections, referenced by `default_profile`, `profile:` and Sets.",
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
+      }
+    },
+    "destinations": {
+      "type": "object",
+      "description": "Delivery targets, referenced by `output.destination.profile`.",
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "description": "A named connection with one or more targets (environments).",
+      "properties": {
+        "target": {
+          "type": "string",
+          "description": "The default target, one of `targets`."
+        },
+        "targets": {
+          "type": "object",
+          "description": "The environments of this profile, by name (e.g. `dev`, `prod`).",
+          "additionalProperties": {
+            "$ref": "#/$defs/target"
+          },
+          "minProperties": 1
+        }
+      },
+      "required": [
+        "target",
+        "targets"
+      ],
+      "additionalProperties": false
+    },
+    "target": {
+      "type": "object",
+      "description": "One target of a profile: a connection or delivery configuration. `type` names the plugin; every other key is a field of that plugin (see the plugins reference), and secrets belong in `{{ env_var('NAME') }}`.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "The plugin type of the connection, e.g. `duckdb`, `postgres`, `databricks`, `sftp`, `s3`. `local` needs no plugin."
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

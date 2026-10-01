@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-dre-schema-version": "0.1",
+  "title": "DRE lookup config",
+  "description": "The optional config of a lookup, `lookups/<name>.yml` next to a csv, xlsx, xls, json or jsonl file. (A `.yml` lookup that holds the rows themselves can also set `rows`.)",
+  "type": "object",
+  "properties": {
+    "columns": {
+      "type": "object",
+      "description": "Types for columns; without it every value is text.",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "string",
+          "integer",
+          "number",
+          "boolean",
+          "date"
+        ],
+        "description": "One of `string`, `integer`, `number`, `boolean`, `date`."
+      }
+    },
+    "sheet": {
+      "type": "string",
+      "description": "For xlsx and xls lookups: the sheet to read. Default: the first."
+    },
+    "load": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "inline",
+        "temp_table"
+      ],
+      "default": "auto",
+      "description": "How the lookup reaches the database: inlined into the SQL, loaded into a temp table, or chosen by size (`auto`)."
+    },
+    "rows": {
+      "type": "array",
+      "description": "For a `.yml` lookup that holds its own data: the rows.",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -35,7 +35,8 @@ use crate::yaml::YamlFile;
 pub const LOOKUPS_DIR: &str = "lookups";
 pub const DEFAULT_INLINE_MAX_ROWS: u64 = 200;
 const DATA_EXTS: &[&str] = &["csv", "xlsx", "xls", "json", "jsonl"];
-const CONFIG_KEYS: &[&str] = &["columns", "sheet", "load", "rows"];
+/// Keys of a lookup config file.
+pub const CONFIG_KEYS: &[&str] = &["columns", "sheet", "load", "rows"];
 
 static IDENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").unwrap());
 

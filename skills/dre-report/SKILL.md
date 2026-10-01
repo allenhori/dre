@@ -91,6 +91,12 @@ output:
     path: "s3://reports/monthly-{{ run.date.yyyymmdd }}.xlsx"
 ```
 
+- **Schema line**: `dre new` starts each YAML file with a
+  `# yaml-language-server: $schema=https://getdre.com/schemas/v<major.minor>/report.schema.json`
+  line (the installed `dre`'s minor version). Keep it, and add it to new report files: editors
+  then complete and check keys. The schemas in `docs/schemas/` of the `dre` repository, and the
+  YAML reference in the docs, list every key with its type, default and meaning, so look keys up
+  there instead of guessing.
 - **Tabs** (REP-1): each `.sql` file makes one tab (a sheet in xlsx, or one file for the other
   formats), in the YAML's order, named by `tab_name` or the file name. A file can hold several
   statements; the last is the tab. A second `SELECT` in a tab file is an error. The YAML decides
