@@ -167,7 +167,7 @@ fn new_scaffolds_without_prompts_and_never_overwrites() {
         std::fs::read_to_string(p.join("dre_project.yml"))
             .unwrap()
             .lines()
-            .next(),
+            .nth(1), // the first line points editors at the schema
         Some("name: acme_reports")
     );
     assert!(
