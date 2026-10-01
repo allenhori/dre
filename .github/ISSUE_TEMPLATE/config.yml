@@ -2,4 +2,4 @@ blank_issues_enabled: true
 contact_links:
   - name: Report a security problem
     url: https://github.com/get-dre/dre/security/advisories/new
-    about: Report vulnerabilities privately here, never in a public issue.
+    about: Report vulnerabilities privately here, or by email to security@getdre.com, never in a public issue.

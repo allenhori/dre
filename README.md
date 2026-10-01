@@ -20,7 +20,7 @@ Status: under active development. From 0.1.0 on, a patch release never breaks a 
 ## Install
 
 ```bash
-curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | sh   # macOS and Linux
+curl -fsSL https://getdre.com/install.sh | sh   # macOS and Linux
 brew install get-dre/tap/dre                                                          # Homebrew
 pip install dre-cli                                                                   # pip, uv, pipx
 ```
