@@ -1,3 +1,10 @@
+---
+title: "Plugin packages, the registry and `dre.lock`"
+description: "Plugin packages, the registry index, dre.lock and macro packages."
+sidebar:
+  order: 10
+---
+
 # Plugin packages, the registry and `dre.lock`
 
 Plugins come in **packages**: one download, one executable, serving every plugin the package

@@ -1,3 +1,10 @@
+---
+title: "Templates"
+description: "Jinja in SQL, paths and options: target, profile(), columns(), dates and timezones."
+sidebar:
+  order: 6
+---
+
 # Templates
 
 SQL files, output paths, destination options and template values all render through the same

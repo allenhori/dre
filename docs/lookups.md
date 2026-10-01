@@ -1,3 +1,10 @@
+---
+title: "Lookups"
+description: "Mapping tables kept as files: typed columns, inline or temp table."
+sidebar:
+  order: 7
+---
+
 # Lookups
 
 A lookup is a small table you keep as a file in the project's `lookups/` folder (a mapping
