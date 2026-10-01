@@ -3,6 +3,10 @@
 //! `run_results.json` and the compiled SQL in `target/compiled/`. The SQL actually sent to the
 //! database is unchanged. `mask_secrets: false` in `dre_project.yml` turns masking off.
 //!
+//! JSON is redacted structurally, before it is serialized: serializing escapes `"`, `\` and
+//! control characters, so masking the finished text would miss a secret that contains them. Use
+//! [`to_json_pretty`] / [`to_json_line`] for every JSON surface, never `mask` on JSON text.
+//!
 //! Values shorter than 4 characters aren't masked: replacing every `a` or `12` in a log would
 //! make it unreadable, and a value that short isn't a secret anyway.
 
@@ -41,4 +45,41 @@ pub fn mask(s: &str) -> Cow<'_, str> {
         out = out.replace(x.as_str(), MASK);
     }
     Cow::Owned(out)
+}
+
+/// `v` with every secret value replaced by `*****` in all strings and object keys.
+pub fn redact_json(v: &mut serde_json::Value) {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => {
+            if let Cow::Owned(m) = mask(s) {
+                *s = m;
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(redact_json),
+        Value::Object(o) => {
+            let entries = std::mem::take(o);
+            for (k, mut val) in entries {
+                redact_json(&mut val);
+                o.insert(mask(&k).into_owned(), val);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn redacted<T: serde::Serialize>(v: &T) -> serde_json::Result<serde_json::Value> {
+    let mut v = serde_json::to_value(v)?;
+    redact_json(&mut v);
+    Ok(v)
+}
+
+/// Pretty JSON of `v` with secrets redacted first.
+pub fn to_json_pretty<T: serde::Serialize>(v: &T) -> serde_json::Result<String> {
+    serde_json::to_string_pretty(&redacted(v)?)
+}
+
+/// One-line JSON of `v` with secrets redacted first.
+pub fn to_json_line<T: serde::Serialize>(v: &T) -> serde_json::Result<String> {
+    serde_json::to_string(&redacted(v)?)
 }

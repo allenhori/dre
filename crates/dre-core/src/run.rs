@@ -1473,7 +1473,7 @@ impl<'a> BindingRun<'a> {
         });
         std::fs::write(
             self.run_dir.join("run_results.json"),
-            crate::secrets::mask(&(serde_json::to_string_pretty(&results)? + "\n")).as_bytes(),
+            (crate::secrets::to_json_pretty(&results)? + "\n").as_bytes(),
         )
     }
 

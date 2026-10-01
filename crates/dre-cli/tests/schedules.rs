@@ -273,3 +273,63 @@ fn dre_secret_env_vars_are_masked_everywhere_people_read() {
             .contains("hunter2-very-secret")
     );
 }
+
+/// What a JSON serializer writes for `s`, without the surrounding quotes.
+fn json_escaped(s: &str) -> String {
+    let q = serde_json::to_string(s).unwrap();
+    q[1..q.len() - 1].to_string()
+}
+
+#[test]
+fn dre_secrets_needing_json_escapes_never_reach_json_output() {
+    let p = project(&[
+        ("reports/ops/secret/secret.yml", "queries: [s]\n"),
+        (
+            "reports/ops/secret/s.sql",
+            "select 1 {{ env_var('DRE_SECRET_SHORT') }}\n-- {{ env_var('DRE_SECRET_LONG') }}\n",
+        ),
+    ]);
+    // Quote, backslash, newline, tab, non-ASCII; the first secret is a substring of the second.
+    let short = "q\"\\\té";
+    let long = format!("{short}-and-more");
+    let env = [("DRE_SECRET_SHORT", short), ("DRE_SECRET_LONG", long.as_str())];
+    let r = p.dre_env(
+        "run",
+        &["secret", "--log-format", "json", "--color", "never"],
+        &env,
+    );
+    r.failed();
+    let surfaces = [
+        ("stdout", r.stdout.clone()),
+        (
+            "run_results.json",
+            p.read("target/run/secret/default/run_results.json"),
+        ),
+        ("dre.log", p.read("logs/dre.log")),
+        ("compiled sql", p.read("target/compiled/secret/default/s.sql")),
+    ];
+    for (name, text) in &surfaces {
+        for secret in [short, long.as_str()] {
+            for form in [secret.to_string(), json_escaped(secret)] {
+                assert!(!text.contains(&form), "{name} leaks {form:?}:\n{text}");
+            }
+        }
+    }
+    // The JSON stays valid, and the failing query's error is in it.
+    for line in r.stdout.lines() {
+        serde_json::from_str::<serde_json::Value>(line).unwrap_or_else(|e| panic!("{e}: {line}"));
+    }
+    let results = p.json("target/run/secret/default/run_results.json");
+    assert_eq!(results["status"], "error", "{results}");
+    assert!(surfaces[3].1.contains("*****"), "{}", surfaces[3].1);
+
+    // Configured off: the value is written as is.
+    p.write(
+        "dre_project.yml",
+        "name: acme_reports\ndefault_profile: warehouse\nvars: {period: project, level: project}\nmask_secrets: false\n",
+    );
+    p.dre_env("run", &["secret", "--log-format", "json"], &env)
+        .failed();
+    assert!(p.read("target/compiled/secret/default/s.sql").contains(&long));
+    p.json("target/run/secret/default/run_results.json");
+}

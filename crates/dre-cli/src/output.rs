@@ -303,10 +303,10 @@ impl Inner {
 
     fn json(&self, mut v: serde_json::Value) {
         v["ts"] = json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
-        let line = v.to_string();
+        let line = dre_core::secrets::to_json_line(&v).unwrap_or_default();
         match &self.bar {
-            Some(b) => b.suspend(|| println_stdout(&line)),
-            None => println_stdout(&line),
+            Some(b) => b.suspend(|| print_line(&line)),
+            None => print_line(&line),
         }
     }
 
@@ -387,8 +387,13 @@ impl LogFile {
 
 /// Everything printed goes through here, so `DRE_SECRET_*` values are masked on the console.
 fn println_stdout(s: &str) {
+    print_line(&dre_core::secrets::mask(s));
+}
+
+/// Print a line as is: JSON events are already redacted, and masking the text again could break them.
+fn print_line(s: &str) {
     let mut out = std::io::stdout().lock();
-    let _ = writeln!(out, "{}", dre_core::secrets::mask(s));
+    let _ = writeln!(out, "{s}");
 }
 
 fn fmt_secs(s: f64) -> String {

@@ -353,10 +353,7 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
             "compiled": plans,
             "project": project.as_ref().map(|p| dre_core::manifest::build(p, &report_errors)),
         });
-        println!(
-            "{}",
-            dre_core::secrets::mask(&serde_json::to_string_pretty(&out).unwrap())
-        );
+        println!("{}", dre_core::secrets::to_json_pretty(&out).unwrap());
     } else {
         for d in diags.sorted() {
             printer.diag(d);

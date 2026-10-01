@@ -348,7 +348,7 @@ pub fn report_errors(project: &Project, diags: &Diagnostics) -> ReportErrors {
 
 /// The manifest's text: pretty JSON, secrets masked, newline-terminated.
 pub fn render(doc: &Json) -> String {
-    crate::secrets::mask(&(serde_json::to_string_pretty(doc).unwrap() + "\n")).into_owned()
+    crate::secrets::to_json_pretty(doc).unwrap() + "\n"
 }
 
 /// Write `project`'s manifest atomically (a temp file in the target folder, then a rename).
