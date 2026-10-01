@@ -80,7 +80,7 @@ The commands:
   release.
 
   ```bash
-  curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | sh
+  curl -fsSL https://getdre.com/install.sh | sh
   ```
 
 - **Homebrew** (macOS, Linux): `brew install get-dre/tap/dre`

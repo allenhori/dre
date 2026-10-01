@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install the dre CLI from a GitHub Release.
 #
-#   curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | sh
+#   curl -fsSL https://getdre.com/install.sh | sh
 #
 # DRE_VERSION     the release to install, e.g. v0.0.1-alpha (default: the newest, pre-releases
 #                 included)

@@ -10,7 +10,7 @@ sidebar:
 macOS and Linux (x86_64 and ARM):
 
 ```bash
-curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | sh
+curl -fsSL https://getdre.com/install.sh | sh
 ```
 
 This puts `dre` in `~/.local/bin`, after checking the download against the release's
@@ -18,7 +18,7 @@ This puts `dre` in `~/.local/bin`, after checking the download against the relea
 newest, pre-releases included):
 
 ```bash
-curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | DRE_VERSION=v0.1.0 DRE_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://getdre.com/install.sh | DRE_VERSION=v0.1.0 DRE_INSTALL_DIR=/usr/local/bin sh
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
