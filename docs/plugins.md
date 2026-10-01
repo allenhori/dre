@@ -398,6 +398,8 @@ output:
   apply to every entry that has a path.
 - Credentials stay in `profiles.yml`. Options belong to the report, so a Set can address its own
   recipients.
+- The `email` destination always attaches the output file, so an output over its size limit
+  fails that entry; DRE can't email a link instead (see [`email`](#email)).
 - A destination that takes no options (`local`, `s3`, `sftp`, ...) fails the delivery if its
   entry has any other key, so a misspelt `path` is caught instead of ignored.
 
@@ -500,8 +502,14 @@ destination:
 
 The plugin checks the email before it connects. It fails without sending anything when there are
 no recipients, an address is invalid, an option is unknown, or the attachments exceed
-`max_attachment_mb`. Most mail servers cap a message at 20–25 MB. For bigger files, deliver to
-object storage and email a link in `body`. The password is never logged.
+`max_attachment_mb`. The password is never logged.
+
+**Email always attaches the file.** DRE can't send a link instead of the file, and it doesn't
+create download links (no presigned URLs). Most mail servers cap a message at 20–25 MB, so a
+bigger output can't go by email. Deliver it to object storage or another destination, and tell
+people where it is yourself; a location written into `body` only helps readers who can already
+open it. In a list of destinations an email entry still attaches the output, so an oversized
+output fails that entry (the others are delivered) and the run fails.
 
 ### `slack`
 
