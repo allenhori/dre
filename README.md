@@ -69,7 +69,7 @@ This puts `dre` in `~/.local/bin`, after checking the download against the relea
 newest, pre-releases included):
 
 ```bash
-curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | DRE_VERSION=v0.1.0-rc.1 DRE_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | DRE_VERSION=v0.1.0 DRE_INSTALL_DIR=/usr/local/bin sh
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
@@ -78,7 +78,7 @@ from [Releases](https://github.com/get-dre/dre/releases) and put `dre.exe` on yo
 
 ### With Homebrew or Scoop
 
-From 0.1.0-rc.1 on:
+From 0.1.0 on:
 
 ```bash
 brew install get-dre/tap/dre                                   # macOS and Linux
@@ -110,7 +110,7 @@ notebook.
 cargo install dre-cli --locked          # builds `dre` from crates.io
 ```
 
-A pre-release installs only when named: `cargo install dre-cli --locked --version 0.1.0-rc.1`.
+A pre-release installs only when named: `cargo install dre-cli --locked --version 0.2.0-rc.1`.
 
 ## Concepts
 

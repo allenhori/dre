@@ -4,7 +4,7 @@ Do this before anything else. It needs no network.
 
 1. Run `dre --version`. It prints `dre <version>`, e.g. `dre 0.1.0`.
 2. Compare it with the `dre` range in this skill's frontmatter (`metadata.dre`, e.g.
-   `>=0.1.0-rc.1, <0.2.0`: any 0.1 release or pre-release). A pre-release of the upper bound
+   `>=0.1.0, <0.2.0`: any 0.1 release). A pre-release of the upper bound
    (`0.2.0-rc.1` for `<0.2.0`) is outside the range.
    - **In range:** continue without mentioning it.
    - **Newer than the range:** say "These skills were written for dre `<range>` and you have
