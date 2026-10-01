@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-dre-schema-version": "0.1",
+  "title": "DRE project",
+  "description": "The project file, `dre_project.yml`, at the project root.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The project's name. Required.",
+      "minLength": 1
+    },
+    "default_profile": {
+      "type": "string",
+      "description": "The source profile reports use when they don't name one."
+    },
+    "default_output": {
+      "$ref": "report.schema.json#/$defs/output",
+      "description": "The output every report starts from (the built-in default is `format: csv`). A report's own `output` is merged on top."
+    },
+    "format_options": {
+      "type": "object",
+      "description": "Default options per output format, under every output of that format. A report's own keys win.",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "default_set": {
+      "type": "string",
+      "description": "The Set used when a report has Sets and none is chosen."
+    },
+    "vars": {
+      "type": "object",
+      "description": "The lowest level of `var()`: folders, reports, Sets, schedules and `--var` override these.",
+      "additionalProperties": true
+    },
+    "run_query_max_rows": {
+      "type": "integer",
+      "description": "`run_query()` refuses results larger than this.",
+      "minimum": 1,
+      "default": 10000
+    },
+    "lookup_inline_max_rows": {
+      "type": "integer",
+      "description": "Lookups over this many rows are loaded into a temp table instead of inlined into the SQL.",
+      "minimum": 0,
+      "default": 200
+    },
+    "dispatch": {
+      "type": "array",
+      "description": "Which macro packages `dispatch()` searches, and in what order.",
+      "items": {
+        "type": "object",
+        "description": "One macro namespace.",
+        "properties": {
+          "macro_namespace": {
+            "type": "string",
+            "description": "The macro package the dispatching macro belongs to, e.g. `dre_utils`."
+          },
+          "search_order": {
+            "type": "array",
+            "description": "Packages searched for the variant, first match wins: this project's name and installed packages.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          }
+        },
+        "required": [
+          "macro_namespace",
+          "search_order"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "mask_secrets": {
+      "type": "boolean",
+      "description": "Whether `DRE_SECRET_*` values are masked as `*****` in the console, logs, JSON events, `run_results.json` and `target/compiled/`.",
+      "default": true
+    },
+    "timezone": {
+      "type": "string",
+      "description": "The timezone `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: UTC."
+    },
+    "week_start": {
+      "type": "string",
+      "enum": [
+        "monday",
+        "sunday"
+      ],
+      "default": "monday",
+      "description": "The first day of the week for `run.date` week arithmetic."
+    },
+    "week_numbering": {
+      "type": "string",
+      "enum": [
+        "iso",
+        "us"
+      ],
+      "default": "iso",
+      "description": "How weeks are numbered: ISO 8601 or US style."
+    },
+    "reports": {
+      "$ref": "#/$defs/folder",
+      "description": "Folder config: settings for the report folders, by folder name, nested to match the folders under `reports/`."
+    },
+    "target_path": {
+      "type": "string",
+      "description": "Where DRE writes its generated files (compiled SQL, run outputs, the manifest). Default: `target/` in the project. `--target-path` and `DRE_TARGET_PATH` override it."
+    },
+    "plugins": {
+      "description": "The plugin packages this project uses. DRE installs them on demand into `dre_deps/` and pins them in `dre.lock`. May be written in any project YAML file; `dependencies.yml` is the usual place.",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "description": "One plugin package: just its name, a `name: \"<version>\"` pair, or a map with `name` and where to get it.",
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "A package name, e.g. `duckdb`. Any version."
+              },
+              {
+                "type": "object",
+                "description": "A package name mapped to a version constraint, e.g. `duckdb: \">=1.0\"`.",
+                "additionalProperties": true,
+                "minProperties": 1,
+                "maxProperties": 1
+              },
+              {
+                "type": "object",
+                "description": "A package with its source.",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The package name: lowercase letters, digits and `_`."
+                  },
+                  "version": {
+                    "type": "string",
+                    "description": "A version constraint such as `1.2.0` or `>=1.0`. Not allowed with `local`."
+                  },
+                  "github": {
+                    "type": "string",
+                    "description": "Install from the releases of this GitHub repository, `owner/repo`."
+                  },
+                  "local": {
+                    "type": "string",
+                    "description": "Use the package folder at this path as it is."
+                  },
+                  "registry": {
+                    "type": "string",
+                    "description": "Install from this registry index (a URL or a path) instead of the default one."
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "description": "Package names mapped to version constraints.",
+          "additionalProperties": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "x-doc-type": "list of plugin packages: a name, `name: \"<version>\"`, or a map (see below)"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "folder": {
+      "description": "Settings for every report in this folder and the folders below it. Keys starting with `+` are settings; any other key is a subfolder.",
+      "type": "object",
+      "properties": {
+        "+tags": {
+          "type": "array",
+          "description": "Tags added to every report in the folder.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "+output": {
+          "$ref": "report.schema.json#/$defs/output",
+          "description": "Output settings every report in the folder starts from; a report's own keys win."
+        },
+        "+profile": {
+          "type": "string",
+          "description": "The source profile for reports in the folder."
+        },
+        "+vars": {
+          "type": "object",
+          "description": "Variables, read in SQL and YAML with `var('name')`. Values can be strings, numbers, booleans, lists or maps.",
+          "additionalProperties": true
+        },
+        "+timezone": {
+          "type": "string",
+          "description": "The timezone `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: UTC."
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/folder"
+      }
+    }
+  }
+}

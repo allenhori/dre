@@ -1,0 +1,394 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-dre-schema-version": "0.1",
+  "title": "DRE report",
+  "description": "A report: SQL queries plus an output, in a YAML file under `reports/`.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The report's name. Default: the name of the folder the YAML file is in. Report names are unique across the project.",
+      "minLength": 1
+    },
+    "tags": {
+      "type": "array",
+      "description": "Tags to select the report with, `-s tag:<tag>`.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "queries": {
+      "type": "array",
+      "description": "The `.sql` files whose results make the report's tabs, in the order they run, on one database session.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "The name of a `.sql` file under `reports/`, without extension."
+          },
+          {
+            "$ref": "#/$defs/queryEntry"
+          }
+        ]
+      }
+    },
+    "output": {
+      "$ref": "#/$defs/output"
+    },
+    "profile": {
+      "type": "string",
+      "description": "The source profile (in `profiles.yml`) the queries run against. Default: the folder's `+profile`, then `default_profile`. Can't be combined with `sets`."
+    },
+    "sets": {
+      "type": "array",
+      "description": "The Sets the report can run as, by name (declared in `sets.yml`) or declared here.",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/setEntry"
+          }
+        ]
+      }
+    },
+    "default_set": {
+      "type": "string",
+      "description": "The Set a plain `dre run` uses. Must be one of `sets`."
+    },
+    "vars": {
+      "type": "object",
+      "description": "Variables, read in SQL and YAML with `var('name')`. Values can be strings, numbers, booleans, lists or maps.",
+      "additionalProperties": true
+    },
+    "timezone": {
+      "type": "string",
+      "description": "The timezone `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: UTC."
+    },
+    "plugins": {
+      "description": "The plugin packages this project uses. DRE installs them on demand into `dre_deps/` and pins them in `dre.lock`. May be written in any project YAML file; `dependencies.yml` is the usual place.",
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "description": "One plugin package: just its name, a `name: \"<version>\"` pair, or a map with `name` and where to get it.",
+            "oneOf": [
+              {
+                "type": "string",
+                "description": "A package name, e.g. `duckdb`. Any version."
+              },
+              {
+                "type": "object",
+                "description": "A package name mapped to a version constraint, e.g. `duckdb: \">=1.0\"`.",
+                "additionalProperties": true,
+                "minProperties": 1,
+                "maxProperties": 1
+              },
+              {
+                "type": "object",
+                "description": "A package with its source.",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The package name: lowercase letters, digits and `_`."
+                  },
+                  "version": {
+                    "type": "string",
+                    "description": "A version constraint such as `1.2.0` or `>=1.0`. Not allowed with `local`."
+                  },
+                  "github": {
+                    "type": "string",
+                    "description": "Install from the releases of this GitHub repository, `owner/repo`."
+                  },
+                  "local": {
+                    "type": "string",
+                    "description": "Use the package folder at this path as it is."
+                  },
+                  "registry": {
+                    "type": "string",
+                    "description": "Install from this registry index (a URL or a path) instead of the default one."
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "description": "Package names mapped to version constraints.",
+          "additionalProperties": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "x-doc-type": "list of plugin packages: a name, `name: \"<version>\"`, or a map (see below)"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "queryEntry": {
+      "type": "object",
+      "description": "A query with settings, instead of just its name.",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The name of a `.sql` file under `reports/`, without folder or extension."
+        },
+        "tab": {
+          "type": "boolean",
+          "description": "`false` runs the file only for what it does (temp tables, `SET`s) and discards any result, so it gets no tab.",
+          "default": true
+        },
+        "tab_name": {
+          "type": "string",
+          "description": "The tab (sheet) name. Default: the file's name. Not allowed with `tab: false`."
+        },
+        "anchor": {
+          "type": "string",
+          "description": "Where the data starts on the sheet (xlsx only). Default: `A1`.",
+          "pattern": "^[A-Za-z]{1,3}[0-9]+$"
+        },
+        "header": {
+          "type": "boolean",
+          "description": "Whether to write the column names as the first row (xlsx only). Default: the output's `header`."
+        },
+        "columns": {
+          "type": "object",
+          "description": "Per-column settings for this tab, by column name (xlsx only).",
+          "additionalProperties": {
+            "type": "object",
+            "description": "Settings for one column of an xlsx tab.",
+            "properties": {
+              "format": {
+                "type": "string",
+                "description": "The Excel number format of the column, e.g. `#,##0.00` or `dd/mm/yyyy`. See the xlsx column formats in the plugins reference."
+              },
+              "formula": {
+                "type": "string",
+                "description": "An Excel formula for each row of this column; `{name}` stands for that column's cell on the same row, e.g. `=ROUND({qty}*{unit_price},2)`. The SQL selects a placeholder column where the formula goes."
+              },
+              "total": {
+                "type": "string",
+                "description": "Puts a total under the column: one of `sum`, `count`, `average`, `min`, `max`, or a formula such as `=SUM({net:*})`."
+              }
+            },
+            "additionalProperties": false
+          },
+          "propertyNames": {
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "setEntry": {
+      "type": "object",
+      "description": "A Set declared in the report: a named variant of it.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The Set's name. A report can also name Sets declared in `sets.yml`."
+        },
+        "profile": {
+          "type": "string",
+          "description": "The source profile this Set runs against."
+        },
+        "vars": {
+          "type": "object",
+          "description": "Variables, read in SQL and YAML with `var('name')`. Values can be strings, numbers, booleans, lists or maps.",
+          "additionalProperties": true
+        },
+        "exclude": {
+          "type": "array",
+          "description": "Queries to leave out of this Set, by name.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "queries": {
+          "type": "array",
+          "description": "Replaces the report's queries for this Set.",
+          "items": {
+            "description": "A query of this Set, by name, or with its own settings.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "description": "A query with settings.",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "The query's name."
+                  },
+                  "tab": {
+                    "type": "boolean",
+                    "description": "Whether the query makes a tab."
+                  },
+                  "tab_name": {
+                    "type": "string",
+                    "description": "The tab name."
+                  }
+                },
+                "required": [
+                  "query"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "tab_names": {
+          "type": "object",
+          "description": "Renames tabs for this Set: query name to tab name.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "output": {
+          "$ref": "#/$defs/output",
+          "description": "Output settings that replace or add to the report's for this Set."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "description": "How a report's result is written and where it goes. Besides the keys below, each format takes its own options (for example `delimiter` for `delimited`, `columns` for `fixed_width`); they are documented with the plugins.",
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "The output format: `csv`, `delimited`, `fixed_width`, `parquet` or `xlsx` (each a plugin). Default: `csv`, or the project's `default_output`."
+        },
+        "destination": {
+          "description": "Where to deliver the file: one destination, or a list to deliver to several in one run. Default: the file stays in the target path.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/destination"
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/destination"
+              }
+            }
+          ]
+        },
+        "template": {
+          "$ref": "#/$defs/template"
+        },
+        "extension": {
+          "description": "File extension for text formats (e.g. `aba`), instead of the format's own. `\"\"` or `false` means none. Not for xlsx.",
+          "type": [
+            "string",
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "destination": {
+      "type": "object",
+      "description": "Where a file is delivered: the name of a destination profile in `profiles.yml`, an optional `path`, and the options of that destination's plugin (e.g. `to`, `subject` and `body` for email). The built-in profile `local` copies the file to a local path.",
+      "properties": {
+        "profile": {
+          "type": "string",
+          "description": "The destination profile in `profiles.yml` (under `destinations:`) to deliver with. `local` is built in."
+        },
+        "path": {
+          "type": "string",
+          "description": "Where to put the file: a path, or a URL such as `s3://bucket/key`, depending on the destination. Rendered with Jinja, so it can use `var()`, `run.*` and macros."
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "additionalProperties": true
+    },
+    "template": {
+      "type": "object",
+      "description": "Fills a branded Excel workbook instead of creating a new one (xlsx only).",
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Path of the `.xlsx` template, relative to the project."
+        },
+        "bindings": {
+          "type": "array",
+          "description": "Where each query's data goes in the template. Default: none, so the template is copied as it is.",
+          "items": {
+            "type": "object",
+            "description": "One block of data in an xlsx template: a table of a query's result, or a single cell.",
+            "properties": {
+              "sheet": {
+                "type": "string",
+                "description": "The template sheet to write into."
+              },
+              "query": {
+                "type": "string",
+                "description": "The query whose result goes here. Must be one of the Binding's queries."
+              },
+              "result_index": {
+                "type": "integer",
+                "description": "Which result set of the query to use, counting from 1. Default: the last.",
+                "minimum": 1
+              },
+              "anchor": {
+                "type": "string",
+                "description": "The top-left cell of a table block. A table block needs a `query`.",
+                "pattern": "^[A-Za-z]{1,3}[0-9]+$"
+              },
+              "header": {
+                "type": "boolean",
+                "description": "Whether to write the column names above the data in a table block."
+              },
+              "columns": {
+                "type": "array",
+                "description": "The columns of the query to write in a table block, in order. Default: all.",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "cell": {
+                "type": "string",
+                "description": "Makes this a single-cell binding: the cell to write. Needs exactly one of `value`, or `query` with `column`.",
+                "pattern": "^[A-Za-z]{1,3}[0-9]+$"
+              },
+              "value": {
+                "type": "string",
+                "description": "A fixed value (rendered with Jinja) for a single-cell binding."
+              },
+              "column": {
+                "type": "string",
+                "description": "The column of the query's first row to write into a single-cell binding."
+              }
+            },
+            "required": [
+              "sheet"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

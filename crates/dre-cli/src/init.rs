@@ -23,6 +23,14 @@ pub struct Scaffold {
     pub packages: Vec<String>,
 }
 
+/// The first line of a YAML file DRE reads, pointing editors (the YAML language server in VS Code
+/// and JetBrains) at its JSON Schema. Versioned by DRE's minor version, like the schemas.
+fn schema_line(kind: &str) -> String {
+    let mut v = env!("CARGO_PKG_VERSION").split(['.', '-']);
+    let minor = format!("{}.{}", v.next().unwrap_or("0"), v.next().unwrap_or("0"));
+    format!("# yaml-language-server: $schema=https://getdre.com/schemas/v{minor}/{kind}.schema.json\n")
+}
+
 /// Write a starter project into `dir`, which must be missing or empty.
 pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
     if dir.exists()
@@ -65,19 +73,25 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
         (
             "dre_project.yml",
             format!(
-                "name: {}\n# Profile under `sources:` in ~/.dre/profiles.yml for reports that don't name one.\ndefault_profile: {}\n",
-                s.name, s.profile
+                "{}name: {}\n# Profile under `sources:` in ~/.dre/profiles.yml for reports that don't name one.\ndefault_profile: {}\n",
+                schema_line("project"),
+                s.name,
+                s.profile
             ),
         ),
         (
             "dependencies.yml",
-            format!("# Plugin packages this project needs. `dre deps` installs them.\n{plugins}"),
+            format!(
+                "{}# Plugin packages this project needs. `dre deps` installs them.\n{plugins}",
+                schema_line("dependencies")
+            ),
         ),
         (
             "reports/examples/hello/hello.yml",
             format!(
-                "# A managed report: its queries, and (optionally) output, Sets and schedule.\n\
-                 queries:\n  - {{query: hello, tab_name: Hello}}\n{output}"
+                "{}# A managed report: its queries, and (optionally) output and Sets.\n\
+                 queries:\n  - {{query: hello, tab_name: Hello}}\n{output}",
+                schema_line("report")
             ),
         ),
         (

@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-dre-schema-version": "0.1",
+  "title": "DRE schedules",
+  "description": "The schedules file, `schedules.yml`: a list of named schedules.",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/schedule"
+  },
+  "$defs": {
+    "schedule": {
+      "type": "object",
+      "description": "One named schedule. DRE doesn't fire it; your orchestrator runs `dre run --schedule <name>`.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The schedule's name: letters, digits and `_`, not starting with a digit. Unique across the project.",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "report": {
+          "type": "string",
+          "description": "The report to run. Use `report` or `select`, not both."
+        },
+        "set": {
+          "type": "string",
+          "description": "The Set of `report` to run. Only with `report`."
+        },
+        "select": {
+          "type": "string",
+          "description": "A selector for the reports to run, e.g. `tag:regulatory`. Use `report` or `select`, not both."
+        },
+        "vars": {
+          "type": "object",
+          "description": "Variables for the run: above the report's own and below `--var`.",
+          "additionalProperties": true
+        },
+        "timezone": {
+          "type": "string",
+          "description": "The timezone `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: UTC."
+        },
+        "cron": {
+          "type": "string",
+          "description": "A cron expression. A schedule needs exactly one of `cron`, `every` or `rrule`."
+        },
+        "every": {
+          "type": "object",
+          "description": "Every N days, weeks or months, with exactly one unit, e.g. `{days: 3}`.",
+          "properties": {
+            "days": {
+              "type": "integer",
+              "description": "Every this many days.",
+              "minimum": 1
+            },
+            "weeks": {
+              "type": "integer",
+              "description": "Every this many weeks.",
+              "minimum": 1
+            },
+            "months": {
+              "type": "integer",
+              "description": "Every this many months.",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1
+        },
+        "rrule": {
+          "type": "string",
+          "description": "An iCalendar recurrence rule, e.g. `FREQ=WEEKLY;BYDAY=MO;BYHOUR=5`."
+        },
+        "starting": {
+          "type": "string",
+          "description": "With `every`: the first date, `YYYY-MM-DD`.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "at": {
+          "type": "string",
+          "description": "With `every`: the time of day, `HH:MM` (24-hour).",
+          "pattern": "^[0-9]{2}:[0-9]{2}$"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
