@@ -46,9 +46,9 @@ format_options:
 | Format | Options |
 |---|---|
 | `csv`, `delimited` | `delimiter`, `quote`, `quoting`, `header`, `line_ending`, `encoding`, `null`, `byte_order_mark` |
-| `fixed_width` | `columns` (see [Fixed-width columns](https://github.com/allenhori/dre/blob/master/docs/plugins.md#fixed-width-columns)), `header`, `line_ending`, `encoding`, `line_breaks` |
+| `fixed_width` | `columns` (see [Fixed-width columns](https://github.com/get-dre/dre/blob/master/docs/plugins.md#fixed-width-columns)), `header`, `line_ending`, `encoding`, `line_breaks` |
 | `parquet` | none; Arrow types are preserved |
-| `xlsx` | `header`, `max_rows_per_sheet`, `columns`, `date_format`, `datetime_format`, `time_format` (see [xlsx column formats](https://github.com/allenhori/dre/blob/master/docs/plugins.md#xlsx-column-formats)), `totals_label` (see [xlsx formulas and totals rows](https://github.com/allenhori/dre/blob/master/docs/plugins.md#xlsx-formulas-and-totals-rows)); per query `anchor`/`header`/`columns`; `template` |
+| `xlsx` | `header`, `max_rows_per_sheet`, `columns`, `date_format`, `datetime_format`, `time_format` (see [xlsx column formats](https://github.com/get-dre/dre/blob/master/docs/plugins.md#xlsx-column-formats)), `totals_label` (see [xlsx formulas and totals rows](https://github.com/get-dre/dre/blob/master/docs/plugins.md#xlsx-formulas-and-totals-rows)); per query `anchor`/`header`/`columns`; `template` |
 
 Every format but xlsx also takes `extension`: the output file's extension (`aba`, `dat`, ...), or
 `""` for none. The file is written the same way; only its name changes.

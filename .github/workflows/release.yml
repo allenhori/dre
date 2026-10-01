@@ -200,7 +200,7 @@ jobs:
           if [[ "$KIND" == core ]]; then
             [[ "$PRERELEASE" == true ]] || flags+=(--latest)
             title="DRE $GITHUB_REF_NAME"
-            notes="Install: \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/master/install.sh | sh\`, \`pip install dre-cli\`, or see the README. Plugins are released separately (\`<package>-v<version>\` releases) and installed by \`dre\` on demand."
+            notes="Install: \`curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | sh\`, \`pip install dre-cli\`, or see the README. Plugins are released separately (\`<package>-v<version>\` releases) and installed by \`dre\` on demand."
             # Changes since the previous DRE release, not since the last plugin release.
             flags+=(--generate-notes)
             prev="$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_REF_NAME^" 2>/dev/null || true)"
@@ -262,7 +262,7 @@ jobs:
     needs: [plan, build]
     if: needs.plan.outputs.kind == 'core'
     runs-on: ubuntu-latest
-    # Trusted publishing: crates.io trusts this workflow (release.yml in allenhori/dre) for
+    # Trusted publishing: crates.io trusts this workflow (release.yml in get-dre/dre) for
     # dre-protocol, dre-core and dre-cli, and hands it a short-lived token. No stored secret.
     permissions:
       contents: read

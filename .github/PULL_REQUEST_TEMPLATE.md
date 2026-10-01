@@ -17,4 +17,4 @@
 - [ ] `cargo test --workspace` passes
 - [ ] Docs updated (`README.md`, `docs/`) if users can see the change
 - [ ] Plugin `version` bumped in its `Cargo.toml` if a plugin's code changed
-- [ ] I have signed the [CLA](https://github.com/allenhori/dre/blob/master/CLA.md) (see [Contributing](https://github.com/allenhori/dre/blob/master/CONTRIBUTING.md#contributor-license-agreement))
+- [ ] I have signed the [CLA](https://github.com/get-dre/dre/blob/master/CLA.md) (see [Contributing](https://github.com/get-dre/dre/blob/master/CONTRIBUTING.md#contributor-license-agreement))

@@ -26,11 +26,11 @@ The install channels serve the newest skills **release**, never unreleased work 
 **Claude Code:**
 
 ```bash
-claude plugin marketplace add allenhori/dre
+claude plugin marketplace add get-dre/dre
 claude plugin install dre@dre
 ```
 
-(or `/plugin marketplace add allenhori/dre` and `/plugin install dre@dre` inside a session). To
+(or `/plugin marketplace add get-dre/dre` and `/plugin install dre@dre` inside a session). To
 update: `claude plugin marketplace update dre`, then `claude plugin update dre@dre`, and restart.
 
 **Codex, Cursor, GitHub Copilot, Gemini CLI and other agents**, with the
@@ -38,13 +38,13 @@ update: `claude plugin marketplace update dre`, then `claude plugin update dre@d
 for; `-a <agent>` picks one, `-g` installs for your user rather than the project):
 
 ```bash
-npx skills add allenhori/dre#skills-latest
+npx skills add get-dre/dre#skills-latest
 ```
 
 To update: `npx skills update`.
 
 **A pinned version**: install a release's tag instead, e.g.
-`npx skills add allenhori/dre#skills-v1.0.0`. This also works for Claude Code
+`npx skills add get-dre/dre#skills-v1.0.0`. This also works for Claude Code
 (`-a claude-code`), in place of the marketplace, when you want to stay on one release.
 
 Then ask your agent something like "help me with dre", "install dre", or "add a Slack

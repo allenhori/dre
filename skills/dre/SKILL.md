@@ -101,10 +101,10 @@ Do this before anything else. It needs no network.
      "(skills written for dre `<range>`)" so the warning stays visible.
    - **Older than the range:** offer to update dre (`dre-upgrade`), or to install the skills
      release that matches their dre (each `skills-v*` release on
-     https://github.com/allenhori/dre/releases states its range). Carry on only if they choose
+     https://github.com/get-dre/dre/releases states its range). Carry on only if they choose
      to, with the same visible warning.
    - **`dre` not found:** hand off to the `dre-install` skill. If it isn't installed, point to
-     https://github.com/allenhori/dre#install and stop here.
+     https://github.com/get-dre/dre#install and stop here.
 3. Don't repeat the check in this conversation unless dre has been installed or updated since.
 <!-- END shared/version-check.md -->
 
@@ -134,7 +134,7 @@ question, recommending the next step from the facts:
 
 Say which skill you're handing off to and why, then follow that skill's `SKILL.md` from its
 step 2 (the dre check is done). If that skill isn't installed, say the DRE skills come as a set
-and should be installed together (see https://github.com/allenhori/dre/tree/master/skills).
+and should be installed together (see https://github.com/get-dre/dre/tree/master/skills).
 
 For a general question ("what can dre do?", "how do Sets work?"), answer it from what you know
 of DRE and the references below, then ask what they'd like to do.

@@ -6,7 +6,7 @@ members = ["crates/*", "plugins/*"]
 version = "0.1.0-rc.1"
 edition = "2024"
 license = "GPL-3.0-only"
-repository = "https://github.com/allenhori/dre"
+repository = "https://github.com/get-dre/dre"
 publish = false
 
 [workspace.dependencies]

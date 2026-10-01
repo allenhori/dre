@@ -1,4 +1,4 @@
-module github.com/allenhori/dre/go/databricks
+module github.com/get-dre/dre/go/databricks
 
 go 1.27
 

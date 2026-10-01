@@ -58,22 +58,22 @@ chooses. This is the only DRE skill that uses the network, and only because the 
 - **dre:** `dre system update --check`. It says whether a newer release exists and, since it
   knows how dre was installed (install script, Homebrew, Scoop, pip, uv, pipx, cargo), how to
   update it. It changes nothing.
-- **The skills:** the newest `skills-v*` release of `allenhori/dre`, with `gh` if it's installed:
+- **The skills:** the newest `skills-v*` release of `get-dre/dre`, with `gh` if it's installed:
 
   ```bash
-  gh release list -R allenhori/dre --limit 100 --json tagName,isPrerelease,publishedAt \
+  gh release list -R get-dre/dre --limit 100 --json tagName,isPrerelease,publishedAt \
     --jq '[.[] | select(.tagName | startswith("skills-v"))] | .[0]'
   ```
 
   otherwise with `curl` on GitHub's public API:
 
   ```bash
-  curl -fsSL "https://api.github.com/repos/allenhori/dre/releases?per_page=100" \
+  curl -fsSL "https://api.github.com/repos/get-dre/dre/releases?per_page=100" \
     | grep -o '"tag_name": *"skills-v[^"]*"' | head -1
   ```
 
   Each skills release's notes state the dre range it supports: read them with
-  `gh release view skills-v<version> -R allenhori/dre`, or from the same API reply's `body`.
+  `gh release view skills-v<version> -R get-dre/dre`, or from the same API reply's `body`.
   Prefer stable releases; mention a newer pre-release only if the installed skills are
   themselves a pre-release.
 
@@ -114,7 +114,7 @@ Show each command and run it only after an explicit yes.
   Then Claude Code must be restarted to load them.
 - **The skills, `npx skills`:** `npx skills update`. To move to a given release (or back to an
   older one that matches an older dre), install that tag again:
-  `npx skills add allenhori/dre#skills-v<version>`.
+  `npx skills add get-dre/dre#skills-v<version>`.
 - **Copied by hand:** download the release's source and replace the skill folders.
 
 ### Step 5: verify

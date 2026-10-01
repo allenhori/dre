@@ -17,7 +17,7 @@ use serde::Deserialize;
 
 use crate::output;
 
-const REPO: &str = "allenhori/dre";
+const REPO: &str = "get-dre/dre";
 /// The install receipt shipped next to the binary: how this copy is distributed.
 pub const RECEIPT: &str = "dre-receipt.json";
 
@@ -120,7 +120,7 @@ pub fn update(a: UpdateArgs, printer: &output::Printer) -> ExitCode {
         printer.error(&format!(
             "can't update this dre ({}): it wasn't installed from a DRE release (a `cargo build`, a `cargo install` from a checkout, or a copied binary), so it isn't replaced.\n  \
              Install a copy that updates, one of:\n    \
-             curl -fsSL https://raw.githubusercontent.com/{REPO}/master/install.sh | sh\n    \
+             curl -fsSL https://github.com/{REPO}/releases/latest/download/install.sh | sh\n    \
              pip install dre-cli   (or: uv tool install dre-cli, pipx install dre-cli)\n    \
              cargo install dre-cli --locked\n    \
              on Windows, unpack dre-<version>-windows-<arch>.zip from https://github.com/{REPO}/releases",
@@ -519,4 +519,12 @@ fn swap(dir: &Path, exe: &Path, binary: &[u8], receipt: Option<&[u8]>) -> Result
         let _ = std::fs::write(exe.with_file_name(RECEIPT), r);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn updates_come_from_get_dre() {
+        assert_eq!(super::REPO, "get-dre/dre");
+    }
 }

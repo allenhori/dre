@@ -56,9 +56,9 @@ format_options:
 | Format | Options |
 |---|---|
 | `csv`, `delimited` | `delimiter`, `quote`, `quoting`, `header`, `line_ending`, `encoding`, `null`, `byte_order_mark` |
-| `fixed_width` | `columns` (see [Fixed-width columns](https://github.com/allenhori/dre/blob/master/docs/plugins.md#fixed-width-columns)), `header`, `line_ending`, `encoding`, `line_breaks` |
+| `fixed_width` | `columns` (see [Fixed-width columns](https://github.com/get-dre/dre/blob/master/docs/plugins.md#fixed-width-columns)), `header`, `line_ending`, `encoding`, `line_breaks` |
 | `parquet` | none; Arrow types are preserved |
-| `xlsx` | `header`, `max_rows_per_sheet`, `columns`, `date_format`, `datetime_format`, `time_format` (see [xlsx column formats](https://github.com/allenhori/dre/blob/master/docs/plugins.md#xlsx-column-formats)), `totals_label` (see [xlsx formulas and totals rows](https://github.com/allenhori/dre/blob/master/docs/plugins.md#xlsx-formulas-and-totals-rows)); per query `anchor`/`header`/`columns`; `template` |
+| `xlsx` | `header`, `max_rows_per_sheet`, `columns`, `date_format`, `datetime_format`, `time_format` (see [xlsx column formats](https://github.com/get-dre/dre/blob/master/docs/plugins.md#xlsx-column-formats)), `totals_label` (see [xlsx formulas and totals rows](https://github.com/get-dre/dre/blob/master/docs/plugins.md#xlsx-formulas-and-totals-rows)); per query `anchor`/`header`/`columns`; `template` |
 
 Every format but xlsx also takes `extension`: the output file's extension (`aba`, `dat`, ...), or
 `""` for none. The file is written the same way; only its name changes.
@@ -132,7 +132,7 @@ column: a date code on a number, a number code on a date, or either on text or b
 | `#,##0.00` | `1,234.50` |
 | `0.0%` | `12.5%` |
 | `[$€-x-euro2] #,##0.00` | `€ 1,234.50` |
-| `#,##0.00;[Red](https://github.com/allenhori/dre/blob/master/docs/plugins.md#,##0.00)` | negatives in red, in parentheses |
+| `#,##0.00;[Red](https://github.com/get-dre/dre/blob/master/docs/plugins.md#,##0.00)` | negatives in red, in parentheses |
 | `dd/mm/yyyy` | `25/01/2026` |
 | `mmm yyyy` | `Jan 2026` |
 | `h:mm AM/PM` | a time as `3:05 PM` |
@@ -192,6 +192,6 @@ absolute rows (`$B$5`, `B$5`) stay. Excel works out their values when the file i
 - Totals rows and row formulas are declared in `columns:`; a row formula needs a placeholder
   column selected in SQL where it should go.
 - A branded workbook goes through `template:`; see DRE's templates docs
-  (https://github.com/allenhori/dre/blob/master/docs/templates.md).
+  (https://github.com/get-dre/dre/blob/master/docs/templates.md).
 - Values Excel can't hold exactly (more than 15 significant digits, dates before 1900) are
   written as text, with a warning.

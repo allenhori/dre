@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install the dre CLI from a GitHub Release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | sh
+#   curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | sh
 #
 # DRE_VERSION     the release to install, e.g. v0.0.1-alpha (default: the newest, pre-releases
 #                 included)
@@ -10,7 +10,7 @@
 # Plugins aren't installed here: `dre deps` (or `dre init`) downloads the ones a project needs.
 set -eu
 
-repo="allenhori/dre"
+repo="get-dre/dre"
 dir="${DRE_INSTALL_DIR:-$HOME/.local/bin}"
 
 fail() {

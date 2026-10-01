@@ -80,15 +80,15 @@ The commands:
   release.
 
   ```bash
-  curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | sh
+  curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | sh
   ```
 
-- **Homebrew** (macOS, Linux): `brew install allenhori/tap/dre`
+- **Homebrew** (macOS, Linux): `brew install get-dre/tap/dre`
 - **Scoop** (Windows):
 
   ```powershell
-  scoop bucket add allenhori https://github.com/allenhori/scoop-bucket
-  scoop install allenhori/dre
+  scoop bucket add get-dre https://github.com/get-dre/scoop-bucket
+  scoop install get-dre/dre
   ```
 
 - **uv:** `uv tool install dre-cli`
@@ -96,7 +96,7 @@ The commands:
 - **pip**, into the active environment (a virtualenv, a job's environment):
   `python3 -m pip install dre-cli`. Avoid installing into the system Python.
 - **Release zip** (Windows): download `dre-<version>-windows-x86_64.zip` (or `-aarch64.zip`) from
-  https://github.com/allenhori/dre/releases, unpack `dre.exe` into a folder, and add that folder
+  https://github.com/get-dre/dre/releases, unpack `dre.exe` into a folder, and add that folder
   to `PATH`.
 
 Show the exact command, then confirm before running it: installing software changes the user's
@@ -135,4 +135,4 @@ Recommend it, and hand off if the user agrees.
 - **The install script can't download:** check the machine reaches `github.com` and
   `raw.githubusercontent.com` (a proxy may need `HTTPS_PROXY`). The script stops if the checksum
   doesn't match; don't work around that, download again.
-- **Scoop says the bucket exists:** skip `scoop bucket add` and run `scoop install allenhori/dre`.
+- **Scoop says the bucket exists:** skip `scoop bucket add` and run `scoop install get-dre/dre`.

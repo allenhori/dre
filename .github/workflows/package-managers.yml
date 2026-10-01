@@ -2,8 +2,8 @@ name: Package managers
 
 # Renders the Homebrew formula and the Scoop manifest for a published DRE release (from the
 # release's own SHA256SUMS; .github/scripts/package_managers.py), installs `dre` through each on
-# real runners, and, with `push`, commits them to allenhori/homebrew-tap (Formula/dre.rb) and
-# allenhori/scoop-bucket (bucket/dre.json).
+# real runners, and, with `push`, commits them to get-dre/homebrew-tap (Formula/dre.rb) and
+# get-dre/scoop-bucket (bucket/dre.json).
 #
 # release.yml calls it for every DRE release: alphas are tested only; release candidates and
 # stable releases are pushed. Run by hand for an existing release, e.g. to retry a failed push
@@ -135,7 +135,7 @@ jobs:
           fi
           publish() {
             local repo="$1" src="$2" dest="$3" dir="work/$1"
-            git clone -q --depth 1 "https://x-access-token:$PACKAGES_TOKEN@github.com/allenhori/$repo.git" "$dir"
+            git clone -q --depth 1 "https://x-access-token:$PACKAGES_TOKEN@github.com/get-dre/$repo.git" "$dir"
             mkdir -p "$dir/$(dirname "$dest")"
             cp "$src" "$dir/$dest"
             git -C "$dir" add "$dest"
