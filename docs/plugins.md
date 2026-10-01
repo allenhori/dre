@@ -1,3 +1,10 @@
+---
+title: "First-party plugins"
+description: "The first-party plugins, their profile fields and output options."
+sidebar:
+  order: 8
+---
+
 # First-party plugins
 
 Plugins come in packages, declared once each under `plugins:` in `dependencies.yml` (see

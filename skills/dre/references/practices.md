@@ -1,3 +1,10 @@
+---
+title: "DRE practices"
+description: "The opinions DRE’s agent skills give, and the reasons behind them."
+sidebar:
+  order: 15
+---
+
 # DRE practices
 
 The opinions DRE's agent skills give, and the reasons behind them. Every skill takes its advice

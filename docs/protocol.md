@@ -1,3 +1,10 @@
+---
+title: "DRE plugin protocol, version 0"
+description: "How a plugin talks to DRE, for writing a plugin in any language."
+sidebar:
+  order: 16
+---
+
 # DRE plugin protocol, version 0
 
 Every source, format and destination in DRE is a plugin, served by a separate executable that

@@ -1,6 +1,13 @@
+---
+title: "The manifest and `run_results.json`"
+description: "The project manifest and the per-run results file, with the manifest JSON Schema."
+sidebar:
+  order: 12
+---
+
 # The manifest and `run_results.json`
 
-DRE writes two kinds of JSON file into the [target path](../README.md#the-target-path)
+DRE writes two kinds of JSON file into the [target path](target-path.md)
 (`target/` unless you move it). They read as a pair:
 
 - **`manifest.json`** says what the project *is*: every report, Set, Binding, schedule and
@@ -12,6 +19,18 @@ DRE writes two kinds of JSON file into the [target path](../README.md#the-target
 The manifest (and `dre ls --output json`, which prints part of it) is DRE's supported way for
 orchestrators, CI and other tools to read a project. Read it rather than DRE's YAML: it has the
 layering (project < folders < report < Set) and schedule resolution already applied.
+
+## The project manifest at a glance
+
+`dre compile`, `dre validate` and `dre run` write `target/manifest.json`: the whole project as
+DRE resolves it, whatever was selected. It lists every report with its Sets and Bindings (merged
+vars, queries, output, destinations), every schedule with the Bindings it runs, the declared
+plugins, and checksums for change detection. It's built offline, with no connection or
+`profiles.yml`, never contains secrets or connection settings, and is the same byte for byte for
+the same project. An orchestrator can generate one task per schedule from it (each runs
+`dre run --schedule <name>`), and CI can compare two manifests to find the reports a change
+touched. `dre ls` prints slices of it: `dre ls -s tag:regulatory`, `dre ls --schedule
+close_monthly --output json`. See its [JSON Schema](manifest.schema.json).
 
 ## When it's written
 
