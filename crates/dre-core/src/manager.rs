@@ -18,8 +18,7 @@ use crate::lock::{Checksums, Lock, Locked};
 use crate::plugins::{Manifest, version_dir};
 use crate::project::{PluginRequirement, PluginSource, Project};
 
-pub const DEFAULT_REGISTRY: &str =
-    "https://github.com/allenhori/dre/releases/download/registry/packages.json";
+pub const DEFAULT_REGISTRY: &str = "https://github.com/get-dre/dre/releases/download/registry/packages.json";
 
 /// The index's current schema. Schema 1 listed single plugins (`kind` and `name`); each still
 /// reads as a package of that one plugin.
@@ -878,6 +877,14 @@ pub fn install_linked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_registry_lives_under_get_dre() {
+        assert_eq!(
+            DEFAULT_REGISTRY,
+            "https://github.com/get-dre/dre/releases/download/registry/packages.json"
+        );
+    }
 
     fn pick(versions: &[&str], req: &str) -> Option<String> {
         let vs: Vec<Version> = versions.iter().map(|v| Version::parse(v).unwrap()).collect();

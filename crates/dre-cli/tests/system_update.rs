@@ -95,7 +95,7 @@ impl Server {
             .collect()
     }
 
-    /// Publish `allenhori/dre` releases, each with this platform's archive and SHA256SUMS.
+    /// Publish `get-dre/dre` releases, each with this platform's archive and SHA256SUMS.
     fn releases(&self, versions: &[&str]) {
         self.releases_with(versions, |_, sums| sums)
     }
@@ -121,9 +121,9 @@ impl Server {
             let ext = if cfg!(windows) { "zip" } else { "tar.gz" };
             let name = format!("dre-{v}-{}.{ext}", platform());
             let archive = archive(v);
-            let asset = format!("/repos/allenhori/dre/releases/assets/{v}/{name}");
+            let asset = format!("/repos/get-dre/dre/releases/assets/{v}/{name}");
             self.route(&asset, archive.clone());
-            let sums_path = format!("/repos/allenhori/dre/releases/assets/{v}/SHA256SUMS");
+            let sums_path = format!("/repos/get-dre/dre/releases/assets/{v}/SHA256SUMS");
             let text = format!("{}  {name}\n{}  install.sh\n", sha(&archive), sha(b"x"));
             self.route(&sums_path, sums(v, text).into_bytes());
             listed.push(serde_json::json!({
@@ -143,7 +143,7 @@ impl Server {
         for page in 1..=pages {
             let chunk: Vec<_> = listed.iter().skip((page - 1) * 100).take(100).collect();
             self.route(
-                &format!("/repos/allenhori/dre/releases?per_page=100&page={page}"),
+                &format!("/repos/get-dre/dre/releases?per_page=100&page={page}"),
                 serde_json::to_vec(&chunk).unwrap(),
             );
         }
@@ -385,7 +385,7 @@ fn an_update_replaces_the_binary_and_its_receipt() {
     d.update(&s, "0.0.1-alpha-11", &[])
         .ok()
         .says("Updated dre from 0.0.1-alpha-11 to 0.0.1-alpha-12")
-        .says("https://github.com/allenhori/dre/releases/tag/v0.0.1-alpha-12")
+        .says("https://github.com/get-dre/dre/releases/tag/v0.0.1-alpha-12")
         .says("dre plugin update");
     assert_eq!(std::fs::read(&d.exe).unwrap(), stand_in("0.0.1-alpha-12"));
     assert!(
@@ -439,7 +439,7 @@ fn a_version_that_doesnt_exist_is_an_error() {
     d.update(&s, "0.0.1-alpha-11", &["0.0.1-alpha-99"])
         .failed()
         .says("0.0.1-alpha-99")
-        .says("https://github.com/allenhori/dre/releases");
+        .says("https://github.com/get-dre/dre/releases");
     assert!(d.unchanged());
 }
 

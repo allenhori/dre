@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/allenhori/dre/blob/master/docs/manifest.schema.json",
+  "$id": "https://github.com/get-dre/dre/blob/master/docs/manifest.schema.json",
   "title": "DRE project manifest, schema 1",
   "description": "target/manifest.json, written by `dre compile`, `dre validate` and `dre run`, and the document `dre ls --output json` prints (holding only the matching reports and schedules). New optional fields may appear within schema 1; consumers should ignore fields they don't know. See docs/manifest.md.",
   "type": "object",

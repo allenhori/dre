@@ -25,7 +25,7 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-REPO = "allenhori/dre"
+REPO = "get-dre/dre"
 DIST_NAME = "dre-cli"
 PKG = "dre_cli"
 

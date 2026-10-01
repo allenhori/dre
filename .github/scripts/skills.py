@@ -39,7 +39,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGES = json.loads((ROOT / ".github/scripts/packages.json").read_text())
 PLUGIN_DOCS = "docs/plugins.md"
 PRACTICES = "docs/practices.md"
-DOCS_URL = "https://github.com/allenhori/dre/blob/master/docs/"
+DOCS_URL = "https://github.com/get-dre/dre/blob/master/docs/"
 
 # What each skill gets copied into its references/ folder. Every skill folder must be listed.
 COPIES = {
@@ -706,12 +706,12 @@ def release_notes(root, tag):
         f"DRE's agent skills, {version}. Supported dre: `{fm['metadata']['dre']}`.",
         "",
         "Install or update:",
-        "- Claude Code: `claude plugin marketplace add allenhori/dre`, then `claude plugin install dre@dre`"
+        "- Claude Code: `claude plugin marketplace add get-dre/dre`, then `claude plugin install dre@dre`"
         " (to update: `claude plugin marketplace update dre`, then `claude plugin update dre@dre`).",
-        f"- Other agents (Codex, Cursor, GitHub Copilot, Gemini CLI, ...): `npx skills add allenhori/dre#{tag}`"
+        f"- Other agents (Codex, Cursor, GitHub Copilot, Gemini CLI, ...): `npx skills add get-dre/dre#{tag}`"
         " for this release, or `#skills-latest` for the newest.",
         "",
-        "See [skills/README.md](https://github.com/allenhori/dre/blob/master/skills/README.md).",
+        "See [skills/README.md](https://github.com/get-dre/dre/blob/master/skills/README.md).",
     ])
 
 

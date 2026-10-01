@@ -30,7 +30,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          path-to-document: https://github.com/allenhori/dre/blob/master/CLA.md
+          path-to-document: https://github.com/get-dre/dre/blob/master/CLA.md
           path-to-signatures: signatures/cla.json
           branch: cla-signatures
           allowlist: allenhori,dependabot[bot],github-actions[bot]

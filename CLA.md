@@ -2,7 +2,7 @@
 
 This agreement is between you ("You") and the maintainer of DRE, GitHub user @allenhori ("the Maintainer"),
 and covers every Contribution You submit to the DRE project at
-<https://github.com/allenhori/dre>, now or later.
+<https://github.com/get-dre/dre>, now or later.
 
 ## 1. Definitions
 

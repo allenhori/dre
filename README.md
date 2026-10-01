@@ -31,8 +31,8 @@ ask one question at a time with a recommendation, follow [DRE's practices](docs/
 confirm before anything is delivered, and never ask for your passwords or tokens.
 
 ```bash
-claude plugin marketplace add allenhori/dre && claude plugin install dre@dre   # Claude Code
-npx skills add allenhori/dre#skills-latest                                     # other agents
+claude plugin marketplace add get-dre/dre && claude plugin install dre@dre   # Claude Code
+npx skills add get-dre/dre#skills-latest                                     # other agents
 ```
 
 Then ask: "help me with dre".
@@ -61,7 +61,7 @@ A successful validation means the project configuration and SQL compile. Continu
 macOS and Linux (x86_64 and ARM):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | sh
+curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | sh
 ```
 
 This puts `dre` in `~/.local/bin`, after checking the download against the release's
@@ -69,24 +69,24 @@ This puts `dre` in `~/.local/bin`, after checking the download against the relea
 newest, pre-releases included):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/allenhori/dre/master/install.sh | DRE_VERSION=v0.1.0-rc.1 DRE_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://github.com/get-dre/dre/releases/latest/download/install.sh | DRE_VERSION=v0.1.0-rc.1 DRE_INSTALL_DIR=/usr/local/bin sh
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a
 container build. On Windows, download `dre-<version>-windows-x86_64.zip` (or `-aarch64.zip`)
-from [Releases](https://github.com/allenhori/dre/releases) and put `dre.exe` on your `PATH`.
+from [Releases](https://github.com/get-dre/dre/releases) and put `dre.exe` on your `PATH`.
 
 ### With Homebrew or Scoop
 
 From 0.1.0-rc.1 on:
 
 ```bash
-brew install allenhori/tap/dre                                   # macOS and Linux
+brew install get-dre/tap/dre                                   # macOS and Linux
 ```
 
 ```powershell
-scoop bucket add allenhori https://github.com/allenhori/scoop-bucket   # Windows
-scoop install allenhori/dre
+scoop bucket add get-dre https://github.com/get-dre/scoop-bucket   # Windows
+scoop install get-dre/dre
 ```
 
 ### With pip

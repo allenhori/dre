@@ -25,7 +25,7 @@ DRE installs packages from a static JSON index. The index is a plain file, hoste
 GitHub Releases, and there's no registry service to run. The default location is:
 
 ```
-https://github.com/allenhori/dre/releases/download/registry/packages.json
+https://github.com/get-dre/dre/releases/download/registry/packages.json
 ```
 
 `DRE_REGISTRY_URL` points DRE somewhere else: an `https://` URL, a `file://` URL or a plain file

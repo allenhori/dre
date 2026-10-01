@@ -6,9 +6,9 @@ name: Skills release
 #
 # The release moves the `skills-latest` branch to the tag's skills, which is what the install channels
 # serve: the Claude Code marketplace (.claude-plugin/marketplace.json) and
-# `npx skills add allenhori/dre#skills-latest`. So users get released skills, never master. A
+# `npx skills add get-dre/dre#skills-latest`. So users get released skills, never master. A
 # pre-release moves it only while there is no stable skills release yet; otherwise it's installed
-# by its tag (`npx skills add allenhori/dre#skills-v1.1.0-rc.1`).
+# by its tag (`npx skills add get-dre/dre#skills-v1.1.0-rc.1`).
 #
 # The skills release is never GitHub's "latest" release; that stays DRE's.
 

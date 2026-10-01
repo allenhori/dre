@@ -3,8 +3,8 @@
 
     package_managers.py <version> <SHA256SUMS of that release> <out dir>
 
-Writes <out dir>/dre.rb (for allenhori/homebrew-tap, Formula/dre.rb) and <out dir>/dre.json
-(for allenhori/scoop-bucket, bucket/dre.json). Both download the release's own archives, with
+Writes <out dir>/dre.rb (for get-dre/homebrew-tap, Formula/dre.rb) and <out dir>/dre.json
+(for get-dre/scoop-bucket, bucket/dre.json). Both download the release's own archives, with
 the checksums from its SHA256SUMS; both install `dre` only, since `dre` installs plugins itself.
 """
 
@@ -12,7 +12,7 @@ import json
 import pathlib
 import sys
 
-REPO = "allenhori/dre"
+REPO = "get-dre/dre"
 DESC = "Declarative Reporting Engine: SQL in, formatted files out"
 HOMEPAGE = f"https://github.com/{REPO}"
 LICENSE = "GPL-3.0-only"

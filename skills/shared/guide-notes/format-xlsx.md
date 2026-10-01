@@ -4,6 +4,6 @@
 - Totals rows and row formulas are declared in `columns:`; a row formula needs a placeholder
   column selected in SQL where it should go.
 - A branded workbook goes through `template:`; see DRE's templates docs
-  (https://github.com/allenhori/dre/blob/master/docs/templates.md).
+  (https://github.com/get-dre/dre/blob/master/docs/templates.md).
 - Values Excel can't hold exactly (more than 15 significant digits, dates before 1900) are
   written as text, with a warning.

@@ -3,9 +3,9 @@
   "displayName": "DRE",
   "version": "1.0.0-rc.1",
   "description": "An interactive guide to DRE, the Declarative Reporting Engine: install it, connect a source, write a report, run it and deliver it.",
-  "author": {"name": "allenhori"},
-  "homepage": "https://github.com/allenhori/dre/tree/master/skills",
-  "repository": "https://github.com/allenhori/dre",
+  "author": {"name": "get-dre"},
+  "homepage": "https://github.com/get-dre/dre/tree/master/skills",
+  "repository": "https://github.com/get-dre/dre",
   "license": "GPL-3.0-only",
   "keywords": ["dre", "reporting", "sql", "xlsx", "csv"],
   "skills": "./"
