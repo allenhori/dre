@@ -3,8 +3,8 @@ name: dre-setup
 description: Set up DRE step by step - pick and install the source plugin (DuckDB, Postgres, Databricks), write the connection profile in ~/.dre/profiles.yml with a safe sign-in, add destinations, create a starter project with `dre new` and check it with `dre validate`. Use when the user wants to connect dre to a database, add or change a profile, set up dev and prod environments, or start a DRE project.
 license: GPL-3.0-only
 metadata:
-  version: "1.0.0-rc.1"
-  dre: ">=0.1.0-rc.1, <0.2.0"
+  version: "1.0.0"
+  dre: ">=0.1.0, <0.2.0"
 ---
 
 # Set up a DRE connection and project
@@ -82,7 +82,7 @@ Do this before anything else. It needs no network.
 
 1. Run `dre --version`. It prints `dre <version>`, e.g. `dre 0.1.0`.
 2. Compare it with the `dre` range in this skill's frontmatter (`metadata.dre`, e.g.
-   `>=0.1.0-rc.1, <0.2.0`: any 0.1 release or pre-release). A pre-release of the upper bound
+   `>=0.1.0, <0.2.0`: any 0.1 release). A pre-release of the upper bound
    (`0.2.0-rc.1` for `<0.2.0`) is outside the range.
    - **In range:** continue without mentioning it.
    - **Newer than the range:** say "These skills were written for dre `<range>` and you have

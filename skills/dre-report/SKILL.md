@@ -3,8 +3,8 @@ name: dre-report
 description: Create or change a DRE report - the SQL files and report YAML, its tabs, variables and Sets, its output format (xlsx with number formats, formulas and totals rows, csv, fixed-width, parquet) and its destinations (S3, GCS, Azure Blob, SFTP, FTP, Databricks Volumes, email, Slack). Use when the user wants a new report, or to add a tab, a column format, a variable, a destination or a recipient to an existing one, in a dre project.
 license: GPL-3.0-only
 metadata:
-  version: "1.0.0-rc.1"
-  dre: ">=0.1.0-rc.1, <0.2.0"
+  version: "1.0.0"
+  dre: ">=0.1.0, <0.2.0"
 ---
 
 # Write or change a DRE report
@@ -114,7 +114,7 @@ Do this before anything else. It needs no network.
 
 1. Run `dre --version`. It prints `dre <version>`, e.g. `dre 0.1.0`.
 2. Compare it with the `dre` range in this skill's frontmatter (`metadata.dre`, e.g.
-   `>=0.1.0-rc.1, <0.2.0`: any 0.1 release or pre-release). A pre-release of the upper bound
+   `>=0.1.0, <0.2.0`: any 0.1 release). A pre-release of the upper bound
    (`0.2.0-rc.1` for `<0.2.0`) is outside the range.
    - **In range:** continue without mentioning it.
    - **Newer than the range:** say "These skills were written for dre `<range>` and you have
