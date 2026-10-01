@@ -257,6 +257,23 @@ jobs:
     secrets:
       PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
 
+  site:
+    name: Rebuild getdre.com
+    # A stable DRE release changes what the docs, plugin catalogue and changelog show.
+    needs: [plan, publish, package-managers]
+    if: needs.plan.outputs.kind == 'core' && needs.plan.outputs.prerelease != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the Cloudflare Pages deploy hook
+        env:
+          HOOK: ${{ secrets.SITE_DEPLOY_HOOK }}
+        run: |
+          if [[ -z "$HOOK" ]]; then
+            echo "::warning::SITE_DEPLOY_HOOK is not set; getdre.com was not rebuilt"
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK" >/dev/null
+
   crates:
     name: Publish to crates.io
     needs: [plan, build]
