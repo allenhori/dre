@@ -19,6 +19,7 @@ regex.workspace = true
 walkdir.workspace = true
 semver.workspace = true
 minijinja.workspace = true
+minijinja-contrib.workspace = true
 chrono.workspace = true
 chrono-tz.workspace = true
 encoding_rs = "0.8"
