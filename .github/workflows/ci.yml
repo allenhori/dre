@@ -168,8 +168,9 @@ jobs:
         with:
           prefix-key: v1-rust
           save-if: ${{ github.ref == 'refs/heads/master' }}
+      - uses: taiki-e/install-action@nextest
       - run: >
-          cargo test --no-fail-fast -p dre-plugin-postgres -p dre-plugin-object_store
+          cargo nextest run --no-fail-fast -p dre-plugin-postgres -p dre-plugin-object_store
           -p dre-plugin-sftp -p dre-plugin-ftp -p dre-plugin-email
 
   test:
@@ -202,7 +203,12 @@ jobs:
           (cd go/databricks && go build -o "$dir/dre-plugin-databricks$ext" .)
           echo "DRE_TEST_GO_PLUGINS=$dir" >> "$GITHUB_ENV"
       - run: cargo build --workspace --bins
-      # Run every test binary even after a failure, so one failure can't hide others.
-      - run: cargo test --workspace --no-fail-fast
+      # nextest runs test binaries in parallel (cargo test runs them one at a time), each test in
+      # its own process. Locally, `cargo test` runs the same tests. --no-fail-fast runs every
+      # test even after a failure, so one failure can't hide others.
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --workspace --no-fail-fast
         env:
           DRE_TEST_PREBUILT_BINS: "1"
+      # nextest doesn't run doctests.
+      - run: cargo test --workspace --doc
