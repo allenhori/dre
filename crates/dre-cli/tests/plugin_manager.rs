@@ -33,10 +33,12 @@ impl Env {
         let bin = std::fs::read(test_plugins(&["dre-source-fixture"]).join(&exe_name)).unwrap();
         std::fs::write(reg.join("fixture-1.0.0"), &bin).unwrap();
         std::fs::write(reg.join("fixture-1.1.0"), &bin).unwrap();
+        // Stored, not compressed: still a .tar.gz DRE must unpack, without spending seconds per
+        // test compressing a debug binary.
         let tgz = {
             let mut b = tar::Builder::new(flate2::write::GzEncoder::new(
                 Vec::new(),
-                flate2::Compression::fast(),
+                flate2::Compression::none(),
             ));
             let mut h = tar::Header::new_gnu();
             h.set_size(bin.len() as u64);
@@ -476,7 +478,7 @@ fn a_package_installs_once_and_provides_all_its_plugins() {
     let tgz = {
         let mut b = tar::Builder::new(flate2::write::GzEncoder::new(
             Vec::new(),
-            flate2::Compression::fast(),
+            flate2::Compression::none(),
         ));
         let mut h = tar::Header::new_gnu();
         h.set_size(bin.len() as u64);
