@@ -1,6 +1,8 @@
 //! Shared helpers for CLI tests.
 #![allow(dead_code)]
 
+pub mod duckdb;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -154,8 +156,9 @@ impl TestProject {
 
     /// Create a DuckDB database file in the project by running `sql`.
     pub fn duckdb(&self, rel: &str, sql: &str) {
-        let c = duckdb::Connection::open(self.path(rel)).unwrap();
-        c.execute_batch(sql).unwrap();
+        static HELPER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        let helper = HELPER.get_or_init(|| workspace_bin("dre-test-duckdb-seed"));
+        duckdb::seed(helper, &self.path(rel), sql).unwrap_or_else(|error| panic!("{error:#}"));
     }
 
     /// Run `dre <cmd> <args…>` against this project.

@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "plugins/*"]
+members = ["crates/*", "plugins/*", "tests/duckdb-seed"]
+# The unpublished helper is test infrastructure, not a default production build.
+default-members = ["crates/*", "plugins/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -33,3 +35,9 @@ assert_cmd = "2"
 arrow = "58"
 parquet = "58"
 duckdb = { version = "1.10505", features = ["bundled"] }
+
+# Native DuckDB debug symbols dominate development/test disk usage. Omit debug
+# info only for libduckdb-sys. Its build script also sets native NDEBUG, as in
+# release builds; all other packages and the release profile remain unchanged.
+[profile.dev.package.libduckdb-sys]
+debug = 0
