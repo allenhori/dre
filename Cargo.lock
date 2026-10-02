@@ -1694,6 +1694,7 @@ dependencies = [
  "encoding_rs",
  "flate2",
  "minijinja",
+ "minijinja-contrib",
  "regex",
  "semver",
  "serde",
@@ -3230,6 +3231,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86886cf6dbf4e614b19c9a1eec9775f021869d7eadde0fc73921a81b90c9b4c9"
 dependencies = [
  "memo-map",
+ "serde",
+]
+
+[[package]]
+name = "minijinja-contrib"
+version = "2.24.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd3e5f077bc2379f0f7d911e7cfdd921114ed99fc884533dca502944cb355b11"
+dependencies = [
+ "minijinja",
  "serde",
 ]
 

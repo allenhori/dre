@@ -75,6 +75,41 @@ an earlier query doesn't exist yet: `columns()` or `run_query()` on it fails the
 `dre run`. `dre validate` reports such a report as a warning (it can only be checked by
 `dre run`) and still checks everything else.
 
+## Conditions, loops and Python-style methods
+
+`{% if %}` / `{% elif %}` / `{% else %}` and `{% for %}` work in SQL, and inside the string values
+of YAML (a `path:`, a subject). Loops have `loop.index`, `loop.first`, `loop.last`, `loop.length`,
+`for ... else`, `range()` and `{% for x in xs if cond %}`. The YAML structure itself (keys, list
+items) is plain YAML: Jinja only renders values.
+
+Common Python string and mapping methods work as they do in Jinja2: `'a,b'.split(',')`,
+`s.startswith('a')`, `s.strip()`, `s.replace(a, b)`, `d.get('k', default)`, `d.keys()`,
+`d.values()`, `d.items()`.
+
+### Lists and dicts you can change: `list()` and `dict()`
+
+A `[]` or `{}` literal, and a `var()` value, can't change once made. To build one up in a loop,
+start from `list()` or `dict()` (optionally from existing values: `list(var('regions'))`):
+
+```sql
+{% set cols = list() %}
+{% for c in columns('orders') if c.name != '_etl_ts' %}
+  {% set _ = cols.append(c.name) %}
+{% endfor %}
+select {{ cols | join(', ') }} from orders
+```
+
+- Lists: `append`, `extend`, `insert`, `pop`, `remove`, `clear`, `sort(reverse=true)`, `reverse`,
+  `index`, `count`, `copy`. Dicts: `update`, `get`, `setdefault`, `pop`, `clear`, `keys`,
+  `values`, `items`, `copy`.
+- They behave like Python's: `{% set b = a %}` is the same list (use `a.copy()` for another);
+  a dict keeps the order keys were added in; `l[-1]` is the last item.
+- Write `{% set _ = items.append(x) %}`: the method returns nothing, and there is no `{% do %}`.
+  Calling a changing method on a `[]` literal or a `var()` value is an error that says so.
+- They last for one render only; nothing carries over between queries, Sets or runs.
+- For a counter or a flag, `namespace()` also works: `{% set ns = namespace(n=0) %}` then
+  `{% set ns.n = ns.n + 1 %}`.
+
 ## String literals and Databricks
 
 Databricks SQL doesn't read `''` inside a string literal as an escaped quote: `'O''Brien'` is two

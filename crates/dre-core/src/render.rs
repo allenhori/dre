@@ -144,6 +144,7 @@ impl Renderer {
         let mut env = Environment::new();
         env.set_undefined_behavior(UndefinedBehavior::Strict);
         env.set_keep_trailing_newline(true);
+        crate::mutable::register(&mut env);
 
         let vars = cfg.vars;
         let cli = cfg.cli_vars;
@@ -953,6 +954,200 @@ mod tests {
 
     fn render(r: &Renderer, src: &str) -> Result<String, RenderError> {
         r.render(Path::new("reports/q.sql"), src)
+    }
+
+    fn ok(src: &str) -> String {
+        let (_d, r) = renderer(serde_json::json!({"fixed": [3, 1, 2], "m": {"a": 1}}), &[], &[]);
+        render(&r, src).unwrap_or_else(|e| panic!("{src}: {e}"))
+    }
+
+    fn err(src: &str) -> String {
+        let (_d, r) = renderer(serde_json::json!({"fixed": [3, 1, 2], "m": {"a": 1}}), &[], &[]);
+        render(&r, src).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn python_string_and_dict_methods_work() {
+        assert_eq!(ok("{{ 'a,b,c'.split(',') | join('-') }}"), "a-b-c");
+        assert_eq!(
+            ok("{{ 'y' if 'abc'.startswith('a') }}{{ 'y' if 'abc'.endswith('x') }}"),
+            "y"
+        );
+        assert_eq!(
+            ok("{{ ' x '.strip() }}|{{ 'abc'.upper() }}|{{ 'a-b'.replace('-', '_') }}"),
+            "x|ABC|a_b"
+        );
+        assert_eq!(
+            ok("{{ var('m').keys() | list }} {{ var('m').items() | list }}"),
+            r#"["a"] [["a", 1]]"#
+        );
+        assert_eq!(
+            ok("{{ var('m').get('a') }} {{ var('m').get('z', 'none') }}"),
+            "1 none"
+        );
+    }
+
+    #[test]
+    fn list_appends_in_a_loop_and_joins() {
+        assert_eq!(
+            ok(
+                "{% set sq = list() %}{% for i in range(1, 5) %}{% set _ = sq.append(i * i) %}{% endfor %}{{ sq | join('+') }}"
+            ),
+            "1+4+9+16"
+        );
+    }
+
+    #[test]
+    fn list_methods_follow_python() {
+        assert_eq!(
+            ok("{% set l = list([3, 1, 2]) %}{% set _ = l.sort() %}{{ l }}"),
+            "[1, 2, 3]"
+        );
+        assert_eq!(
+            ok("{% set l = list([3, 1, 2]) %}{% set _ = l.sort(reverse=true) %}{{ l }}"),
+            "[3, 2, 1]"
+        );
+        assert_eq!(
+            ok("{% set l = list([1, 2]) %}{% set _ = l.extend([3, 4]) %}{{ l }} {{ l | length }}"),
+            "[1, 2, 3, 4] 4"
+        );
+        assert_eq!(
+            ok("{% set l = list([1, 2, 3]) %}{{ l.pop() }} {{ l.pop(0) }} {{ l }}"),
+            "3 1 [2]"
+        );
+        assert_eq!(
+            ok("{% set l = list([1, 2]) %}{% set _ = l.insert(0, 9) %}{% set _ = l.insert(99, 7) %}{{ l }}"),
+            "[9, 1, 2, 7]"
+        );
+        assert_eq!(
+            ok(
+                "{% set l = list([1, 2, 1]) %}{% set _ = l.remove(1) %}{{ l }} {{ l.index(1) }} {{ l.count(1) }}"
+            ),
+            "[2, 1] 1 1"
+        );
+        assert_eq!(
+            ok("{% set l = list([1, 2]) %}{% set _ = l.reverse() %}{{ l }}"),
+            "[2, 1]"
+        );
+        assert_eq!(
+            ok("{% set l = list([1, 2]) %}{% set _ = l.clear() %}{{ l }} {{ 'empty' if not l }}"),
+            "[] empty"
+        );
+        assert_eq!(
+            ok("{% set l = list([1, 2, 3]) %}{{ l[0] }} {{ l[-1] }} {{ l[1:] }}"),
+            "1 3 [2, 3]"
+        );
+    }
+
+    #[test]
+    fn lists_share_by_reference_and_copy_apart() {
+        assert_eq!(
+            ok("{% set a = list() %}{% set b = a %}{% set _ = b.append(1) %}{{ a }}"),
+            "[1]"
+        );
+        assert_eq!(
+            ok("{% set a = list([1]) %}{% set b = a.copy() %}{% set _ = b.append(2) %}{{ a }} {{ b }}"),
+            "[1] [1, 2]"
+        );
+    }
+
+    #[test]
+    fn a_list_changed_inside_its_own_loop_does_not_skip_or_repeat() {
+        assert_eq!(
+            ok(
+                "{% set l = list([1, 2, 3]) %}{% for x in l %}{% set _ = l.append(x * 10) %}{{ x }} {% endfor %}{{ l }}"
+            ),
+            "1 2 3 [1, 2, 3, 10, 20, 30]"
+        );
+        assert_eq!(
+            ok("{% set l = list([1, 2]) %}{% set _ = l.extend(l) %}{{ l }}"),
+            "[1, 2, 1, 2]"
+        );
+    }
+
+    #[test]
+    fn a_list_starts_from_a_var_without_changing_it() {
+        assert_eq!(
+            ok("{% set l = list(var('fixed')) %}{% set _ = l.append(4) %}{{ l }} {{ var('fixed') }}"),
+            "[3, 1, 2, 4] [3, 1, 2]"
+        );
+    }
+
+    #[test]
+    fn dict_methods_follow_python() {
+        assert_eq!(
+            ok("{% set d = dict(a=1) %}{% set _ = d.update(b=2) %}{% set _ = d.update({'c': 3}) %}{{ d }}"),
+            r#"{"a": 1, "b": 2, "c": 3}"#
+        );
+        // Insertion order, as in Python. (Keyword arguments and `{}` literals reach us already sorted
+        // until `preserve_order` is on, and the `| items` filter sorts; so add keys one by one.)
+        let make = "{% set d = dict() %}{% set _ = d.setdefault('b', 1) %}{% set _ = d.setdefault('a', 2) %}";
+        assert_eq!(
+            ok(&(make.to_string() + "{% for k, v in d.items() %}{{ k }}={{ v }} {% endfor %}")),
+            "b=1 a=2 "
+        );
+        assert_eq!(
+            ok(&(make.to_string() + "{% for k in d %}{{ k }} {% endfor %}{{ d.values() | list }}")),
+            "b a [1, 2]"
+        );
+        assert_eq!(
+            ok("{% set d = dict(a=1) %}{{ d.setdefault('a', 9) }} {{ d.setdefault('b', 2) }} {{ d }}"),
+            r#"1 2 {"a": 1, "b": 2}"#
+        );
+        assert_eq!(
+            ok("{% set d = dict(a=1) %}{{ d.pop('a') }} {{ d.pop('a', 'gone') }} {{ d }}"),
+            "1 gone {}"
+        );
+        assert_eq!(
+            ok(
+                "{% set d = dict(a=1) %}{{ d.get('a') }} {{ d['a'] }} {{ d.a }} {{ 'in' if 'a' in d }} {{ d.keys() | list }}"
+            ),
+            r#"1 1 1 in ["a"]"#
+        );
+        assert_eq!(
+            ok("{% set d = dict(a=1) %}{% set e = d.copy() %}{% set _ = e.update(a=2) %}{{ d.a }} {{ e.a }}"),
+            "1 2"
+        );
+        assert_eq!(
+            ok("{% set d = dict(a=1) %}{% set _ = d.update(a=5, b=6) %}{{ d | length }} {{ d.a }}"),
+            "2 5"
+        );
+        assert_eq!(
+            ok("{% set d = dict(a=1) %}{% set _ = d.update(d) %}{{ d }}"),
+            r#"{"a": 1}"#
+        );
+    }
+
+    #[test]
+    fn mutable_values_print_and_serialise_like_plain_ones() {
+        assert_eq!(
+            ok("{{ list([1, 'a']) }} {{ dict(k='v') }}"),
+            r#"[1, "a"] {"k": "v"}"#
+        );
+        assert_eq!(
+            ok("{{ list(dict(k='v')) }} {{ list(list([2, 1])) | sort }}"),
+            r#"["k"] [1, 2]"#
+        );
+        assert_eq!(ok("{% set l = list() %}{{ 'yes' if l else 'no' }}"), "no");
+    }
+
+    #[test]
+    fn mutating_an_immutable_value_says_what_to_write() {
+        let e = err("{% set l = [] %}{% set _ = l.append(1) %}");
+        assert!(e.contains("append()") && e.contains("list()"), "{e}");
+        let e = err("{% set _ = var('fixed').append(1) %}");
+        assert!(e.contains("list()"), "{e}");
+        let e = err("{% set d = {} %}{% set _ = d.update(a=1) %}");
+        assert!(e.contains("dict()"), "{e}");
+    }
+
+    #[test]
+    fn bad_arguments_to_mutable_methods_are_clear_errors() {
+        assert!(err("{% set l = list() %}{% set _ = l.append() %}").contains("append()"));
+        assert!(err("{% set l = list() %}{% set _ = l.pop() %}").contains("pop()"));
+        assert!(err("{% set l = list([1]) %}{% set _ = l.remove(2) %}").contains("not in the list"));
+        assert!(err("{% set d = dict() %}{% set _ = d.pop('x') %}").contains("no key"));
+        assert!(err("{% set d = dict('nope') %}").contains("mapping"));
     }
 
     #[test]
