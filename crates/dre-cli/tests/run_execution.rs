@@ -16,6 +16,10 @@ sources:
     target: dev
     targets:
       dev: {type: fixture}
+      broken:
+        type: fixture
+        token: '{{ env_var(\"DRE_SECRET_FIXTURE_TOKEN\") }}'
+        fail: 'fixture rejected token {{ env_var(\"DRE_SECRET_FIXTURE_TOKEN\") }} at login'
 destinations:
   inbox:
     target: dev
@@ -245,6 +249,97 @@ fn a_source_without_sessions_refuses_multi_statement_bindings_before_running_any
     assert!(!r.stderr.contains("first statement ran"), "{}", r.stderr);
     // With sessions it runs.
     p.dre("run", &["f"]).ok();
+}
+
+#[test]
+fn transformed_source_plugin_logs_do_not_echo_secret_fragments() {
+    let p = project(&[
+        (
+            "reports/fin/f/f.yml",
+            "queries:\n  - {query: secret_log, tab: false}\n  - {query: ordinary_log, tab: false}\nprofile: fixture\n",
+        ),
+        (
+            "reports/fin/f/secret_log.sql",
+            "{% set _ = run_query(\"none \" ~ env_var('DRE_SECRET_PLUGIN_LOG')) %}\nlog_prefix {{ env_var('DRE_SECRET_PLUGIN_LOG') }}; rows 1;",
+        ),
+        ("reports/fin/f/ordinary_log.sql", "log visible-after-secret;"),
+    ]);
+    let secret = "ISSUE69-PLUGIN-LOG-SECRET-0123456789-TAIL";
+    let run = p.dre_env(
+        "run",
+        &["f", "-v", "--log-format", "json", "--color", "never"],
+        &[("DRE_SECRET_PLUGIN_LOG", secret)],
+    );
+    run.ok();
+
+    let log = p.read("logs/dre.log");
+    for (name, text) in [("stdout", run.stdout.as_str()), ("log", log.as_str())] {
+        assert!(!text.contains("ISSUE69-PLUGIN-LOG"), "{name}:\n{text}");
+        assert!(
+            text.contains(dre_core::secrets::MASKED_SOURCE_ERROR),
+            "{name}:\n{text}"
+        );
+        assert!(text.contains("visible-after-secret"), "{name}:\n{text}");
+    }
+}
+
+#[test]
+fn columns_diagnostics_and_sql_logs_do_not_echo_secret_relations() {
+    let p = project(&[
+        (
+            "reports/fin/f/f.yml",
+            "queries:\n  - {query: secret_columns, tab: false}\nprofile: fixture\n",
+        ),
+        (
+            "reports/fin/f/secret_columns.sql",
+            "{{ columns(env_var('DRE_SECRET_RELATION')) }}\nrows 1;",
+        ),
+    ]);
+    let secret = "ISSUE69-COLUMNS-SECRET-RELATION-0123456789";
+    let run = p.dre_env(
+        "run",
+        &["f", "-v", "--log-format", "json", "--color", "never"],
+        &[("DRE_SECRET_RELATION", secret)],
+    );
+    run.failed();
+
+    let output = format!("{}{}", run.stdout, run.stderr);
+    let log = p.read("logs/dre.log");
+    for (name, text) in [("output", output.as_str()), ("log", log.as_str())] {
+        assert!(
+            !text.contains(secret),
+            "{name} leaks the relation secret:\n{text}"
+        );
+        assert!(text.contains("*****"), "{name} contains no mask:\n{text}");
+    }
+}
+
+#[test]
+fn connection_secrets_are_masked_without_hiding_open_errors() {
+    let p = project(&[
+        ("reports/fin/f/f.yml", "queries: [fq]\nprofile: fixture\n"),
+        ("reports/fin/f/fq.sql", "rows 1;"),
+    ]);
+    let secret = "ISSUE69-CONNECTION-SECRET-0123456789";
+    let run = p.dre_env(
+        "run",
+        &["f", "--target", "broken", "-v", "--color", "never"],
+        &[("DRE_SECRET_FIXTURE_TOKEN", secret)],
+    );
+    run.failed().says("fixture rejected token ***** at login");
+
+    let output = format!("{}{}", run.stdout, run.stderr);
+    let log = p.read("logs/dre.log");
+    for (name, text) in [("output", output.as_str()), ("log", log.as_str())] {
+        assert!(
+            !text.contains(secret),
+            "{name} leaks the connection secret:\n{text}"
+        );
+        assert!(
+            !text.contains(dre_core::secrets::MASKED_SOURCE_ERROR),
+            "{name}:\n{text}"
+        );
+    }
 }
 
 #[test]

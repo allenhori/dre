@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ use arrow::datatypes::SchemaRef;
 use arrow::ipc::reader::FileReader;
 use arrow::ipc::writer::FileWriter;
 use chrono::NaiveDate;
-use dre_protocol::host::{Execution, LogSink, PluginProcess};
+use dre_protocol::host::{Execution, HostError, LogSink, PluginProcess};
 use dre_protocol::msg::{ColumnOptions, DeliveryFile, ResultSetMeta};
 use dre_protocol::{CAP_LOAD, CAP_MULTI_FILE, CAP_READ_ONLY, CAP_SESSIONS};
 use serde::Serialize;
@@ -371,6 +372,9 @@ struct Statement {
     line: usize,
     text: String,
     kind: StatementKind,
+    /// The complete rendered query contained a registered secret before it was split. Every
+    /// statement inherits this because splitting can itself separate a secret into fragments.
+    sensitive: bool,
     /// Whether this statement's result is its query's tab: the file's last statement, when the
     /// query has `tab: true`.
     tab: bool,
@@ -406,6 +410,8 @@ struct BindingRun<'a> {
     deliveries: Vec<Json>,
     delivery_note: Option<String>,
     drift: Vec<String>,
+    /// The current schema with stable identities and any protection carried from the baseline.
+    protected_snapshot: Option<Json>,
 }
 
 /// A destination entry after rendering.
@@ -416,6 +422,27 @@ struct RenderedDest {
 }
 
 type Fail = String;
+
+fn masked_source_error(error: &HostError, sensitive: bool) -> String {
+    let error = error.to_string();
+    crate::secrets::mask_source_error(&error, sensitive).into_owned()
+}
+
+fn masked_sql_summary(sql: &str, max: usize, sensitive: bool) -> String {
+    if sensitive {
+        crate::secrets::MASK.to_string()
+    } else {
+        dre_protocol::util::summarize(&crate::secrets::mask(sql), max)
+    }
+}
+
+fn protected_sql(sql: &str, sensitive: bool) -> std::borrow::Cow<'_, str> {
+    if sensitive {
+        std::borrow::Cow::Borrowed(crate::secrets::MASK)
+    } else {
+        crate::secrets::mask(sql)
+    }
+}
 
 impl<'a> BindingRun<'a> {
     fn new(
@@ -483,6 +510,7 @@ impl<'a> BindingRun<'a> {
             deliveries: Vec::new(),
             delivery_note: None,
             drift: Vec::new(),
+            protected_snapshot: None,
         }
     }
 
@@ -654,7 +682,7 @@ impl<'a> BindingRun<'a> {
                         bad.file.display(),
                         bad.line,
                         self.report.name,
-                        dre_protocol::util::summarize(&bad.text, 60)
+                        masked_sql_summary(&bad.text, 60, bad.sensitive)
                     ));
                 }
                 let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
@@ -730,9 +758,12 @@ impl<'a> BindingRun<'a> {
         }
 
         // 7. Snapshot the schema for the next drift check.
-        if self.opts.preview.is_none() {
-            self.write_snapshot()
-                .map_err(|e| format!("can't write the schema snapshot: {e}"))?;
+        if self.opts.preview.is_none()
+            && let Err(error) = self.write_snapshot()
+        {
+            self.ui.warn(&format!(
+                "delivery completed, but the schema snapshot could not be written: {error}; the next run may compare against an older schema"
+            ));
         }
         Ok(())
     }
@@ -750,6 +781,7 @@ impl<'a> BindingRun<'a> {
         let sql = renderer
             .render(&q.path, &src)
             .map_err(|e: RenderError| e.to_string())?;
+        let sensitive = crate::secrets::contains_secret(&sql);
         std::fs::write(
             self.compiled_dir.join(format!("{}.sql", q.query)),
             crate::secrets::mask(&sql).as_bytes(),
@@ -786,6 +818,7 @@ impl<'a> BindingRun<'a> {
                 line,
                 kind,
                 text: st.text,
+                sensitive,
                 tab: q.tab && last,
             });
         }
@@ -811,13 +844,16 @@ impl<'a> BindingRun<'a> {
         st: &Statement,
     ) -> Result<(), Fail> {
         let sql_log = self.ui.sql_log();
-        sql_log(&format!("{}:{}", st.file.display(), st.line), &st.text);
+        sql_log(
+            &format!("{}:{}", st.file.display(), st.line),
+            &protected_sql(&st.text, st.sensitive),
+        );
         let spool_path = self.run_dir.join(".spool").join(format!("{i}.arrow"));
         let mut writer: Option<FileWriter<File>> = None;
         let t = Instant::now();
         let exec = {
             let mut s = session.lock().unwrap();
-            let p = s.get()?;
+            let (p, _log_scope) = s.statement(st.sensitive)?;
             p.execute(&st.text, self.opts.preview, |schema, batch| {
                 if writer.is_none() {
                     let f = File::create(&spool_path).map_err(|e| e.to_string())?;
@@ -825,7 +861,14 @@ impl<'a> BindingRun<'a> {
                 }
                 writer.as_mut().unwrap().write(&batch).map_err(|e| e.to_string())
             })
-            .map_err(|e| format!("{}:{}: {e}", st.file.display(), st.line))?
+            .map_err(|e| {
+                format!(
+                    "{}:{}: {}",
+                    st.file.display(),
+                    st.line,
+                    masked_source_error(&e, st.sensitive)
+                )
+            })?
         };
         let what = match &exec {
             Execution::Result { rows, .. } => {
@@ -1354,75 +1397,61 @@ impl<'a> BindingRun<'a> {
             .map(|p| {
                 json!({
                     "name": p.name,
-                    "columns": p.schema.fields().iter().map(|f| json!({"name": f.name(), "type": f.data_type().to_string()})).collect::<Vec<_>>(),
+                    "columns": p.schema.fields().iter().map(|f| json!({
+                        "name": f.name(),
+                        "type": f.data_type().to_string(),
+                        "type_shape": crate::schema::type_shape(f.data_type()),
+                    })).collect::<Vec<_>>(),
                 })
             })
             .collect();
         json!({ "result_sets": sets })
     }
 
-    fn schema_drift(&self) -> Vec<String> {
+    fn schema_drift(&mut self) -> Vec<String> {
         let path = self.schema_dir.join("last_success.json");
+        let mut current = self.snapshot();
         let Ok(prev) = std::fs::read_to_string(&path) else {
+            crate::schema::redact(&mut current);
+            self.protected_snapshot = Some(current);
             return Vec::new();
         };
-        let Ok(prev) = serde_json::from_str::<Json>(&prev) else {
+        let Ok(mut prev) = serde_json::from_str::<Json>(&prev) else {
+            crate::schema::redact(&mut current);
+            self.protected_snapshot = Some(current);
             return Vec::new();
         };
-        let cols = |v: &Json| -> BTreeMap<String, Vec<(String, String)>> {
-            v["result_sets"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|s| {
-                    let c = s["columns"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .map(|c| {
-                            (
-                                c["name"].as_str().unwrap_or("").to_string(),
-                                c["type"].as_str().unwrap_or("").to_string(),
-                            )
-                        })
-                        .collect();
-                    (s["name"].as_str().unwrap_or("").to_string(), c)
-                })
-                .collect()
-        };
-        let (old, new) = (cols(&prev), cols(&self.snapshot()));
-        let mut drift = Vec::new();
-        for (name, oc) in &old {
-            let Some(nc) = new.get(name) else {
-                drift.push(format!("result set `{name}` is gone"));
-                continue;
-            };
-            let om: BTreeMap<_, _> = oc.iter().cloned().collect();
-            let nm: BTreeMap<_, _> = nc.iter().cloned().collect();
-            for (c, t) in &om {
-                match nm.get(c) {
-                    None => drift.push(format!("`{name}`: column `{c}` removed")),
-                    Some(t2) if t2 != t => {
-                        drift.push(format!("`{name}`: column `{c}` changed type from {t} to {t2}"))
-                    }
-                    _ => {}
-                }
-            }
-            for c in nm.keys().filter(|c| !om.contains_key(*c)) {
-                drift.push(format!("`{name}`: column `{c}` added"));
+        let original = prev.clone();
+        crate::schema::redact(&mut prev);
+        crate::schema::redact(&mut current);
+        if crate::secrets::enabled() {
+            crate::schema::align_protection(&mut prev, &mut current);
+        }
+        if prev != original {
+            let protected =
+                serde_json::to_string_pretty(&prev).expect("serializing a serde_json::Value cannot fail");
+            if let Err(error) = std::fs::write(&path, protected) {
+                self.ui.warn(&format!(
+                    "can't protect the existing schema snapshot at {}: {error}; continuing without rewriting it",
+                    path.display()
+                ));
             }
         }
-        for name in new.keys().filter(|n| !old.contains_key(*n)) {
-            drift.push(format!("result set `{name}` is new"));
-        }
+        let drift = crate::schema::drift(&prev, &current);
+        self.protected_snapshot = Some(current);
         drift
     }
 
     fn write_snapshot(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.schema_dir)?;
+        let snapshot = self.protected_snapshot.clone().unwrap_or_else(|| {
+            let mut snapshot = self.snapshot();
+            crate::schema::redact(&mut snapshot);
+            snapshot
+        });
         std::fs::write(
             self.schema_dir.join("last_success.json"),
-            serde_json::to_string_pretty(&self.snapshot())?,
+            serde_json::to_string_pretty(&snapshot)?,
         )
     }
 
@@ -1485,8 +1514,7 @@ impl<'a> BindingRun<'a> {
         kind: &str,
     ) -> Result<(), Fail> {
         let mut s = session.lock().unwrap();
-        let p = s.get()?;
-        if !p.has(dre_protocol::CAP_CHECK) {
+        if !s.get()?.has(dre_protocol::CAP_CHECK) {
             self.ui.warn(&format!(
                 "  not checkable: the `{kind}` source plugin can't check statements without running them"
             ));
@@ -1501,17 +1529,38 @@ impl<'a> BindingRun<'a> {
             } else {
                 " (check)"
             };
-            sql_log(&format!("{}:{}{verb}", st.file.display(), st.line), &st.text);
+            sql_log(
+                &format!("{}:{}{verb}", st.file.display(), st.line),
+                &protected_sql(&st.text, st.sensitive),
+            );
             if st.kind == StatementKind::TempCreate {
-                if let Err(e) = p.execute(&st.text, None, |_, _| Ok(())) {
-                    failures.push(format!("{}:{}: {e}", st.file.display(), st.line));
+                let result = {
+                    let (process, _log_scope) = s.statement(st.sensitive)?;
+                    process.execute(&st.text, None, |_, _| Ok(()))
+                };
+                if let Err(e) = result {
+                    failures.push(format!(
+                        "{}:{}: {}",
+                        st.file.display(),
+                        st.line,
+                        masked_source_error(&e, st.sensitive)
+                    ));
                 }
                 continue;
             }
-            match p.check(&st.text) {
+            let result = {
+                let (process, _log_scope) = s.statement(st.sensitive)?;
+                process.check(&st.text)
+            };
+            match result {
                 Ok(()) => {}
                 Err(e) => {
-                    let mut msg = format!("{}:{}: {e}", st.file.display(), st.line);
+                    let mut msg = format!(
+                        "{}:{}: {}",
+                        st.file.display(),
+                        st.line,
+                        masked_source_error(&e, st.sensitive)
+                    );
                     if let Some((f, l)) = &unexecuted_setup {
                         msg.push_str(&format!(
                             " (may be a false positive: the setup statement at {}:{l} wasn't executed during the check)",
@@ -1539,6 +1588,9 @@ struct Session {
     connection: Result<JsonMap<String, Json>, String>,
     cwd: PathBuf,
     log: LogSink,
+    /// Whether plugin diagnostics for the active statement must be hidden rather than exactly
+    /// masked. Connection diagnostics always use exact-value masking.
+    opaque_log: Arc<AtomicBool>,
     /// Unmanaged reports run read-only unless they create temp objects.
     unmanaged: bool,
     read_only: bool,
@@ -1555,11 +1607,19 @@ impl Session {
         log: LogSink,
         unmanaged: bool,
     ) -> Session {
+        let opaque_log = Arc::new(AtomicBool::new(false));
+        let protect = Arc::clone(&opaque_log);
+        let downstream = log;
+        let log: LogSink = Arc::new(move |plugin, line| {
+            let line = crate::secrets::mask_source_error(line, protect.load(Ordering::SeqCst));
+            downstream(plugin, &line);
+        });
         Session {
             path,
             connection,
             cwd,
             log,
+            opaque_log,
             unmanaged,
             read_only: unmanaged,
             loaded: false,
@@ -1581,13 +1641,22 @@ impl Session {
             let connection = self.connection.clone()?;
             let mut p = plugin
                 .start(self.log.clone(), Some(&self.cwd))
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| masked_source_error(&e, false))?;
             let ro = self.unmanaged && self.read_only && p.has(CAP_READ_ONLY);
-            p.open(connection, ro)
-                .map_err(|e| format!("can't open the source connection: {e}"))?;
+            p.open(connection, ro).map_err(|e| {
+                let protected = masked_source_error(&e, false);
+                format!("can't open the source connection: {protected}")
+            })?;
             self.proc_ = Some(p);
         }
         Ok(self.proc_.as_mut().unwrap())
+    }
+
+    fn statement(&mut self, sensitive: bool) -> Result<(&mut PluginProcess, OpaqueLogScope), String> {
+        let opaque_log = Arc::clone(&self.opaque_log);
+        let process = self.get()?;
+        let scope = OpaqueLogScope::new(opaque_log, sensitive);
+        Ok((process, scope))
     }
 
     fn close(&mut self) {
@@ -1597,11 +1666,27 @@ impl Session {
     }
 }
 
+struct OpaqueLogScope(Arc<AtomicBool>);
+
+impl OpaqueLogScope {
+    fn new(active: Arc<AtomicBool>, sensitive: bool) -> Self {
+        active.store(sensitive, Ordering::SeqCst);
+        Self(active)
+    }
+}
+
+impl Drop for OpaqueLogScope {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 struct SessionRunner(Arc<Mutex<Session>>, LogSink);
 
 impl QueryRunner for SessionRunner {
     fn run_query(&self, sql: &str, max_rows: u64) -> Result<QueryRows, String> {
         let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
+        let sensitive = crate::secrets::contains_secret(sql);
         // An unmanaged report may only read, and run_query() runs before the file's own
         // statements are checked, so it gets the same rule up front.
         if s.unmanaged
@@ -1611,11 +1696,11 @@ impl QueryRunner for SessionRunner {
         {
             return Err(format!(
                 "run_query() in an unmanaged report may only read, but got `{}`; give the report a YAML to declare it",
-                dre_protocol::util::summarize(&bad.text, 60)
+                masked_sql_summary(&bad.text, 60, sensitive)
             ));
         }
-        (self.1)("run_query()", sql);
-        let p = s.get()?;
+        (self.1)("run_query()", &protected_sql(sql, sensitive));
+        let (p, _log_scope) = s.statement(sensitive)?;
         let mut out = QueryRows::default();
         let mut too_many = false;
         let exec = p
@@ -1630,7 +1715,7 @@ impl QueryRunner for SessionRunner {
                 out.rows.extend(crate::values::batch_rows(&batch));
                 Ok(())
             })
-            .map_err(|e| format!("run_query() failed: {e}"))?;
+            .map_err(|e| format!("run_query() failed: {}", masked_source_error(&e, sensitive)))?;
         if too_many {
             return Err(format!(
                 "run_query() returned more than {max_rows} rows; it's meant for small lookups — raise the cap with `run_query(sql, max_rows=N)` or `run_query_max_rows` in dre_project.yml"
@@ -1646,15 +1731,16 @@ impl QueryRunner for SessionRunner {
 
     fn columns(&self, sql: &str) -> Result<Vec<Column>, String> {
         let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
-        (self.1)("columns()", sql);
-        let p = s.get()?;
+        let sensitive = crate::secrets::contains_secret(sql);
+        (self.1)("columns()", &protected_sql(sql, sensitive));
+        let (p, _log_scope) = s.statement(sensitive)?;
         let mut schema: Option<SchemaRef> = None;
         let exec = p
             .execute(sql, Some(1), |sch, _| {
                 schema.get_or_insert_with(|| sch.clone());
                 Ok(())
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| masked_source_error(&e, sensitive))?;
         if let Execution::Result { schema: sch, .. } = exec {
             schema.get_or_insert(sch);
         }

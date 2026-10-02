@@ -290,7 +290,7 @@ fn dre_secrets_needing_json_escapes_never_reach_json_output() {
         ),
     ]);
     // Quote, backslash, newline, tab, non-ASCII; the first secret is a substring of the second.
-    let short = "q\"\\\té";
+    let short = "q\"\\\n\té";
     let long = format!("{short}-and-more");
     let env = [("DRE_SECRET_SHORT", short), ("DRE_SECRET_LONG", long.as_str())];
     let r = p.dre_env(
@@ -332,4 +332,298 @@ fn dre_secrets_needing_json_escapes_never_reach_json_output() {
         .failed();
     assert!(p.read("target/compiled/secret/default/s.sql").contains(&long));
     p.json("target/run/secret/default/run_results.json");
+}
+
+#[test]
+fn source_errors_do_not_echo_secret_fragments() {
+    let p = project(&[
+        ("reports/ops/secret/secret.yml", "queries: [s]\n"),
+        (
+            "reports/ops/secret/s.sql",
+            "select * from \"{{ env_var('DRE_SECRET_API_KEY') }}\"\n",
+        ),
+    ]);
+    let secret = "ISSUE69-UNIQUE-SECRET-0123456789abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-END";
+    let env = [("DRE_SECRET_API_KEY", secret)];
+    let r = p.dre_env(
+        "run",
+        &["secret", "--log-format", "json", "--color", "never"],
+        &env,
+    );
+    r.failed();
+    let results = p.read("target/run/secret/default/run_results.json");
+    let log = p.read("logs/dre.log");
+    for (name, text) in [("stdout", &r.stdout), ("run results", &results), ("log", &log)] {
+        for fragment in ["ISSUE69-UNIQUE-SECRET", "ABCDEFGHIJKLMNOPQRSTUVWXYZ-END"] {
+            assert!(!text.contains(fragment), "{name} leaks {fragment:?}:\n{text}");
+        }
+        assert!(
+            text.contains(dre_core::secrets::MASKED_SOURCE_ERROR),
+            "{name}:\n{text}"
+        );
+    }
+
+    // A failing statement without a secret keeps its useful database detail.
+    p.write(
+        "reports/ops/secret/s.sql",
+        "select * from definitely_missing_table\n",
+    );
+    let ordinary = p.dre_env("run", &["secret", "--log-format", "json"], &env);
+    ordinary.failed();
+    assert!(
+        ordinary.stdout.contains("definitely_missing_table"),
+        "{}",
+        ordinary.stdout
+    );
+
+    // Configured off: preserve the database diagnostic, including its shortened SQL context.
+    p.write(
+        "dre_project.yml",
+        "name: acme_reports\ndefault_profile: warehouse\nvars: {period: project, level: project}\nmask_secrets: false\n",
+    );
+    p.write(
+        "reports/ops/secret/s.sql",
+        "select * from \"{{ env_var('DRE_SECRET_API_KEY') }}\"\n",
+    );
+    let r = p.dre_env("run", &["secret", "--log-format", "json"], &env);
+    r.failed();
+    assert!(r.stdout.contains("ISSUE69-UNIQUE-SECRET"), "{}", r.stdout);
+    assert!(
+        p.read("target/run/secret/default/run_results.json")
+            .contains("ISSUE69-UNIQUE-SECRET")
+    );
+}
+
+#[test]
+fn splitting_sql_cannot_split_a_secret_out_of_protection() {
+    let p = project(&[(
+        "reports/ops/unmanaged_secret.sql",
+        "select * from {{ env_var('DRE_SECRET_TABLE') }}\n",
+    )]);
+    let secret = "ISSUE69-SPLIT-SECRET;TAIL";
+    let env = [("DRE_SECRET_TABLE", secret)];
+    let r = p.dre_env(
+        "run",
+        &["unmanaged_secret", "--log-format", "json", "--color", "never"],
+        &env,
+    );
+    r.failed();
+    let results = p.read("target/run/unmanaged_secret/default/run_results.json");
+    let log = p.read("logs/dre.log");
+    for (name, text) in [("stdout", &r.stdout), ("run results", &results), ("log", &log)] {
+        for fragment in ["ISSUE69-SPLIT-SECRET", "TAIL"] {
+            assert!(!text.contains(fragment), "{name} leaks {fragment:?}:\n{text}");
+        }
+        assert!(text.contains("*****"), "{name}:\n{text}");
+    }
+}
+
+#[test]
+fn secret_sql_is_masked_before_internal_summaries_are_truncated() {
+    let p = project(&[(
+        "reports/ops/unmanaged_secret.sql",
+        "{% set table = env_var('DRE_SECRET_TABLE') %}\ninsert into \"{{ table }}\" values (1)\n",
+    )]);
+    let secret =
+        "ISSUE69-INTERNAL-SUMMARY-0123456789abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-END";
+    let env = [("DRE_SECRET_TABLE", secret)];
+    let r = p.dre_env("run", &["unmanaged_secret"], &env);
+    r.failed();
+    let output = format!("{}{}", r.stdout, r.stderr);
+    let log = p.read("logs/dre.log");
+    for (name, text) in [("output", output.as_str()), ("log", log.as_str())] {
+        assert!(!text.contains("ISSUE69-INTERNAL-SUMMARY"), "{name}:\n{text}");
+        assert!(text.contains("*****"), "{name}:\n{text}");
+    }
+}
+
+#[test]
+fn schema_snapshots_redact_secrets_without_false_drift() {
+    let p = project(&[
+        ("reports/ops/secret/secret.yml", "queries: [s]\n"),
+        (
+            "reports/ops/secret/s.sql",
+            "select 1 as \"{{ env_var('DRE_SECRET_ALIAS') }}\"\n",
+        ),
+    ]);
+    let secret = "ISSUE69-SCHEMA-SECRET-ALIAS";
+    let env = [("DRE_SECRET_ALIAS", secret)];
+
+    // Simulate a pre-fix snapshot, written while masking is disabled.
+    p.write(
+        "dre_project.yml",
+        "name: acme_reports\ndefault_profile: warehouse\nvars: {period: project, level: project}\nmask_secrets: false\n",
+    );
+    p.dre_env("run", &["secret"], &env).ok();
+    let snapshot_path = "target/schema/secret/default/last_success.json";
+    assert!(p.read(snapshot_path).contains(secret));
+
+    // Migration happens before drift can block delivery, so even a failed run sanitizes the old
+    // persisted file.
+    p.write(
+        "dre_project.yml",
+        "name: acme_reports\ndefault_profile: warehouse\nvars: {period: project, level: project}\n",
+    );
+    p.write(
+        "reports/ops/secret/s.sql",
+        "select 1::BIGINT as \"{{ env_var('DRE_SECRET_ALIAS') }}\"\n",
+    );
+    p.dre_env("run", &["secret"], &env).failed().says("schema drift");
+    let migrated = p.read(snapshot_path);
+    assert!(!migrated.contains(secret), "{migrated}");
+    assert!(migrated.contains("*****"), "{migrated}");
+
+    p.dre_env("run", &["secret", "--accept-schema-change"], &env).ok();
+    p.dre_env("run", &["secret"], &env).ok();
+    let snapshot = p.read(snapshot_path);
+    assert!(!snapshot.contains(secret), "{snapshot}");
+    assert!(snapshot.contains("*****"), "{snapshot}");
+    let results = p.read("target/run/secret/default/run_results.json");
+    assert!(!results.contains(secret), "{results}");
+    assert!(results.contains("*****"), "{results}");
+
+    // Conservative baseline matching keeps the same database name protected when the environment
+    // no longer registers it as a secret.
+    p.write(
+        "reports/ops/secret/s.sql",
+        &format!("select 1::BIGINT as \"{secret}\"\n"),
+    );
+    p.dre("run", &["secret"]).ok();
+    let snapshot = p.read(snapshot_path);
+    assert!(!snapshot.contains(secret), "{snapshot}");
+    assert!(snapshot.contains("*****"), "{snapshot}");
+
+    // Result data is operational output, not a diagnostic surface, and remains unchanged.
+    assert!(p.read("target/run/secret/default/secret.csv").starts_with(secret));
+
+    // The explicit project opt-out still allows the raw schema name after accepting the expected
+    // transition away from a protected baseline.
+    p.write(
+        "dre_project.yml",
+        "name: acme_reports\ndefault_profile: warehouse\nvars: {period: project, level: project}\nmask_secrets: false\n",
+    );
+    p.dre("run", &["secret", "--accept-schema-change"]).ok();
+    assert!(p.read(snapshot_path).contains(secret));
+}
+
+#[test]
+fn newly_secret_schema_names_are_not_restored_from_the_baseline() {
+    let secret = "ISSUE69-LATER-SECRET-ALIAS";
+    let p = project(&[
+        ("reports/ops/secret/secret.yml", "queries: [s]\n"),
+        (
+            "reports/ops/secret/s.sql",
+            "select 1::INTEGER as \"ISSUE69-LATER-SECRET-ALIAS\"\n",
+        ),
+    ]);
+    let snapshot_path = "target/schema/secret/default/last_success.json";
+
+    p.dre("run", &["secret"]).ok();
+    assert!(p.read(snapshot_path).contains(secret));
+
+    p.write(
+        "reports/ops/secret/s.sql",
+        "select 1::INTEGER as \"{{ env_var('DRE_SECRET_ALIAS') }}\"\n",
+    );
+    p.dre_env("run", &["secret"], &[("DRE_SECRET_ALIAS", secret)])
+        .ok();
+    let snapshot = p.read(snapshot_path);
+    assert!(!snapshot.contains(secret), "{snapshot}");
+    assert!(snapshot.contains("*****"), "{snapshot}");
+}
+
+#[test]
+fn nested_schema_names_stay_protected_without_hiding_type_drift() {
+    let secret = "ISSUE69-NESTED-SECRET-FIELD";
+    let env = [("DRE_SECRET_ALIAS", secret)];
+    let p = project(&[
+        ("reports/ops/secret/secret.yml", "queries: [s]\n"),
+        (
+            "reports/ops/secret/s.sql",
+            "select {'{{ env_var('DRE_SECRET_ALIAS') }}': 1::INTEGER} as payload\n",
+        ),
+    ]);
+    let snapshot_path = "target/schema/secret/default/last_success.json";
+
+    p.dre_env("run", &["secret"], &env).ok();
+    assert!(!p.read(snapshot_path).contains(secret));
+
+    p.write(
+        "reports/ops/secret/s.sql",
+        &format!("select {{'{secret}': 1::INTEGER}} as payload\n"),
+    );
+    p.dre("run", &["secret"]).ok();
+    let snapshot = p.read(snapshot_path);
+    assert!(!snapshot.contains(secret), "{snapshot}");
+
+    p.write(
+        "reports/ops/secret/s.sql",
+        &format!("select {{'{secret}': 1::BIGINT}} as payload\n"),
+    );
+    let changed = p.dre("run", &["secret"]);
+    changed.failed().says("changed type");
+    let output = format!("{}{}", changed.stdout, changed.stderr);
+    assert!(!output.contains(secret), "{output}");
+}
+
+#[test]
+fn an_unwritable_schema_snapshot_does_not_turn_delivery_into_a_failed_run() {
+    let p = project(&[
+        ("reports/ops/example/example.yml", "queries: [q]\n"),
+        ("reports/ops/example/q.sql", "select 1 as value\n"),
+    ]);
+    let snapshot_path = "target/schema/example/default/last_success.json";
+
+    p.dre("run", &["example"]).ok();
+    std::fs::remove_file(p.path(snapshot_path)).unwrap();
+    std::fs::create_dir(p.path(snapshot_path)).unwrap();
+
+    p.dre("run", &["example"])
+        .ok()
+        .says("delivery completed, but the schema snapshot could not be written");
+}
+
+#[test]
+fn masked_schema_name_collisions_remain_distinct_and_detect_drift() {
+    let p = project(&[
+        ("reports/ops/secret/secret.yml", "queries: [s]\n"),
+        (
+            "reports/ops/secret/s.sql",
+            "select 1::INTEGER as a, 2::BIGINT as a, 3::INTEGER as \"{{ env_var('DRE_SECRET_ALIAS') }}\", 'x'::VARCHAR as \"*****\", true as \"*****#2\"\n",
+        ),
+    ]);
+    // This secret deliberately equals a snapshot structural key. Structural keys must remain
+    // intact while the secret-derived column name is protected.
+    let secret = "columns";
+    let env = [("DRE_SECRET_ALIAS", secret)];
+    p.dre_env("run", &["secret"], &env).ok();
+
+    let snapshot_path = "target/schema/secret/default/last_success.json";
+    let snapshot = p.read(snapshot_path);
+    let parsed: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+    let names: Vec<_> = parsed["result_sets"][0]["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|column| column["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["a", "a", "*****", "*****", "*****#2"], "{snapshot}");
+    let columns = parsed["result_sets"][0]["columns"].as_array().unwrap();
+    assert_eq!(columns[2]["name_protected"], true);
+    assert!(columns.iter().all(|column| column.get("identity").is_none()));
+    assert!(columns.iter().all(|column| column.get("type_shape").is_some()));
+
+    // With the secret absent, conservative matching, a reordered protected column, and duplicate
+    // ordinary names produce no false drift.
+    p.write(
+        "reports/ops/secret/s.sql",
+        "select 3::INTEGER as \"columns\", 1::INTEGER as a, 2::BIGINT as a, 'x'::VARCHAR as \"*****\", true as \"*****#2\"\n",
+    );
+    p.dre("run", &["secret"]).ok();
+
+    p.write(
+        "reports/ops/secret/s.sql",
+        "select 3::BIGINT as \"columns\", 1::INTEGER as a, 2::BIGINT as a, 'x'::VARCHAR as \"*****\", true as \"*****#2\"\n",
+    );
+    p.dre("run", &["secret"]).failed().says("changed type");
 }

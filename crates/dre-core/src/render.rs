@@ -268,14 +268,17 @@ impl Renderer {
             let Some(runner) = &runner_c else {
                 return Err(Error::new(
                     ErrorKind::InvalidOperation,
-                    format!("`columns('{rel}')` has no connection here"),
+                    format!(
+                        "`columns('{}')` has no connection here",
+                        crate::secrets::mask(&rel)
+                    ),
                 ));
             };
             let sql = format!("select * from {rel} as _dre_cols where 1=0");
             let cols = runner.columns(&sql).map_err(|e| {
                 Error::new(
                     ErrorKind::InvalidOperation,
-                    format!("`columns('{rel}')` failed: {e}"),
+                    format!("`columns('{}')` failed: {e}", crate::secrets::mask(&rel)),
                 )
             })?;
             let v = Value::from(

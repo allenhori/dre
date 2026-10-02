@@ -20,4 +20,4 @@ sidebar:
 | `DRE_LOG_MAX_LINES` | Lines per `logs/dre.log` before it rotates (default 10,000). |
 | `DRE_PLUGIN_HANDSHAKE_TIMEOUT_MS` | How long to wait for a plugin to start (default 30,000). |
 | `NO_COLOR` | Turns off coloured output. |
-| `DRE_SECRET_*` | Values are masked as `*****` in the console, logs, JSON events, `run_results.json` and `target/compiled/` (`mask_secrets: false` in `dre_project.yml` turns this off). |
+| `DRE_SECRET_*` | Values are masked as `*****` in the console, logs, JSON events, the manifest, `run_results.json`, schema snapshots and `target/compiled/`. If a source rejects SQL containing a secret, its opaque error detail is omitted because databases may truncate or transform the value. `mask_secrets: false` in `dre_project.yml` turns masking off. Query result files are not altered. |
