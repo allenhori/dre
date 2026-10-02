@@ -46,38 +46,3 @@ Its upstream build script also defines `NDEBUG` when Cargo disables debug info, 
 native DuckDB debug assertions use release behavior in development/tests. Other
 Rust packages retain their debug information and assertions; no integration-test
 assertions or cases are removed. The production release profile is unchanged.
-
-## Issue 74 clean-build measurements
-
-Measured on the same Linux cloud runner with Rust/Cargo 1.99.0, four build jobs,
-and `cargo test --workspace --no-run --locked`. Each disposable target directory
-started empty; runs were sequential. Peak target disk was sampled with `du` every
-two seconds. The final row includes the explicitly documented package-level native
-debug override; other development/test settings were unchanged. Cargo registry
-downloads were cached after the initial baseline, so wall times are descriptive,
-not a claim of statistically comparable CI improvement.
-
-| Implementation | Wall time | Sampled peak target | Final target | debug/deps | Outcome |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Upstream, unmodified | 8m06s | 28.699 GiB | 28.699 GiB | 23.652 GiB | FAIL, disk exhausted while linking |
-| Helper only | 7m46s | 19.293 GiB | 19.293 GiB | 14.183 GiB | PASS |
-| Helper plus native debug override | 6m22s | 14.025 GiB | 14.025 GiB | 11.872 GiB | PASS |
-
-The final build uses 51.1% less disk than the freshly measured upstream baseline.
-It uses 48.1% less than the issue's historical 27 GiB figure, missing the historical
-13.5 GiB absolute threshold by 0.525 GiB. The baseline exhausted the 32 GB runner,
-so its elapsed time is time to failure rather than a successful build duration.
-No 25% Ubuntu timing improvement across three uncached runs is established by
-these results; that requires comparable successful baseline and PR CI runs.
-
-| Executable | Upstream baseline | Final implementation | DuckDB engine/FFI symbols after |
-| --- | ---: | ---: | --- |
-| run_xlsx_formats | 728.181 MiB | 69.958 MiB | absent |
-| output | 687.155 MiB | 28.360 MiB | absent |
-| templates_profiles | not produced before baseline failure | 26.713 MiB | absent |
-| dre-test-duckdb-seed | not present | 234.018 MiB | present, intentionally |
-
-`cargo tree -p dre-cli --edges normal,dev --locked` contains no `duckdb` or
-`libduckdb-sys`. The production-only CLI dependency graph is identical before and
-after. `nm -C` inspected all 29 CLI integration-test executables: none contain
-`libduckdb_sys` or `duckdb_open` symbols. The private helper contains both.

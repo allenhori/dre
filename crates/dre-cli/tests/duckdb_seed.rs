@@ -60,7 +60,7 @@ fn helper_spawn_failure_identifies_executable_database_and_sql() {
 }
 
 #[test]
-fn helper_open_failure_includes_status_stderr_and_invocation_context() {
+fn helper_staging_failure_includes_status_stderr_and_invocation_context() {
     let p = project();
     let helper = workspace_bin("dre-test-duckdb-seed");
     let database = p.path("missing parent/seed.duckdb");
