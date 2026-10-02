@@ -92,11 +92,6 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
-        if: needs.plan.outputs.go == ''
-        with:
-          key: ${{ matrix.target }}
-
       - uses: actions/setup-go@v7
         if: needs.plan.outputs.go != ''
         with:
@@ -287,7 +282,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
       # dre-protocol has its own version: it's published only when that version is new. dre-core
