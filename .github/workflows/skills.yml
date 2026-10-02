@@ -56,9 +56,13 @@ jobs:
       - name: Test the checker
         run: python3 .github/scripts/test_skills.py
       - uses: dtolnay/rust-toolchain@stable
+      # The same build as CI's Linux test job (`cargo build --workspace --bins`, same CARGO_*
+      # variables), so restore that job's cache (its key is named after the job, `test`) and save
+      # none of our own: the repo's caches have to fit in 10 GB.
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
+          shared-key: test
+          save-if: false
       - uses: actions/setup-go@v7
         with:
           go-version-file: go/databricks/go.mod
