@@ -158,7 +158,8 @@ fn archive(version: &str) -> Vec<u8> {
         let mut buf = std::io::Cursor::new(Vec::new());
         {
             let mut z = zip::ZipWriter::new(&mut buf);
-            let o = zip::write::SimpleFileOptions::default();
+            let o =
+                zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
             z.start_file("dre.exe", o).unwrap();
             z.write_all(&bin).unwrap();
             z.start_file(RECEIPT, o).unwrap();
@@ -167,9 +168,10 @@ fn archive(version: &str) -> Vec<u8> {
         }
         buf.into_inner()
     } else {
+        // Stored, not compressed (the zip too): compressing a debug `dre` takes seconds.
         let mut t = tar::Builder::new(flate2::write::GzEncoder::new(
             Vec::new(),
-            flate2::Compression::fast(),
+            flate2::Compression::none(),
         ));
         for (name, data, mode) in [("dre", bin, 0o755), (RECEIPT, rec.into_bytes(), 0o644)] {
             let mut h = tar::Header::new_gnu();

@@ -58,9 +58,12 @@ jobs:
         with:
           components: rustfmt, clippy
       # Every Rust cache is saved only from master, so PRs can't evict master's caches or each
-      # other's, and every run (PRs included) restores master's.
+      # other's, and every run (PRs included) restores master's. The key follows Cargo.lock, the
+      # toolchain and CARGO_* variables, not Cargo.toml's [profile] settings: after changing those,
+      # bump prefix-key here and in skills.yml, or master keeps its stale cache.
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rust
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -163,6 +166,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rust
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: >
           cargo test --no-fail-fast -p dre-plugin-postgres -p dre-plugin-object_store
@@ -179,6 +183,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          prefix-key: v1-rust
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: actions/setup-go@v7
         with:

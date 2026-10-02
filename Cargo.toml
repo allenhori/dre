@@ -34,3 +34,19 @@ assert_cmd = "2"
 arrow = "58"
 parquet = "58"
 duckdb = { version = "1.10505", features = ["bundled"] }
+
+# Hashing and (un)gzipping run on whole plugin and `dre` binaries, which are tens of MB in a debug
+# build (hundreds with full debug info on Linux). Unoptimised, that took seconds per install and
+# per test; optimised, milliseconds. Release builds already optimise everything.
+# CI's build cache doesn't notice profile changes: bump `prefix-key` in ci.yml and skills.yml with
+# any change here.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+[profile.dev.package.crc32fast]
+opt-level = 3
+[profile.dev.package.adler2]
+opt-level = 3
+[profile.dev.package.flate2]
+opt-level = 3
