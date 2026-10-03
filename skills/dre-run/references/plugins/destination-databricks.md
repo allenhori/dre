@@ -74,6 +74,8 @@ output:
   apply to every entry that has a path.
 - Credentials stay in `profiles.yml`. Options belong to the report, so a Set can address its own
   recipients.
+- The `email` destination always attaches the output file, so an output over its size limit
+  fails that entry; DRE can't email a link instead (see [`email`](https://github.com/get-dre/dre/blob/master/docs/plugins.md#email)).
 - A destination that takes no options (`local`, `s3`, `sftp`, ...) fails the delivery if its
   entry has any other key, so a misspelt `path` is caught instead of ignored.
 
