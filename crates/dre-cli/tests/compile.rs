@@ -121,14 +121,14 @@ fn validate_compiles_and_with_select_shows_where_output_goes() {
         .says("Query  summary on warehouse (duckdb)")
         .says("Delivers  inbox (local), target prod → out/daily-20260125.csv");
 
-    // A report that doesn't render fails validation.
+    // A report that doesn't render fails validation: the parse pass already says so.
     p.write(
         "reports/finance/other/o.sql",
         "select {{ var('missing_at_runtime', none).x }}\n",
     );
     p.dre("validate", &[])
         .failed()
-        .says("error[compile-failed]: report `other` doesn't compile");
+        .says("error[parse-failed]: reports/finance/other/o.sql:1: report `other`: query `o` doesn't parse");
 }
 
 #[test]
