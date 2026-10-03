@@ -59,6 +59,7 @@ the plugins'. Each release supports a range of DRE minor versions (every `SKILL.
 | Skills | Supports dre |
 |---|---|
 | 1.x | 0.1.x |
+| 2.x | 0.2.x |
 
 A new DRE minor gets a skills release that supports it. Dropping support for an older DRE minor
 is a new major skills version, so if you stay on an older DRE, pin the skills release that

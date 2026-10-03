@@ -147,7 +147,7 @@ in the full scheduled run.
 
 ### Problems
 
-On 0.1.x these are warnings in `dre validate` and problems here; from 0.2.0 they're errors:
+These are errors in `dre validate` (warnings on 0.1.x) and problems here:
 
 | Code | |
 |---|---|

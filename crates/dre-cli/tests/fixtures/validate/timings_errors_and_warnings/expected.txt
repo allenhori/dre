@@ -8,7 +8,7 @@ error[invalid-timing]: timings.yml:3: timing `bad_key`: unknown key `colour`
 error[invalid-timing]: timings.yml:4: timing `two_forms`: a timing needs exactly one of `cron`, `every` or `rrule`, found `cron` and `rrule`
 error[invalid-timezone]: timings.yml:5: timing `bad_zone`: `timezone`: `Mars/Olympus` isn't a timezone; use an IANA name such as `UTC` or `Australia/Sydney`
 error[invalid-timing]: timings.yml:6: timing name `7_days` must be letters, digits and `_`, not starting with a digit
-warning[schedule-needs-anchor]: timings.yml:7: timing `no_anchor`: `every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0
+error[schedule-needs-anchor]: timings.yml:7: timing `no_anchor`: `every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
     Target  dev (from the default)
-Validation failed: 8 errors, 2 warnings
+Validation failed: 9 errors, 1 warning

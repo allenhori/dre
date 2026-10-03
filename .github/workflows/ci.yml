@@ -172,8 +172,13 @@ jobs:
       - run: >
           cargo nextest run --no-fail-fast -p dre-plugin-postgres -p dre-plugin-object_store
           -p dre-plugin-sftp -p dre-plugin-ftp -p dre-plugin-email
-      # A report whose tabs come from DuckDB and Postgres on separate sessions.
+      # A report whose tabs come from DuckDB and Postgres on separate sessions. Build the plugins
+      # first, as the test job does: otherwise each test process builds them (DuckDB from C++
+      # source) into an uncached directory, and the tests sit at SLOW for many minutes.
+      - run: cargo build --workspace --bins
       - run: cargo nextest run --no-fail-fast -p dre-cli --test run_connections
+        env:
+          DRE_TEST_PREBUILT_BINS: "1"
 
   test:
     strategy:

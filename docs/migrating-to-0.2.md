@@ -73,6 +73,13 @@ inherited connection, and `destination.*` (new) is the destination being rendere
 - A report no longer needs a connection of its own when every query has one (a query
   `profile:` or a source's). A query with none is the error `no-connection`.
 
+## Schedules
+
+- `schedule-needs-anchor`, `schedule-too-frequent` and `schedule-seconds` are now errors in
+  `dre validate` (0.1.x warned): add `starting` to `every` and anchored rules, and use whole
+  minutes (`FREQ=HOURLY` with `BYMINUTE`, or cron) instead of `SECONDLY`, `MINUTELY` or
+  `BYSECOND`.
+
 ## The manifest and run results
 
 - The [manifest](manifest.md) is schema 2: a `sources` section, `project.target`, and per query
