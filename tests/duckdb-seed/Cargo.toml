@@ -1,0 +1,24 @@
+[package]
+name = "dre-test-duckdb-seed"
+version = "0.0.0"
+edition.workspace = true
+rust-version = "1.85"
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "dre-test-duckdb-seed"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+anyhow.workspace = true
+duckdb.workspace = true
+tempfile.workspace = true
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"

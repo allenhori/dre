@@ -63,7 +63,7 @@ jobs:
       # bump prefix-key here and in skills.yml, or master keeps its stale cache.
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust
+          prefix-key: v2-rust
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -166,7 +166,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust
+          prefix-key: v2-rust
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: taiki-e/install-action@nextest
       - run: >
@@ -184,7 +184,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          prefix-key: v1-rust
+          prefix-key: v2-rust
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - uses: actions/setup-go@v7
         with:

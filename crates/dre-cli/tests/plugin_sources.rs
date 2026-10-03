@@ -325,7 +325,9 @@ fn a_per_plugin_registry_is_used_for_that_plugin_only() {
 #[test]
 fn changing_the_source_resolves_the_plugin_again() {
     let e = Env::new(GITHUB);
-    let bin = fixture_bin();
+    // This test exercises source changes and never runs the plugin. Keep its download small;
+    // the real fixture download and execution are covered above.
+    let bin = b"stand-in fixture".to_vec();
     e.server.github_releases(&bin, true);
     e.dre(&["deps"]).ok();
     assert!(e.lock().contains("from: github:"));

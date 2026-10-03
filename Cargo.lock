@@ -1742,7 +1742,6 @@ dependencies = [
  "clap",
  "dre-core",
  "dre-protocol",
- "duckdb",
  "flate2",
  "indicatif",
  "jsonschema",
@@ -1936,6 +1935,15 @@ dependencies = [
  "arrow",
  "serde",
  "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "dre-test-duckdb-seed"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "duckdb",
  "tempfile",
 ]
 
