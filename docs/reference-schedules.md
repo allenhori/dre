@@ -30,9 +30,10 @@ The file is a list; each entry has these keys.
 | `set` | string |  | The Set of `report` to run. Only with `report`. |
 | `select` | string |  | A selector for the reports to run, e.g. `tag:regulatory`. Use `report` or `select`, not both. |
 | `vars` | map |  | Variables for the run: above the report's own and below `--var`. |
+| `timing` | string |  | The name of a timing in `timings.yml` to fire on. Use `timing` or one of `cron`, `every`, `rrule`; with `timing`, the schedule sets none of the timing's keys (`timezone`, `starting`, `at`, `except`, `also`). |
 | `timezone` | string |  | The timezone it fires in, and the one `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: the project's `timezone:` for firing (the report's for the run), then UTC. |
 | `enabled` | boolean |  | `false` pauses the schedule: it keeps its name and settings but `dre schedule ls` lists no occurrences for it. Default: `true`. |
-| `cron` | string |  | A cron expression (5 fields, or a macro such as `@daily`). A schedule needs exactly one of `cron`, `every` or `rrule`. |
+| `cron` | string |  | A cron expression (5 fields, or a macro such as `@daily`). A schedule needs exactly one of `timing`, `cron`, `every` or `rrule`. |
 | `every` | map (see below) |  | Every N days, weeks or months, with exactly one unit, e.g. `{days: 3}`. |
 | `rrule` | string |  | An iCalendar recurrence rule, e.g. `FREQ=MONTHLY;BYDAY=2TU`. Use `starting` for a rule with `INTERVAL` above 1 or `COUNT`, and `at` for its time of day. |
 | `starting` | string |  | With `every` or `rrule`: the first date, `YYYY-MM-DD`. `every` needs it, and so does a rule with `INTERVAL` above 1, a `COUNT`, or a day it takes from its start. |

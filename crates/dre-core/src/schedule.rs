@@ -6,12 +6,17 @@ use serde_json::{Map as JsonMap, Value as Json};
 use serde_yaml_ng::{Mapping, Value};
 
 pub const SCHEDULE_KEYS: &[&str] = &["cron", "every", "rrule", "starting", "at", "except", "also"];
+/// Keys of a timings.yml entry: a timing and its timezone.
+pub const TIMING_KEYS: &[&str] = &[
+    "cron", "every", "rrule", "starting", "at", "except", "also", "timezone",
+];
 
 /// Validate one schedule block (`{cron}`, `{every, starting, at}` or `{rrule, starting, at}`,
 /// each optionally with `except` and `also`).
 /// Returns human-readable problems; empty means valid. Keys outside `SCHEDULE_KEYS` are the
 /// caller's business (schedules.yml entries carry `select`/`report`/`set` next to them).
-pub fn validate_block(m: &Mapping) -> Vec<String> {
+/// `what` names the block in messages: "a schedule needs exactly one of ...".
+pub fn validate_block(m: &Mapping, what: &str) -> Vec<String> {
     let mut errs = Vec::new();
     let has = |k: &str| m.contains_key(k);
     let forms: Vec<&str> = ["cron", "every", "rrule"]
@@ -19,10 +24,10 @@ pub fn validate_block(m: &Mapping) -> Vec<String> {
         .filter(|k| has(k))
         .collect();
     match forms.len() {
-        0 => errs.push("a schedule needs exactly one of `cron`, `every` or `rrule`".to_string()),
+        0 => errs.push(format!("{what} needs exactly one of `cron`, `every` or `rrule`")),
         1 => {}
         _ => errs.push(format!(
-            "a schedule needs exactly one of `cron`, `every` or `rrule`, found {}",
+            "{what} needs exactly one of `cron`, `every` or `rrule`, found {}",
             forms
                 .iter()
                 .map(|f| format!("`{f}`"))

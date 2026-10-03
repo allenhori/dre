@@ -1,0 +1,13 @@
+exit: 1
+error[unknown-timing]: schedules.yml:2: schedule `uses_unknown`: no timing `month_begin`; valid names: month_start, never_used, no_anchor, quarter_start
+error[invalid-schedule]: schedules.yml:3: schedule `mixes` uses timing `month_start`, so it can't set `cron` and `timezone` too; change the timing, or give the schedule its own timing instead
+error[invalid-schedule]: schedules.yml:7: a schedule needs exactly one of `timing`, `cron`, `every` or `rrule`
+error[duplicate-timing-name]: timings.yml:1: timing `month_start` is already declared at config/more_timings.yml:2; timing names must be unique
+warning[unused-timing]: timings.yml:2: timing `never_used` isn't used by any schedule
+error[invalid-timing]: timings.yml:3: timing `bad_key`: unknown key `colour`
+error[invalid-timing]: timings.yml:4: timing `two_forms`: a timing needs exactly one of `cron`, `every` or `rrule`, found `cron` and `rrule`
+error[invalid-timezone]: timings.yml:5: timing `bad_zone`: `timezone`: `Mars/Olympus` isn't a timezone; use an IANA name such as `UTC` or `Australia/Sydney`
+error[invalid-timing]: timings.yml:6: timing name `7_days` must be letters, digits and `_`, not starting with a digit
+warning[schedule-needs-anchor]: timings.yml:7: timing `no_anchor`: `every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+Validation failed: 8 errors, 2 warnings

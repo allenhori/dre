@@ -254,3 +254,37 @@ fn occurrences_are_the_same_whatever_window_is_asked_for() {
     assert!(whole.iter().any(|k| k.starts_with("three_times/")), "{whole:?}");
     assert_eq!(whole.iter().filter(|k| k.starts_with("three_times/")).count(), 3);
 }
+
+#[test]
+fn editing_a_shared_timing_changes_every_schedule_that_uses_it() {
+    let p = project();
+    p.write(
+        "timings.yml",
+        "month_start: {cron: \"0 6 1 * *\", timezone: Australia/Sydney}\n",
+    );
+    p.write(
+        "schedules.yml",
+        "- {name: close_monthly, report: sales, set: client_a, timing: month_start}\n\
+         - {name: flash_daily, report: sales, set: client_b, cron: \"0 7 * * *\"}\n",
+    );
+    let window = ["--from", "2026-09-28", "--to", "2026-10-28"];
+    let before = doc(&p, &window);
+    assert_eq!(before["schedules"]["close_monthly"]["timing"], "month_start");
+    let close = before["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["schedule"] == "close_monthly")
+        .unwrap();
+    assert_eq!(close["timing"], "month_start");
+    assert_eq!(close["timezone"], "Australia/Sydney");
+    let before = hashes(&before);
+    p.write(
+        "timings.yml",
+        "month_start: {cron: \"0 6 1 * *\", timezone: Europe/London}\n",
+    );
+    let after = hashes(&doc(&p, &window));
+    assert_ne!(after.0, before.0);
+    assert_ne!(after.1, before.1);
+    assert_eq!(after.2, before.2);
+}

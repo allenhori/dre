@@ -86,7 +86,11 @@ pub const PROJECT_KEYS: &[&str] = &[
     crate::target::KEY,
 ];
 /// Keys of a schedules.yml entry besides its timing (`schedule::SCHEDULE_KEYS`).
-pub const SCHEDULE_ENTRY_KEYS: &[&str] = &["name", "select", "report", "set", "vars", "timezone", "enabled"];
+pub const SCHEDULE_ENTRY_KEYS: &[&str] = &[
+    "name", "select", "report", "set", "vars", "timezone", "enabled", "timing",
+];
+/// The timings file's name. Other YAML files of timings are recognised by their shape.
+pub const TIMINGS_FILE: &str = "timings.yml";
 pub const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars", "+timezone"];
 pub const SET_ENTRY_KEYS: &[&str] = &[
     "name",
@@ -153,6 +157,9 @@ pub struct Project {
     pub plugins_incomplete: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub schedules: Vec<ScheduleEntry>,
+    /// Named timings from timings.yml, which schedules use with `timing:`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub timings: BTreeMap<String, Timing>,
     /// Macro files under `macros/`, relative to the root.
     pub macros: Vec<PathBuf>,
     /// Macro packages, each called through its name (`{{ dre_utils.x() }}`).
@@ -434,6 +441,18 @@ pub struct ScheduleEntry {
     pub location: (PathBuf, Option<usize>),
 }
 
+/// A timings.yml entry: a timing any schedule can use by name.
+#[derive(Debug, Clone, Serialize)]
+pub struct Timing {
+    /// `cron`/`every`/`rrule`, `starting`, `at`, `except`, `also`.
+    pub schedule: JsonMap<String, Json>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+    /// Line in its timings.yml, for messages.
+    #[serde(skip)]
+    pub location: (PathBuf, Option<usize>),
+}
+
 // ---------------------------------------------------------------------------------------------
 // Loading
 // ---------------------------------------------------------------------------------------------
@@ -604,6 +623,7 @@ impl Loader {
         let mut plugin_decls: Vec<(Rc<YamlFile>, Mapping)> = Vec::new();
         let mut set_files = Vec::new();
         let mut schedule_files = Vec::new();
+        let mut timing_files = Vec::new();
         plugin_decls.push((pyaml.clone(), pick(&pyaml.value, PLUGIN_KEYS)));
         for path in &found.yaml {
             let display = self.rel(path);
@@ -617,6 +637,7 @@ impl Loader {
                 &mut plugin_decls,
                 &mut set_files,
                 &mut schedule_files,
+                &mut timing_files,
             );
         }
 
@@ -694,7 +715,9 @@ impl Loader {
 
         self.check_profiles(&project, &used);
         self.check_plugins(&plugin_decls, &mut project, &used);
-        project.schedules = self.parse_schedules(&schedule_files, &project);
+        let broken_timings;
+        (project.timings, broken_timings) = self.parse_timings(&timing_files);
+        project.schedules = self.parse_schedules(&schedule_files, &project, &broken_timings);
         self.apply_schedules(&mut project);
         self.preflight(&project, &used);
         self.check_template_files(&project);
@@ -848,6 +871,7 @@ impl Loader {
             plugin_uses: Vec::new(),
             plugins_incomplete: false,
             schedules: Vec::new(),
+            timings: BTreeMap::new(),
             macros: Vec::new(),
             packages: Vec::new(),
             mask_secrets,
@@ -1158,8 +1182,10 @@ impl Loader {
         plugins: &mut Vec<(Rc<YamlFile>, Mapping)>,
         sets: &mut Vec<Rc<YamlFile>>,
         schedules: &mut Vec<Rc<YamlFile>>,
+        timings: &mut Vec<Rc<YamlFile>>,
     ) {
         let in_reports = yf.display.starts_with(REPORTS_DIR);
+        let timings_file = yf.display.file_name() == Some(std::ffi::OsStr::new(TIMINGS_FILE));
         match &yf.value {
             Value::Null => {}
             Value::Sequence(items)
@@ -1204,7 +1230,9 @@ impl Loader {
                     return;
                 }
                 let looks_like_report = rest.contains_key("queries") || rest.contains_key("name");
-                if in_reports || looks_like_report {
+                if !in_reports && (timings_file || is_timing_registry(&rest)) {
+                    timings.push(yf.clone());
+                } else if in_reports || looks_like_report {
                     self.report_fragment(yf.clone(), rest, fragments);
                 } else if is_set_registry(&rest) {
                     sets.push(yf.clone());
@@ -2680,8 +2708,131 @@ impl Loader {
         );
     }
 
-    fn parse_schedules(&mut self, files: &[Rc<YamlFile>], project: &Project) -> Vec<ScheduleEntry> {
+    /// timings.yml: named timings. Returns the valid ones, and the names of those with errors
+    /// (schedules using them aren't reported again).
+    fn parse_timings(&mut self, files: &[Rc<YamlFile>]) -> (BTreeMap<String, Timing>, BTreeSet<String>) {
+        let mut out = BTreeMap::new();
+        let mut broken = BTreeSet::new();
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
+        for yf in files {
+            let Some(m) = yf.value.as_mapping() else { continue };
+            for (k, v) in m {
+                let file = Some(yf.display.clone());
+                let Some(name) = k.as_str() else { continue };
+                let line = yf.line_of(name, None);
+                let mut ok = true;
+                if !is_identifier(name) {
+                    self.diags.error(
+                        "invalid-timing",
+                        file.clone(),
+                        line,
+                        format!(
+                            "timing name `{name}` must be letters, digits and `_`, not starting with a digit"
+                        ),
+                    );
+                    ok = false;
+                }
+                if let Some(prev) = seen.get(name) {
+                    self.diags.error(
+                        "duplicate-timing-name",
+                        file.clone(),
+                        line,
+                        format!("timing `{name}` is already declared at {prev}; timing names must be unique"),
+                    );
+                    continue;
+                }
+                seen.insert(
+                    name.to_string(),
+                    format!("{}:{}", yf.display.display(), line.unwrap_or(0)),
+                );
+                let Some(t) = v.as_mapping() else {
+                    self.diags.error(
+                        "invalid-timing",
+                        file.clone(),
+                        line,
+                        format!("timing `{name}` must be a map, e.g. `{{cron: \"0 6 1 * *\", timezone: Australia/Sydney}}`"),
+                    );
+                    broken.insert(name.to_string());
+                    continue;
+                };
+                let mut block = Mapping::new();
+                for (k, v) in t {
+                    let Some(k) = k.as_str() else { continue };
+                    if !schedule::TIMING_KEYS.contains(&k) {
+                        self.diags.error(
+                            "invalid-timing",
+                            file.clone(),
+                            line,
+                            format!("timing `{name}`: unknown key `{k}`"),
+                        );
+                        ok = false;
+                    } else if k != "timezone" {
+                        block.insert(Value::String(k.to_string()), v.clone());
+                    }
+                }
+                let shape = schedule::validate_block(&block, "a timing");
+                for e in &shape {
+                    self.diags.error(
+                        "invalid-timing",
+                        file.clone(),
+                        line,
+                        format!("timing `{name}`: {e}"),
+                    );
+                    ok = false;
+                }
+                let timezone = match t.get("timezone") {
+                    None => None,
+                    Some(v) => {
+                        let tz = self.timezone_value(
+                            v,
+                            &yf.display,
+                            line,
+                            &format!("timing `{name}`: `timezone`"),
+                        );
+                        ok &= tz.is_some();
+                        tz
+                    }
+                };
+                let block = yaml_map_to_json(&block);
+                if shape.is_empty() {
+                    for (code, msg) in schedule::strictness(&block) {
+                        self.diags
+                            .warning(code, file.clone(), line, format!("timing `{name}`: {msg}"));
+                    }
+                    if let Some(msg) = schedule::no_time(&block) {
+                        self.diags.warning(
+                            "schedule-no-time",
+                            file.clone(),
+                            line,
+                            format!("timing `{name}`: {msg}"),
+                        );
+                    }
+                }
+                if ok {
+                    out.insert(
+                        name.to_string(),
+                        Timing {
+                            schedule: block,
+                            timezone,
+                            location: (yf.display.clone(), line),
+                        },
+                    );
+                } else {
+                    broken.insert(name.to_string());
+                }
+            }
+        }
+        (out, broken)
+    }
+
+    fn parse_schedules(
+        &mut self,
+        files: &[Rc<YamlFile>],
+        project: &Project,
+        broken_timings: &BTreeSet<String>,
+    ) -> Vec<ScheduleEntry> {
         let mut out = Vec::new();
+        let mut used_timings = BTreeSet::new();
         let mut seen: BTreeMap<String, String> = BTreeMap::new();
         for yf in files {
             let Some(items) = yf.value.as_sequence() else {
@@ -2763,8 +2914,76 @@ impl Loader {
                     }
                     sched.insert(Value::String(k.to_string()), v.clone());
                 }
-                let shape = schedule::validate_block(&sched);
-                if shape.is_empty() {
+                let timing = match m.get("timing") {
+                    None => None,
+                    Some(Value::String(t)) => {
+                        used_timings.insert(t.clone());
+                        Some(t.clone())
+                    }
+                    Some(_) => {
+                        self.diags.error(
+                            "invalid-schedule",
+                            file.clone(),
+                            line,
+                            format!(
+                                "schedule `{name}`: `timing` must be the name of a timing in timings.yml"
+                            ),
+                        );
+                        ok = false;
+                        None
+                    }
+                };
+                let mut resolved = None;
+                let shape = if let Some(t) = &timing {
+                    let mut errs = Vec::new();
+                    let own: Vec<String> = m
+                        .keys()
+                        .filter_map(Value::as_str)
+                        .filter(|k| schedule::TIMING_KEYS.contains(k))
+                        .map(|k| format!("`{k}`"))
+                        .collect();
+                    if !own.is_empty() {
+                        let keys = match own.split_last() {
+                            Some((last, [])) => last.clone(),
+                            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+                            None => String::new(),
+                        };
+                        errs.push(format!(
+                            "schedule `{name}` uses timing `{t}`, so it can't set {keys} too; change the timing, or give the schedule its own timing instead"
+                        ));
+                    }
+                    match project.timings.get(t) {
+                        Some(def) => resolved = Some(def.schedule.clone()),
+                        None if broken_timings.contains(t) => ok = false,
+                        None => {
+                            let names: Vec<&str> = project.timings.keys().map(String::as_str).collect();
+                            let valid = if names.is_empty() {
+                                "the project has no timings.yml entries".to_string()
+                            } else {
+                                format!("valid names: {}", names.join(", "))
+                            };
+                            self.diags.error(
+                                "unknown-timing",
+                                file.clone(),
+                                line,
+                                format!("schedule `{name}`: no timing `{t}`; {valid}"),
+                            );
+                            ok = false;
+                        }
+                    }
+                    errs
+                } else {
+                    schedule::validate_block(&sched, "a schedule")
+                        .into_iter()
+                        .map(|e| {
+                            e.replace(
+                                "needs exactly one of `cron`",
+                                "needs exactly one of `timing`, `cron`",
+                            )
+                        })
+                        .collect()
+                };
+                if shape.is_empty() && timing.is_none() {
                     let block = yaml_map_to_json(&sched);
                     for (code, msg) in schedule::strictness(&block) {
                         self.diags
@@ -2854,9 +3073,10 @@ impl Loader {
                     );
                     ok = false;
                 }
-                let timezone = match m.get("timezone") {
-                    None => None,
-                    Some(v) => {
+                let timezone = match (m.get("timezone"), &timing) {
+                    (None, Some(t)) => project.timings.get(t).and_then(|d| d.timezone.clone()),
+                    (None, None) => None,
+                    (Some(v), _) => {
                         let t = self.timezone_value(
                             v,
                             &yf.display,
@@ -2887,14 +3107,24 @@ impl Loader {
                         select,
                         report,
                         set,
-                        schedule: yaml_map_to_json(&sched),
-                        timing: None,
+                        schedule: resolved.unwrap_or_else(|| yaml_map_to_json(&sched)),
+                        timing,
                         enabled,
                         vars,
                         timezone,
                         location: (yf.display.clone(), line),
                     });
                 }
+            }
+        }
+        for (name, t) in &project.timings {
+            if !used_timings.contains(name) {
+                self.diags.warning(
+                    "unused-timing",
+                    Some(t.location.0.clone()),
+                    t.location.1,
+                    format!("timing `{name}` isn't used by any schedule"),
+                );
             }
         }
         out
@@ -3788,6 +4018,14 @@ fn is_one_of(k: &Value, keys: &[&str]) -> bool {
 
 /// Every entry is a Set: a map of `profile`/`vars`, which may be empty (`plain: {}`, the
 /// report's defaults) or left blank.
+/// A map of names to timings: every value holds `cron`, `every` or `rrule`.
+fn is_timing_registry(m: &Mapping) -> bool {
+    m.values().all(|v| {
+        v.as_mapping()
+            .is_some_and(|t| ["cron", "every", "rrule"].iter().any(|k| t.contains_key(*k)))
+    })
+}
+
 fn is_set_registry(m: &Mapping) -> bool {
     m.values().any(Value::is_mapping)
         && m.values().all(|v| {

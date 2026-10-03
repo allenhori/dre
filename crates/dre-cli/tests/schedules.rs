@@ -431,3 +431,26 @@ fn an_invalid_dre_run_at_fails_clearly() {
         r.says("DRE_RUN_AT: `tomorrow 6am` isn't an RFC 3339 date-time (e.g. 2026-09-01T06:00:00Z)");
     }
 }
+
+#[test]
+fn a_schedule_using_a_shared_timing_runs_in_the_timings_timezone() {
+    let p = project(&[
+        (
+            "timings.yml",
+            "early: {cron: \"0 6 * * *\", timezone: Pacific/Kiritimati}\n",
+        ),
+        ("reports/ops/zoned/zoned.yml", "queries: [z]\n"),
+        (
+            "reports/ops/zoned/z.sql",
+            "select '{{ run.timezone }}' as tz, '{{ run.schedule }}' as s\n",
+        ),
+    ]);
+    let mut schedules = SCHEDULES.to_string();
+    schedules.push_str("- {name: zoned_early, report: zoned, timing: early}\n");
+    p.write("schedules.yml", &schedules);
+    p.dre("run", &["--schedule", "zoned_early"]).ok();
+    assert_eq!(
+        p.read("target/run/zoned/default/zoned.csv"),
+        "tz,s\r\nPacific/Kiritimati,zoned_early\r\n"
+    );
+}

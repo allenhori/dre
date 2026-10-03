@@ -25,6 +25,8 @@ PAGES = [
      "Every key of a Sets file."),
     ("schedules", "reference-schedules", "schedules.yml", "`schedules.yml`", 23,
      "Every key of the schedules file."),
+    ("timings", "reference-timings", "timings.yml", "`timings.yml`", 24,
+     "Every key of the timings file: named timings schedules share."),
     ("profiles", "reference-profiles", "profiles.yml", "`profiles.yml`", 24,
      "Every key of profiles.yml: sources, destinations and their targets."),
     ("dependencies", "reference-dependencies", "dependencies.yml", "`dependencies.yml` or `packages.yml`", 25,
@@ -194,6 +196,9 @@ def generate_page(name, slug, title, where, order, description):
     if root.get("type") == "array":
         lines += ["The file is a list; each entry has these keys.", ""]
         tables(doc, root["items"], name, "", found, set())
+    elif "properties" not in root and isinstance(root.get("additionalProperties"), dict):
+        lines += ["The file maps names to entries; each entry has these keys.", ""]
+        tables(doc, root["additionalProperties"], name, "", found, set())
     else:
         tables(doc, top, name, "", found, set())
     for path, schema, home in found:

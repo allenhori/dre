@@ -1,0 +1,7 @@
+- {name: uses_shared, report: filing, timing: month_start}
+- {name: uses_unknown, report: filing, timing: month_begin}
+- {name: mixes, report: filing, timing: month_start, cron: "0 6 * * *", timezone: UTC}
+- {name: uses_broken, report: filing, timing: bad_key}
+- {name: uses_quarter, report: filing, timing: quarter_start}
+- {name: uses_no_anchor, report: filing, timing: no_anchor}
+- {name: neither, report: filing, vars: {a: 1}}

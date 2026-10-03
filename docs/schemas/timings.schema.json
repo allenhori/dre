@@ -1,55 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-dre-schema-version": "0.1",
-  "title": "DRE schedules",
-  "description": "The schedules file, `schedules.yml`: a list of named schedules.",
-  "type": "array",
-  "items": {
-    "$ref": "#/$defs/schedule"
+  "title": "DRE timings",
+  "description": "The timings file, `timings.yml`: timing names mapped to timings that any schedule can use with `timing: <name>`.",
+  "type": "object",
+  "propertyNames": {
+    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+  },
+  "additionalProperties": {
+    "$ref": "#/$defs/timing"
   },
   "$defs": {
-    "schedule": {
+    "timing": {
       "type": "object",
-      "description": "One named schedule. DRE doesn't fire it; your orchestrator runs `dre run --schedule <name>`.",
+      "description": "One named timing: when it fires, in which timezone, and the dates it skips or adds.",
       "properties": {
-        "name": {
-          "type": "string",
-          "description": "The schedule's name: letters, digits and `_`, not starting with a digit. Unique across the project.",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-        },
-        "report": {
-          "type": "string",
-          "description": "The report to run. Use `report` or `select`, not both."
-        },
-        "set": {
-          "type": "string",
-          "description": "The Set of `report` to run. Only with `report`."
-        },
-        "select": {
-          "type": "string",
-          "description": "A selector for the reports to run, e.g. `tag:regulatory`. Use `report` or `select`, not both."
-        },
-        "vars": {
-          "type": "object",
-          "description": "Variables for the run: above the report's own and below `--var`.",
-          "additionalProperties": true
-        },
-        "timing": {
-          "type": "string",
-          "description": "The name of a timing in `timings.yml` to fire on. Use `timing` or one of `cron`, `every`, `rrule`; with `timing`, the schedule sets none of the timing's keys (`timezone`, `starting`, `at`, `except`, `also`).",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-        },
-        "timezone": {
-          "type": "string",
-          "description": "The timezone it fires in, and the one `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: the project's `timezone:` for firing (the report's for the run), then UTC."
-        },
-        "enabled": {
-          "type": "boolean",
-          "description": "`false` pauses the schedule: it keeps its name and settings but `dre schedule ls` lists no occurrences for it. Default: `true`."
-        },
         "cron": {
           "type": "string",
-          "description": "A cron expression (5 fields, or a macro such as `@daily`). A schedule needs exactly one of `timing`, `cron`, `every` or `rrule`."
+          "description": "A cron expression (5 fields, or a macro such as `@daily`). A timing needs exactly one of `cron`, `every` or `rrule`."
         },
         "every": {
           "type": "object",
@@ -104,11 +72,12 @@
             "type": "string",
             "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
           }
+        },
+        "timezone": {
+          "type": "string",
+          "description": "The timezone it fires in, an IANA name such as `Australia/Sydney`; schedules using the timing also run in it. Default: the project's `timezone:`, then UTC."
         }
       },
-      "required": [
-        "name"
-      ],
       "additionalProperties": false
     }
   }
