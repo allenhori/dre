@@ -1,9 +1,9 @@
 ---
 name: dre-report
-description: Create or change a DRE report - the SQL files and report YAML, its tabs, variables and Sets, its output format (xlsx with number formats, formulas and totals rows, csv, fixed-width, parquet) and its destinations (S3, GCS, Azure Blob, SFTP, FTP, Databricks Volumes, email, Slack). Use when the user wants a new report, or to add a tab, a column format, a variable, a destination or a recipient to an existing one, in a dre project.
+description: Create or change a DRE report - the SQL files and report YAML, its tabs, variables and Sets, its output format (xlsx with number formats, formulas and totals rows, csv, fixed-width, parquet), its destinations (S3, GCS, Azure Blob, SFTP, FTP, Databricks Volumes, email, Slack) and its schedules (cron, iCalendar rules, shared timings). Use when the user wants a new report, to add a tab, a column format, a variable, a destination or a recipient to an existing one, or to schedule a report ("every 2nd Tuesday at 7"), in a dre project.
 license: GPL-3.0-only
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   dre: ">=0.1.0, <0.2.0"
 ---
 
@@ -107,7 +107,8 @@ output:
   `run.date.prev_month.start.date`, `run.date.yyyymmdd`), `env_var()`, `ref('file')` for another
   `.sql` file as a subquery, `target.*` for connection settings, and macros from `macros/`.
 - Report keys: `queries`, `output`, `vars`, `profile` (a source profile other than the project's
-  `default_profile`), `sets`, `default_set`, `tags`, `timezone`, `schedule`. Query entry keys:
+  `default_profile`), `sets`, `default_set`, `tags`, `timezone`. Schedules live in `schedules.yml`,
+  never in a report (see Scheduling a report). Query entry keys:
   `query`, `tab`, `tab_name`, `anchor`, `header`, `columns`. Output keys DRE owns: `format`,
   `destination`, `template`, `extension`; every other output key is the format plugin's option.
 
@@ -237,6 +238,45 @@ Read it first. Change only what was asked; keep the rest byte for byte. Common c
 
 Show the diff before writing when the change touches more than one file. Then step 7.
 
+## Scheduling a report
+
+DRE doesn't fire schedules; the user's orchestrator runs `dre run --schedule <name>`. You write
+the schedule and prove it fires when they mean. Shared timings, `except`/`also`, `enabled`,
+`starting`/`at` on rules and `dre schedule ls` need dre 0.1.2 or later: if `dre --version` is
+older, say so and offer `dre-upgrade` first; without it, write a plain cron schedule and say it
+can't be previewed.
+
+1. **Turn the words into a timing**, and ask (one question) only what's missing: the time of
+   day and the timezone. Recommend the user's own timezone, never UTC by default (SCH-1).
+
+   | They say | Timing |
+   |---|---|
+   | every weekday at 7 | `cron: "0 7 * * MON-FRI"` |
+   | 6am on the 1st | `cron: "0 6 1 * *"` |
+   | every 2nd Tuesday at 7 | `rrule: "FREQ=MONTHLY;BYDAY=2TU"`, `at: "07:00"` |
+   | the last weekday of the month | `rrule: "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1"`, `at` |
+   | the first weekday of the year | `rrule: "FREQ=YEARLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1"`, `at` |
+   | the first Friday of March | `rrule: "FREQ=YEARLY;BYMONTH=3;BYDAY=1FR"`, `at` |
+   | every other Monday | `rrule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO"`, `starting`, `at` |
+   | every 5 days from 2 October | `every: {days: 5}`, `starting: "2026-10-02"`, `at` |
+
+   `every`, and rules with `INTERVAL` above 1 or a `COUNT`, need `starting` (SCH-3). Holidays go
+   in `except: ["YYYY-MM-DD"]`, one-off extra runs in `also:`.
+2. **Share timings** (SCH-2): when two or more schedules fire at the same time (one per client,
+   say), put the timing once in `timings.yml` (`month_start: {cron: "0 6 1 * *", timezone:
+   Australia/Sydney}`) and give each schedule `timing: month_start` with its own `report`, `set`
+   and `vars`. A schedule with `timing:` sets none of the timing's keys itself.
+3. **Write** the `schedules.yml` entry: `name` (what the orchestrator will call), `report` and
+   optionally `set`, or `select: "tag:..."`, the timing, `timezone`, and `vars` for what differs
+   per schedule (e.g. `period: month`). Report SQL reads the period from `var()` or `run.date`.
+4. **Check before saying it's right:** run `dre validate` (it warns about a missing anchor, no
+   time of day, or a schedule firing in one timezone while its report renders in another), then
+   `dre schedule ls --schedule <name> --limit 5`. Read the dates back in plain words ("Tue 13
+   Oct, Tue 10 Nov, Tue 8 Dec, 07:00 Sydney") and ask whether that's what they meant. Fix and
+   check again until it is.
+
+Then point to `dre-run` for running a firing or wiring the orchestrator.
+
 ## If this fails
 
 `dre validate` names the file, line and key. Common ones:
@@ -256,3 +296,6 @@ Show the diff before writing when the change touches more than one file. Then st
   column.
 - Errors that only a run finds (a column the query doesn't return, a format code that doesn't
   fit its column) come from `dre-run`.
+- **`schedule-needs-anchor`, `schedule-no-time`:** add `starting` (the first date) or `at`
+  (`HH:MM`). **`unknown-timing`:** the name isn't in `timings.yml`. **A schedule using `timing:`
+  can't set** `cron`, `timezone`...: move those into the timing, or drop `timing:`.
