@@ -1,0 +1,4 @@
+exit: 1
+--- stdout
+--- stderr
+error: no schedule `nope`; valid names: flash_daily, close_monthly, regulatory

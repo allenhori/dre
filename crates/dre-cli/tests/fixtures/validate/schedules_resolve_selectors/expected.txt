@@ -1,4 +1,5 @@
 exit: 0
+warning[schedule-no-time]: schedules.yml:4: schedule `ops_tag_monthly`: no time of day is given, so it fires at 00:00 in its timezone; set `at: "HH:MM"` to say when
 Compiled 2 Bindings into target/compiled/
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-Validation passed: 0 errors, 0 warnings
+Validation passed: 0 errors, 1 warning

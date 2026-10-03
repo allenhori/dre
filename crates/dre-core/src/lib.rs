@@ -8,6 +8,7 @@ pub mod lookups;
 pub mod manager;
 pub mod manifest;
 mod mutable;
+pub mod occurrences;
 pub mod options;
 pub mod packages;
 pub mod plugins;

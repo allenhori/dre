@@ -1,0 +1,6 @@
+# Fires in the project's timezone, and syd renders there too: no warning.
+- {name: syd_daily, report: syd, cron: "0 6 * * *"}
+# Fires in Sydney but ldn renders in London: warned.
+- {name: ldn_daily, report: ldn, cron: "0 6 * * *"}
+# Its own timezone is also the one it renders in: no warning.
+- {name: ldn_own, report: ldn, cron: "0 6 * * *", timezone: Europe/London}

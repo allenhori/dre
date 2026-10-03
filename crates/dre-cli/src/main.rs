@@ -2,6 +2,7 @@ mod init;
 mod ls;
 mod output;
 mod plugins;
+mod schedule;
 mod system;
 
 use std::path::PathBuf;
@@ -58,6 +59,9 @@ enum Command {
     Clean(CleanArgs),
     /// List the reports and Bindings a selection or schedule covers, without running anything.
     Ls(ls::LsArgs),
+    /// Work out when schedules fire, for people and orchestrators.
+    #[command(subcommand)]
+    Schedule(schedule::ScheduleCommand),
     /// Set up a connection (installing its plugin) and optionally a starter project, interactively.
     Init(InitArgs),
     /// Create a starter project in a new directory.
@@ -299,6 +303,7 @@ fn main() -> ExitCode {
         Command::Compile(a) => compile(a, printer),
         Command::Clean(a) => clean(a),
         Command::Ls(a) => ls::ls(a),
+        Command::Schedule(schedule::ScheduleCommand::Ls(a)) => schedule::ls(a),
         Command::System(system::SystemCommand::Update(a)) => system::update(a, &printer),
         Command::Deps(a) => deps(a, &printer),
         Command::Init(a) => init::init(a.profiles_dir, &printer),

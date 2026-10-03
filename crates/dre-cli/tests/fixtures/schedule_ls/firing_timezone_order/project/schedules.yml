@@ -1,0 +1,2 @@
+- {name: own_zone, report: sales, set: client_a, cron: "0 6 * * *", timezone: America/New_York}
+- {name: project_zone, report: sales, set: client_a, cron: "0 6 * * *"}

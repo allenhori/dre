@@ -414,7 +414,13 @@ pub struct ScheduleEntry {
     pub report: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub set: Option<String>,
+    /// The resolved timing: `cron`/`every`/`rrule`, `starting`, `at`, `except`, `also`.
     pub schedule: JsonMap<String, Json>,
+    /// The `timings.yml` entry the timing comes from, when it's a shared one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<String>,
+    /// `enabled: false` pauses the schedule: it keeps its name but never fires.
+    pub enabled: bool,
     /// Layered into `var()` when run with `--schedule <name>`, above the Binding's own vars.
     #[serde(skip_serializing_if = "JsonMap::is_empty")]
     pub vars: JsonMap<String, Json>,
@@ -2755,7 +2761,23 @@ impl Loader {
                     }
                     sched.insert(Value::String(k.to_string()), v.clone());
                 }
-                for e in schedule::validate_block(&sched) {
+                let shape = schedule::validate_block(&sched);
+                if shape.is_empty() {
+                    let block = yaml_map_to_json(&sched);
+                    for (code, msg) in schedule::strictness(&block) {
+                        self.diags
+                            .warning(code, file.clone(), line, format!("schedule `{name}`: {msg}"));
+                    }
+                    if let Some(msg) = schedule::no_time(&block) {
+                        self.diags.warning(
+                            "schedule-no-time",
+                            file.clone(),
+                            line,
+                            format!("schedule `{name}`: {msg}"),
+                        );
+                    }
+                }
+                for e in shape {
                     self.diags.error("invalid-schedule", file.clone(), line, e);
                     ok = false;
                 }
@@ -2850,6 +2872,8 @@ impl Loader {
                         report,
                         set,
                         schedule: yaml_map_to_json(&sched),
+                        timing: None,
+                        enabled: true,
                         vars,
                         timezone,
                         location: (yf.display.clone(), line),
@@ -2960,6 +2984,38 @@ impl Loader {
             }
         }
         self.check_schedule_paths(project);
+        self.check_schedule_timezones(project);
+    }
+
+    /// Warn when a schedule fires in one timezone and a report it runs renders in another: the
+    /// run date is then the report's date at the firing time, which may not be the day meant.
+    fn check_schedule_timezones(&mut self, project: &Project) {
+        for e in project.schedules.iter().filter(|e| e.timezone.is_none()) {
+            let fires = crate::occurrences::firing_tz(project, e);
+            let mut seen = BTreeSet::new();
+            for (report, _) in crate::occurrences::bindings(project, &e.name) {
+                let Some(r) = project.report(report) else { continue };
+                let renders = r
+                    .timezone
+                    .as_ref()
+                    .and_then(|t| crate::dates::parse_tz(t).ok())
+                    .unwrap_or(chrono_tz::Tz::UTC);
+                if renders != fires && seen.insert(report) {
+                    self.diags.warning(
+                        "schedule-timezone-mismatch",
+                        Some(e.location.0.clone()),
+                        e.location.1,
+                        format!(
+                            "schedule `{}` fires in {} but report `{report}` renders in {}, so its run date is {}'s date at the firing time; set `timezone:` on the schedule to fire and render in one timezone",
+                            e.name,
+                            fires.name(),
+                            renders.name(),
+                            renders.name()
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     // -- profiles and plugins -----------------------------------------------------------------

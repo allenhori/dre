@@ -30,12 +30,14 @@ The file is a list; each entry has these keys.
 | `set` | string |  | The Set of `report` to run. Only with `report`. |
 | `select` | string |  | A selector for the reports to run, e.g. `tag:regulatory`. Use `report` or `select`, not both. |
 | `vars` | map |  | Variables for the run: above the report's own and below `--var`. |
-| `timezone` | string |  | The timezone `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: UTC. |
-| `cron` | string |  | A cron expression. A schedule needs exactly one of `cron`, `every` or `rrule`. |
+| `timezone` | string |  | The timezone it fires in, and the one `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: the project's `timezone:` for firing (the report's for the run), then UTC. |
+| `cron` | string |  | A cron expression (5 fields, or a macro such as `@daily`). A schedule needs exactly one of `cron`, `every` or `rrule`. |
 | `every` | map (see below) |  | Every N days, weeks or months, with exactly one unit, e.g. `{days: 3}`. |
-| `rrule` | string |  | An iCalendar recurrence rule, e.g. `FREQ=WEEKLY;BYDAY=MO;BYHOUR=5`. |
-| `starting` | string |  | With `every`: the first date, `YYYY-MM-DD`. |
-| `at` | string |  | With `every`: the time of day, `HH:MM` (24-hour). |
+| `rrule` | string |  | An iCalendar recurrence rule, e.g. `FREQ=MONTHLY;BYDAY=2TU`. Use `starting` for a rule with `INTERVAL` above 1 or `COUNT`, and `at` for its time of day. |
+| `starting` | string |  | With `every` or `rrule`: the first date, `YYYY-MM-DD`. `every` needs it, and so does a rule with `INTERVAL` above 1, a `COUNT`, or a day it takes from its start. |
+| `at` | string |  | With `every` or `rrule`: the time of day, `HH:MM` (24-hour), unless the rule sets `BYHOUR`/`BYMINUTE`. Default: 00:00. |
+| `except` | list of string |  | Dates (`YYYY-MM-DD`, in its timezone) it doesn't fire on, e.g. holidays. |
+| `also` | list of string |  | Extra dates (`YYYY-MM-DD`) it fires on, at its time of day in its timezone. Needs a timing that fires at one time of day. |
 
 ## `every`
 

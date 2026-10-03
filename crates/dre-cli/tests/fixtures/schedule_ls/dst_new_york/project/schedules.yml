@@ -1,0 +1,2 @@
+- {name: hourly_half, report: filing, cron: "30 * * * *", timezone: America/New_York}
+- {name: daily_0230, report: filing, cron: "30 2 * * *", timezone: America/New_York}

@@ -1,0 +1,2 @@
+client_a: {vars: {client: a}}
+client_b: {vars: {client: b}}

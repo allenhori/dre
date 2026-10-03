@@ -1,0 +1,10 @@
+exit: 0
+--- stdout
+TIME                  SCHEDULE     REPORTS
+2026-03-08 00:30 EST  hourly_half  filing
+2026-03-08 01:30 EST  hourly_half  filing
+2026-03-08 03:00 EDT  daily_0230   filing
+2026-03-08 03:00 EDT  hourly_half  filing
+2026-03-08 03:30 EDT  hourly_half  filing
+2026-03-08 04:30 EDT  hourly_half  filing
+--- stderr

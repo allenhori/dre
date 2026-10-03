@@ -221,6 +221,11 @@ fn slash(p: &Path) -> String {
     crate::slash(p).to_string_lossy().into_owned()
 }
 
+/// `v` as compact JSON with every object's keys sorted: the same bytes for the same value.
+pub fn canonical(v: &Json) -> String {
+    serde_json::to_string(&sorted(v.clone())).unwrap()
+}
+
 /// `v` with every object's keys sorted, so the bytes don't depend on insertion order.
 fn sorted(v: Json) -> Json {
     match v {

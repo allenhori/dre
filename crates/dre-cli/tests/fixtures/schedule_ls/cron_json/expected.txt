@@ -1,0 +1,226 @@
+exit: 0
+--- stdout
+{
+  "dre_schedule_version": 1,
+  "dre_version": "$VERSION",
+  "project": "acme",
+  "window": {
+    "from": "2026-09-30T12:00:00Z",
+    "to": "2026-10-02T00:00:00Z"
+  },
+  "split": false,
+  "project_hash": "c1c09361f1dbf9f1635f09d2530f8040be16712598c9290207c7268c2440ebe3",
+  "schedules": {
+    "flash_daily": {
+      "definition_hash": "b8e6cd0fb7c281bd755bc3add08a9fe1d1ab344aa669c935c0f8c70d872f5701",
+      "enabled": true,
+      "timing": null,
+      "timezone": "Australia/Sydney",
+      "vars": {
+        "period": "day"
+      },
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ]
+    },
+    "close_monthly": {
+      "definition_hash": "a90ead65f93de12ec8cfdb0b787520b447e02e7cb3983086f9c9fc6959f1b208",
+      "enabled": true,
+      "timing": null,
+      "timezone": "Australia/Sydney",
+      "vars": {
+        "period": "month"
+      },
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        },
+        {
+          "report": "sales",
+          "set": "client_b",
+          "binding": "client_b"
+        }
+      ]
+    },
+    "regulatory": {
+      "definition_hash": "ea088a28bf7570fc7e731818f227e371e2bbd6c3207f8c9577cb1bebcd34bfd2",
+      "enabled": true,
+      "timing": null,
+      "timezone": "Australia/Sydney",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    }
+  },
+  "occurrences": [
+    {
+      "key": "close_monthly/2026-09-30T20:00:00Z",
+      "schedule": "close_monthly",
+      "timing": null,
+      "fires_at": "2026-09-30T20:00:00Z",
+      "fires_at_local": "2026-10-01T06:00:00+10:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-10-01",
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        },
+        {
+          "report": "sales",
+          "set": "client_b",
+          "binding": "client_b"
+        }
+      ],
+      "vars": {
+        "period": "month"
+      },
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "close_monthly"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-09-30T20:00:00Z",
+          "DRE_RUN_DATE": "2026-10-01"
+        }
+      }
+    },
+    {
+      "key": "flash_daily/2026-09-30T21:00:00Z",
+      "schedule": "flash_daily",
+      "timing": null,
+      "fires_at": "2026-09-30T21:00:00Z",
+      "fires_at_local": "2026-10-01T07:00:00+10:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-10-01",
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ],
+      "vars": {
+        "period": "day"
+      },
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "flash_daily"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-09-30T21:00:00Z",
+          "DRE_RUN_DATE": "2026-10-01"
+        }
+      }
+    },
+    {
+      "key": "regulatory/2026-09-30T23:30:00Z",
+      "schedule": "regulatory",
+      "timing": null,
+      "fires_at": "2026-09-30T23:30:00Z",
+      "fires_at_local": "2026-10-01T09:30:00+10:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-10-01",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "regulatory"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-09-30T23:30:00Z",
+          "DRE_RUN_DATE": "2026-10-01"
+        }
+      }
+    },
+    {
+      "key": "flash_daily/2026-10-01T21:00:00Z",
+      "schedule": "flash_daily",
+      "timing": null,
+      "fires_at": "2026-10-01T21:00:00Z",
+      "fires_at_local": "2026-10-02T07:00:00+10:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-10-02",
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ],
+      "vars": {
+        "period": "day"
+      },
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "flash_daily"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-10-01T21:00:00Z",
+          "DRE_RUN_DATE": "2026-10-02"
+        }
+      }
+    },
+    {
+      "key": "regulatory/2026-10-01T23:30:00Z",
+      "schedule": "regulatory",
+      "timing": null,
+      "fires_at": "2026-10-01T23:30:00Z",
+      "fires_at_local": "2026-10-02T09:30:00+10:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-10-02",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "regulatory"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-10-01T23:30:00Z",
+          "DRE_RUN_DATE": "2026-10-02"
+        }
+      }
+    }
+  ],
+  "problems": []
+}
+--- stderr
