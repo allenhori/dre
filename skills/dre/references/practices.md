@@ -2,7 +2,7 @@
 title: "DRE practices"
 description: "The opinions DRE’s agent skills give, and the reasons behind them."
 sidebar:
-  order: 15
+  order: 17
 ---
 
 # DRE practices
