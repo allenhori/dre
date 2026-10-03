@@ -362,7 +362,7 @@ pub fn strictness(timing: &JsonMap<String, Json>) -> Vec<(&'static str, String)>
     if timing.contains_key("every") && !anchored {
         out.push((
             "schedule-needs-anchor",
-            format!("`every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look"),
+            "`every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look".to_string(),
         ));
     }
     let Some(parts) = timing
@@ -382,7 +382,7 @@ pub fn strictness(timing: &JsonMap<String, Json>) -> Vec<(&'static str, String)>
     if part(&parts, "BYSECOND").is_some() {
         out.push((
             "schedule-seconds",
-            format!("`BYSECOND` isn't supported: schedules fire on whole minutes"),
+            "`BYSECOND` isn't supported: schedules fire on whole minutes".to_string(),
         ));
     }
     if !anchored {
