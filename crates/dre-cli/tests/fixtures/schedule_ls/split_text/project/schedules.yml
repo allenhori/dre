@@ -1,0 +1,3 @@
+# Two clients share one timing and keep their own vars.
+- {name: close_a, report: sales, set: client_a, timing: month_start, vars: {period: month, tier: gold}}
+- {name: close_b, report: sales, set: client_b, timing: month_start, vars: {period: month}}

@@ -1,0 +1,16 @@
+exit: 0
+--- stdout
+TIME                  SCHEDULE   REPORTS
+2026-06-25 00:00 UTC  m_daily    filing
+2026-06-26 00:00 UTC  m_daily    filing
+2026-06-27 00:00 UTC  m_daily    filing
+2026-06-28 00:00 UTC  m_weekly   filing
+2026-06-28 09:00 UTC  sunday_7   filing
+2026-07-01 00:00 UTC  m_monthly  filing
+2026-07-05 00:00 UTC  m_weekly   filing
+2026-07-05 08:15 UTC  named      filing
+2026-07-05 09:00 UTC  sunday_7   filing
+2026-07-12 00:00 UTC  m_weekly   filing
+2026-07-12 08:15 UTC  named      filing
+2026-07-12 09:00 UTC  sunday_7   filing
+--- stderr

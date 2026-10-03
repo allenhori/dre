@@ -47,10 +47,10 @@ dre run                # run every report; output lands in target/run/
 ## Documentation
 
 - [Getting started](docs/getting-started.md) and [Install](docs/install.md)
-- [Concepts](docs/concepts.md), [Build and run reports](docs/building-reports.md), [Schedules](docs/schedules.md)
+- [Concepts](docs/concepts.md), [Build and run reports](docs/building-reports.md), [Schedules](docs/schedules.md), [the orchestration recipe](docs/orchestration.md)
 - [Templates](docs/templates.md) and [Lookups](docs/lookups.md)
 - [Plugins](docs/plugins.md), [Managing plugins](docs/managing-plugins.md), [the registry and `dre.lock`](docs/registry.md), [the plugin protocol](docs/protocol.md)
-- [The target path](docs/target-path.md), [the manifest and `run_results.json`](docs/manifest.md)
+- [The target path](docs/target-path.md), [the manifest and `run_results.json`](docs/manifest.md), [schedule occurrences (`dre schedule ls`)](docs/schedule-ls.md)
 - [Updating DRE](docs/updating.md), [Environment variables](docs/environment-variables.md), [Building from source](docs/building-from-source.md)
 - [Practices: how to set up, write and run reports well](docs/practices.md)
 - [Agent skills: DRE in your coding agent](skills/README.md)

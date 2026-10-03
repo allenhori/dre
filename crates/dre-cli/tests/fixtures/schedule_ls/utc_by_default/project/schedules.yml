@@ -1,0 +1,1 @@
+- {name: daily, report: filing, cron: "0 6 * * *"}

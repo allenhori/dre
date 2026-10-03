@@ -1,0 +1,222 @@
+exit: 0
+--- stdout
+{
+  "dre_schedule_version": 1,
+  "dre_version": "$VERSION",
+  "project": "acme",
+  "window": {
+    "from": "2026-03-07T00:00:00Z",
+    "to": "2026-03-10T00:00:00Z"
+  },
+  "split": false,
+  "complete": true,
+  "project_hash": "3702b1335dbc3fa1a4cb8116b55e214687e27be5f33c6502fe6723435e461034",
+  "schedules": {
+    "sydney_0230": {
+      "definition_hash": "1556075e8d0b6835f2d721dbf7947bf97b2157432f2d031fc448d8a3209424b0",
+      "enabled": true,
+      "timing": null,
+      "timezone": "Australia/Sydney",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    },
+    "new_york_0230": {
+      "definition_hash": "ec301aaa549d904e178534dbc316e137c002c6b06425e2df374cc1ca41fb0870",
+      "enabled": true,
+      "timing": null,
+      "timezone": "America/New_York",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    }
+  },
+  "occurrences": [
+    {
+      "key": "new_york_0230/2026-03-07T07:30:00Z",
+      "schedule": "new_york_0230",
+      "timing": null,
+      "fires_at": "2026-03-07T07:30:00Z",
+      "fires_at_local": "2026-03-07T02:30:00-05:00",
+      "timezone": "America/New_York",
+      "run_date": "2026-03-07",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "new_york_0230"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-03-07T07:30:00Z",
+          "DRE_RUN_DATE": "2026-03-07"
+        }
+      }
+    },
+    {
+      "key": "sydney_0230/2026-03-07T15:30:00Z",
+      "schedule": "sydney_0230",
+      "timing": null,
+      "fires_at": "2026-03-07T15:30:00Z",
+      "fires_at_local": "2026-03-08T02:30:00+11:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-03-08",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "sydney_0230"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-03-07T15:30:00Z",
+          "DRE_RUN_DATE": "2026-03-08"
+        }
+      }
+    },
+    {
+      "key": "new_york_0230/2026-03-08T07:00:00Z",
+      "schedule": "new_york_0230",
+      "timing": null,
+      "fires_at": "2026-03-08T07:00:00Z",
+      "fires_at_local": "2026-03-08T03:00:00-04:00",
+      "timezone": "America/New_York",
+      "run_date": "2026-03-08",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "new_york_0230"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-03-08T07:00:00Z",
+          "DRE_RUN_DATE": "2026-03-08"
+        }
+      }
+    },
+    {
+      "key": "sydney_0230/2026-03-08T15:30:00Z",
+      "schedule": "sydney_0230",
+      "timing": null,
+      "fires_at": "2026-03-08T15:30:00Z",
+      "fires_at_local": "2026-03-09T02:30:00+11:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-03-09",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "sydney_0230"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-03-08T15:30:00Z",
+          "DRE_RUN_DATE": "2026-03-09"
+        }
+      }
+    },
+    {
+      "key": "new_york_0230/2026-03-09T06:30:00Z",
+      "schedule": "new_york_0230",
+      "timing": null,
+      "fires_at": "2026-03-09T06:30:00Z",
+      "fires_at_local": "2026-03-09T02:30:00-04:00",
+      "timezone": "America/New_York",
+      "run_date": "2026-03-09",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "new_york_0230"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-03-09T06:30:00Z",
+          "DRE_RUN_DATE": "2026-03-09"
+        }
+      }
+    },
+    {
+      "key": "sydney_0230/2026-03-09T15:30:00Z",
+      "schedule": "sydney_0230",
+      "timing": null,
+      "fires_at": "2026-03-09T15:30:00Z",
+      "fires_at_local": "2026-03-10T02:30:00+11:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-03-10",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "sydney_0230"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-03-09T15:30:00Z",
+          "DRE_RUN_DATE": "2026-03-10"
+        }
+      }
+    }
+  ],
+  "problems": []
+}
+--- stderr

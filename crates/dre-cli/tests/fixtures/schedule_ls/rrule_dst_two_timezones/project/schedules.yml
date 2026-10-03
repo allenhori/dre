@@ -1,0 +1,2 @@
+- {name: sydney_0230, report: filing, rrule: "FREQ=DAILY;BYHOUR=2;BYMINUTE=30", timezone: Australia/Sydney}
+- {name: new_york_0230, report: filing, every: {days: 1}, starting: "2026-01-01", at: "02:30", timezone: America/New_York}

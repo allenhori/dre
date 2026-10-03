@@ -1,0 +1,3 @@
+plugins:
+  - duckdb: ">=0.0"
+  - csv

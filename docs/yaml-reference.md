@@ -2,7 +2,7 @@
 title: "YAML reference"
 description: "Every key of every YAML file a DRE project uses, generated from the JSON Schemas."
 sidebar:
-  order: 18
+  order: 20
 ---
 
 # YAML reference
@@ -17,6 +17,7 @@ key with its type, default and meaning. The pages are generated from the same
 | `reports/**/*.yml` | A report: queries, output, destinations, Sets, templates | [Report YAML](reference-report.md) |
 | `sets.yml` | Named variants a report can run as | [sets.yml](reference-sets.md) |
 | `schedules.yml` | Named schedules your orchestrator fires | [schedules.yml](reference-schedules.md) |
+| `timings.yml` | Named timings that schedules share | [timings.yml](reference-timings.md) |
 | `profiles.yml` | Connections: sources and destinations (kept outside the project) | [profiles.yml](reference-profiles.md) |
 | `dependencies.yml` | Plugin packages and macro packages | [dependencies.yml](reference-dependencies.md) |
 | `lookups/<name>.yml` | The config of a lookup file | [Lookup config](reference-lookups.md) |

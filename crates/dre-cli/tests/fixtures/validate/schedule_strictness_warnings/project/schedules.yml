@@ -1,0 +1,12 @@
+- {name: fine_cron, report: filing, cron: "0 6 * * *"}
+- {name: fine_rule, report: filing, rrule: "FREQ=MONTHLY;BYDAY=2TU", at: "07:00"}
+- {name: fine_every, report: filing, every: {days: 5}, starting: "2026-09-28", at: "06:00"}
+- {name: every_no_start, report: filing, every: {days: 5}, at: "06:00"}
+- {name: interval_no_start, report: filing, rrule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO", at: "06:00"}
+- {name: count_no_start, report: filing, rrule: "FREQ=DAILY;COUNT=3", at: "06:00"}
+- {name: day_from_start, report: filing, rrule: "FREQ=YEARLY;BYMONTH=3", at: "06:00"}
+- {name: minutely, report: filing, rrule: "FREQ=MINUTELY;INTERVAL=15", starting: "2026-01-01"}
+- {name: seconds, report: filing, rrule: "FREQ=DAILY;BYSECOND=30", at: "06:00"}
+- {name: no_time_every, report: filing, every: {weeks: 1}, starting: "2026-09-28"}
+- {name: no_time_rule, report: filing, rrule: "FREQ=MONTHLY;BYDAY=1FR"}
+- {name: hourly_needs_no_time, report: filing, rrule: "FREQ=HOURLY;BYMINUTE=15"}

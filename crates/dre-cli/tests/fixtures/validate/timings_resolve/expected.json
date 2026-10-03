@@ -1,0 +1,184 @@
+exit: 0
+{
+  "ok": true,
+  "profiles": {
+    "path": "$CASE/profiles/profiles.yml",
+    "exists": true,
+    "found_by": "--profiles-dir"
+  },
+  "errors": 0,
+  "warnings": 0,
+  "diagnostics": [],
+  "compiled": [
+    {
+      "report": "sales",
+      "set": "client_a",
+      "compiled": [
+        "target/compiled/sales/client_a/sales_q.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/sales/client_a/sales.csv",
+      "destinations": [],
+      "schedules": [
+        "close_a"
+      ]
+    },
+    {
+      "report": "sales",
+      "set": "client_b",
+      "compiled": [
+        "target/compiled/sales/client_b/sales_q.sql"
+      ],
+      "profile": "local_dev",
+      "source_type": "duckdb",
+      "target": "dev",
+      "format": "csv",
+      "output": "target/run/sales/client_b/sales.csv",
+      "destinations": [],
+      "schedules": [
+        "close_b"
+      ]
+    }
+  ],
+  "project": {
+    "plugins": [
+      {
+        "package": "csv",
+        "source": {
+          "type": "registry"
+        },
+        "version": "*"
+      },
+      {
+        "package": "duckdb",
+        "source": {
+          "type": "registry"
+        },
+        "version": ">=0.0"
+      }
+    ],
+    "project": {
+      "checksum": "2bce54501ee3e21acd3ecd6580dcdd1276665b3fca45d8ca0cd64d21aa5f95ee",
+      "default_profile": "local_dev",
+      "name": "acme_reports"
+    },
+    "reports": {
+      "sales": {
+        "bindings": [
+          {
+            "destinations": [],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/sales/sales_q.sql",
+                "query": "sales_q",
+                "tab": true
+              }
+            ],
+            "schedules": [
+              "close_a"
+            ],
+            "set": "client_a",
+            "vars": {
+              "client": "a"
+            }
+          },
+          {
+            "destinations": [],
+            "output": {
+              "format": "csv",
+              "options": {}
+            },
+            "profile": "local_dev",
+            "queries": [
+              {
+                "file": "reports/sales/sales_q.sql",
+                "query": "sales_q",
+                "tab": true
+              }
+            ],
+            "schedules": [
+              "close_b"
+            ],
+            "set": "client_b",
+            "vars": {
+              "client": "b"
+            }
+          }
+        ],
+        "checksum": "2e5f08625758d79074a9a5ade845a1673ee44f616990709099b0736f978dfd2f",
+        "file": "reports/sales/sales.yml",
+        "folder": [
+          "sales"
+        ],
+        "managed": true,
+        "name": "sales",
+        "queries": [
+          {
+            "file": "reports/sales/sales_q.sql",
+            "query": "sales_q",
+            "tab": true
+          }
+        ],
+        "tags": [],
+        "timezone": "Australia/Sydney",
+        "valid": true
+      }
+    },
+    "schedules": {
+      "close_a": {
+        "bindings": [
+          {
+            "report": "sales",
+            "set": "client_a"
+          }
+        ],
+        "enabled": true,
+        "name": "close_a",
+        "report": "sales",
+        "schedule": {
+          "cron": "0 6 1 * *",
+          "except": [
+            "2027-01-01"
+          ]
+        },
+        "set": "client_a",
+        "timezone": "Australia/Sydney",
+        "timing": "month_start",
+        "vars": {
+          "period": "month"
+        }
+      },
+      "close_b": {
+        "bindings": [
+          {
+            "report": "sales",
+            "set": "client_b"
+          }
+        ],
+        "enabled": true,
+        "name": "close_b",
+        "report": "sales",
+        "schedule": {
+          "cron": "0 6 1 * *",
+          "except": [
+            "2027-01-01"
+          ]
+        },
+        "set": "client_b",
+        "timezone": "Australia/Sydney",
+        "timing": "month_start",
+        "vars": {}
+      }
+    },
+    "schema": 1,
+    "version": "$VERSION"
+  }
+}

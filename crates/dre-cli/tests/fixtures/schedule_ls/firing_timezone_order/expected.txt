@@ -1,0 +1,106 @@
+exit: 0
+--- stdout
+{
+  "dre_schedule_version": 1,
+  "dre_version": "$VERSION",
+  "project": "acme",
+  "window": {
+    "from": "2026-09-28T00:00:00Z",
+    "to": "2026-11-02T00:00:00Z"
+  },
+  "split": false,
+  "complete": true,
+  "project_hash": "daa01b166c433a84271323ba0ac842431ebc300c41658384129574ae899a8574",
+  "schedules": {
+    "own_zone": {
+      "definition_hash": "5565ab1b76e31017881319f98c072f0e8bb3366298aa4d1ae278b99b01d9621e",
+      "enabled": true,
+      "timing": null,
+      "timezone": "America/New_York",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ]
+    },
+    "project_zone": {
+      "definition_hash": "561771ab030cec524be78aeca9bc0ba689ddacdf687e84192f044a7f2b8dc48b",
+      "enabled": true,
+      "timing": null,
+      "timezone": "Australia/Sydney",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ]
+    }
+  },
+  "occurrences": [
+    {
+      "key": "own_zone/2026-09-28T10:00:00Z",
+      "schedule": "own_zone",
+      "timing": null,
+      "fires_at": "2026-09-28T10:00:00Z",
+      "fires_at_local": "2026-09-28T06:00:00-04:00",
+      "timezone": "America/New_York",
+      "run_date": "2026-09-28",
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "own_zone"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-09-28T10:00:00Z",
+          "DRE_RUN_DATE": "2026-09-28"
+        }
+      }
+    },
+    {
+      "key": "project_zone/2026-09-28T20:00:00Z",
+      "schedule": "project_zone",
+      "timing": null,
+      "fires_at": "2026-09-28T20:00:00Z",
+      "fires_at_local": "2026-09-29T06:00:00+10:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2026-09-29",
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "project_zone"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-09-28T20:00:00Z",
+          "DRE_RUN_DATE": "2026-09-29"
+        }
+      }
+    }
+  ],
+  "problems": []
+}
+--- stderr

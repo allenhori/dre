@@ -17,19 +17,21 @@ URL = "https://getdre.com/schemas"
 
 # schema file -> page slug, title, the file as users know it, sidebar order
 PAGES = [
-    ("project", "reference-project", "dre_project.yml", "dre_project.yml", 20,
+    ("project", "reference-project", "dre_project.yml", "dre_project.yml", 22,
      "Every key of dre_project.yml, the project file."),
-    ("report", "reference-report", "Report YAML", "a `.yml` file under `reports/`", 21,
+    ("report", "reference-report", "Report YAML", "a `.yml` file under `reports/`", 23,
      "Every key of a report YAML file: queries, output, destinations, Sets and templates."),
-    ("sets", "reference-sets", "sets.yml", "`sets.yml`, or any YAML file of Sets", 22,
+    ("sets", "reference-sets", "sets.yml", "`sets.yml`, or any YAML file of Sets", 24,
      "Every key of a Sets file."),
-    ("schedules", "reference-schedules", "schedules.yml", "`schedules.yml`", 23,
+    ("schedules", "reference-schedules", "schedules.yml", "`schedules.yml`", 25,
      "Every key of the schedules file."),
-    ("profiles", "reference-profiles", "profiles.yml", "`profiles.yml`", 24,
+    ("timings", "reference-timings", "timings.yml", "`timings.yml`", 26,
+     "Every key of the timings file: named timings schedules share."),
+    ("profiles", "reference-profiles", "profiles.yml", "`profiles.yml`", 27,
      "Every key of profiles.yml: sources, destinations and their targets."),
-    ("dependencies", "reference-dependencies", "dependencies.yml", "`dependencies.yml` or `packages.yml`", 25,
+    ("dependencies", "reference-dependencies", "dependencies.yml", "`dependencies.yml` or `packages.yml`", 28,
      "Every key of dependencies.yml: plugin packages and macro packages."),
-    ("lookup", "reference-lookups", "Lookup config", "`lookups/<name>.yml`, next to the lookup's data file", 26,
+    ("lookup", "reference-lookups", "Lookup config", "`lookups/<name>.yml`, next to the lookup's data file", 29,
      "Every key of a lookup's config file."),
 ]
 
@@ -194,6 +196,9 @@ def generate_page(name, slug, title, where, order, description):
     if root.get("type") == "array":
         lines += ["The file is a list; each entry has these keys.", ""]
         tables(doc, root["items"], name, "", found, set())
+    elif "properties" not in root and isinstance(root.get("additionalProperties"), dict):
+        lines += ["The file maps names to entries; each entry has these keys.", ""]
+        tables(doc, root["additionalProperties"], name, "", found, set())
     else:
         tables(doc, top, name, "", found, set())
     for path, schema, home in found:

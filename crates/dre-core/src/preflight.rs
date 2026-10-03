@@ -16,6 +16,7 @@ pub const RUN_ATTRS: &[&str] = &[
     "date",
     "date_format",
     "now",
+    "scheduled_at",
     "timezone",
 ];
 /// Attributes and methods of `run.date`.

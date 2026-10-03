@@ -1,0 +1,2 @@
+- {name: close_a, report: sales, set: client_a, timing: month_start, vars: {period: month}}
+- {name: close_b, report: sales, set: client_b, timing: month_start}

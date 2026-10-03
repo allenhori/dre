@@ -1,0 +1,4 @@
+- {name: every_5_days, report: filing, every: {days: 5}, starting: "2026-09-28", at: "06:00"}
+- {name: every_2_weeks, report: filing, every: {weeks: 2}, starting: "2026-09-02", at: "06:00"}
+# Months without a 31st are skipped.
+- {name: every_month_31st, report: filing, every: {months: 1}, starting: "2026-08-31", at: "06:00"}

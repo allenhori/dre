@@ -2,7 +2,7 @@
 title: "Managing plugins"
 description: "Plugin packages are installed on demand; how to have them in place before the first run."
 sidebar:
-  order: 9
+  order: 10
 ---
 
 # Managing plugins

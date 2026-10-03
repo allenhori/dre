@@ -2,7 +2,7 @@
 title: "Editor setup"
 description: "Autocomplete and validation for DRE's YAML files in VS Code and JetBrains, from the JSON Schemas."
 sidebar:
-  order: 19
+  order: 21
 ---
 
 # Editor setup
@@ -36,6 +36,7 @@ To apply a schema to every file of a kind without a comment line, map them in yo
     "https://getdre.com/schemas/v0.1/project.schema.json": "dre_project.yml",
     "https://getdre.com/schemas/v0.1/dependencies.schema.json": ["dependencies.yml", "packages.yml"],
     "https://getdre.com/schemas/v0.1/schedules.schema.json": "schedules.yml",
+    "https://getdre.com/schemas/v0.1/timings.schema.json": "timings.yml",
     "https://getdre.com/schemas/v0.1/sets.schema.json": "sets.yml"
   }
 }

@@ -1,25 +1,35 @@
-//! Schedule expressions: validated for shape only. Core never computes or fires schedules.
+//! Schedule timings: their shape, and the checks shared by `dre validate` and
+//! `dre schedule ls`. Core never fires schedules; `occurrences` works out when they would.
 
+use chrono::NaiveTime;
+use serde_json::{Map as JsonMap, Value as Json};
 use serde_yaml_ng::{Mapping, Value};
 
-pub const SCHEDULE_KEYS: &[&str] = &["cron", "every", "rrule", "starting", "at"];
+pub const SCHEDULE_KEYS: &[&str] = &["cron", "every", "rrule", "starting", "at", "except", "also"];
+/// Keys of a timings.yml entry: a timing and its timezone.
+pub const TIMING_KEYS: &[&str] = &[
+    "cron", "every", "rrule", "starting", "at", "except", "also", "timezone",
+];
 
-/// Validate one schedule block (`{cron}`, `{every, starting, at}` or `{rrule}`).
+/// Validate one schedule block (`{cron}`, `{every, starting, at}` or `{rrule, starting, at}`,
+/// each optionally with `except` and `also`).
 /// Returns human-readable problems; empty means valid. Keys outside `SCHEDULE_KEYS` are the
 /// caller's business (schedules.yml entries carry `select`/`report`/`set` next to them).
-pub fn validate_block(m: &Mapping) -> Vec<String> {
+/// `what` names the block in messages and `forms` its alternatives: "a schedule needs exactly
+/// one of `cron`, `every` or `rrule`".
+pub fn validate_block(m: &Mapping, what: &str, forms: &str) -> Vec<String> {
     let mut errs = Vec::new();
     let has = |k: &str| m.contains_key(k);
-    let forms: Vec<&str> = ["cron", "every", "rrule"]
+    let found: Vec<&str> = ["cron", "every", "rrule"]
         .into_iter()
         .filter(|k| has(k))
         .collect();
-    match forms.len() {
-        0 => errs.push("a schedule needs exactly one of `cron`, `every` or `rrule`".to_string()),
+    match found.len() {
+        0 => errs.push(format!("{what} needs exactly one of {forms}")),
         1 => {}
         _ => errs.push(format!(
-            "a schedule needs exactly one of `cron`, `every` or `rrule`, found {}",
-            forms
+            "{what} needs exactly one of {forms}, found {}",
+            found
                 .iter()
                 .map(|f| format!("`{f}`"))
                 .collect::<Vec<_>>()
@@ -42,9 +52,29 @@ pub fn validate_block(m: &Mapping) -> Vec<String> {
         errs.extend(validate_every(v).err());
     }
     for key in ["starting", "at"] {
-        if has(key) && !has("every") {
-            errs.push(format!("`{key}` only applies to an `every` schedule"));
+        if has(key) && has("cron") {
+            errs.push(format!(
+                "`{key}` doesn't apply to a `cron` schedule; the expression sets its days and time"
+            ));
         }
+    }
+    for key in ["except", "also"] {
+        let Some(v) = m.get(key) else { continue };
+        let ok = v.as_sequence().is_some_and(|l| {
+            l.iter().all(|d| {
+                d.as_str()
+                    .is_some_and(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").is_ok())
+            })
+        });
+        if !ok {
+            errs.push(format!("`{key}` must be a list of dates in YYYY-MM-DD form"));
+        }
+    }
+    if has("also") && errs.is_empty() && time_of_day(&crate::project::yaml_map_to_json(m)).is_none() {
+        errs.push(
+            "`also` needs a schedule that fires at one time of day (e.g. `0 6 * * *` or `at: \"06:00\"`), so the added dates fire then"
+                .into(),
+        );
     }
     if let Some(v) = m.get("starting") {
         let ok = v
@@ -270,4 +300,139 @@ fn byday(d: &str) -> Option<()> {
     }
     let n: i64 = num.trim_start_matches('+').parse().ok()?;
     (n != 0 && n.abs() <= 53).then_some(())
+}
+
+/// A rule's parts as `(KEY, VALUE)`, upper-cased, in the order written.
+pub fn rule_parts(expr: &str) -> Result<Vec<(String, String)>, String> {
+    validate_rrule(expr)?;
+    let body = expr.trim();
+    let body = body.strip_prefix("RRULE:").unwrap_or(body);
+    Ok(body
+        .split(';')
+        .filter(|p| !p.is_empty())
+        .filter_map(|p| p.split_once('='))
+        .map(|(k, v)| (k.to_ascii_uppercase(), v.to_ascii_uppercase()))
+        .collect())
+}
+
+fn part<'a>(parts: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    parts.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+}
+
+/// The one time of day a timing fires at, if it has one: `at`, a cron expression with a single
+/// minute and hour, or a rule's single `BYHOUR`/`BYMINUTE` (00:00 when nothing sets it).
+pub fn time_of_day(timing: &JsonMap<String, Json>) -> Option<NaiveTime> {
+    let s = |k: &str| timing.get(k).and_then(Json::as_str);
+    let at = s("at").and_then(|t| NaiveTime::parse_from_str(t, "%H:%M").ok());
+    let one = |v: Option<&str>, default: u32| -> Option<u32> {
+        match v {
+            None => Some(default),
+            Some(v) => v.parse().ok(),
+        }
+    };
+    if let Some(expr) = s("cron") {
+        let expr = match expr.trim() {
+            "@yearly" | "@annually" | "@monthly" | "@weekly" | "@daily" | "@midnight" => "0 0 * * *",
+            e => e,
+        };
+        let f: Vec<&str> = expr.split_whitespace().collect();
+        let (m, h) = (f.first()?.parse().ok()?, f.get(1)?.parse().ok()?);
+        return NaiveTime::from_hms_opt(h, m, 0);
+    }
+    if let Some(rule) = s("rrule") {
+        let parts = rule_parts(rule).ok()?;
+        let (h, m) = (part(&parts, "BYHOUR"), part(&parts, "BYMINUTE"));
+        if matches!(part(&parts, "FREQ"), Some("HOURLY" | "MINUTELY" | "SECONDLY")) && h.is_none() {
+            return None;
+        }
+        if h.is_some() || m.is_some() {
+            return NaiveTime::from_hms_opt(one(h, 0)?, one(m, 0)?, 0);
+        }
+        return Some(at.unwrap_or(NaiveTime::MIN));
+    }
+    Some(at.unwrap_or(NaiveTime::MIN))
+}
+
+/// Problems that are warnings on 0.1.x and errors from 0.2.0: a timing whose occurrences would
+/// depend on when you look (no anchor), or one finer than a minute. `dre schedule ls` lists such
+/// a schedule under `problems`, without occurrences. Each is `(code, message)`.
+pub fn strictness(timing: &JsonMap<String, Json>) -> Vec<(&'static str, String)> {
+    const LATER: &str = "this becomes an error in DRE 0.2.0";
+    let mut out = Vec::new();
+    let anchored = timing.contains_key("starting");
+    if timing.contains_key("every") && !anchored {
+        out.push((
+            "schedule-needs-anchor",
+            format!("`every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; {LATER}"),
+        ));
+    }
+    let Some(parts) = timing
+        .get("rrule")
+        .and_then(Json::as_str)
+        .and_then(|r| rule_parts(r).ok())
+    else {
+        return out;
+    };
+    let freq = part(&parts, "FREQ").unwrap_or("");
+    if matches!(freq, "SECONDLY" | "MINUTELY") {
+        out.push((
+            "schedule-too-frequent",
+            format!("`FREQ={freq}` is finer than DRE schedules go: use `FREQ=HOURLY` with `BYMINUTE`, or a cron expression; {LATER}"),
+        ));
+    }
+    if part(&parts, "BYSECOND").is_some() {
+        out.push((
+            "schedule-seconds",
+            format!("`BYSECOND` isn't supported: schedules fire on whole minutes; {LATER}"),
+        ));
+    }
+    if !anchored {
+        let interval = part(&parts, "INTERVAL")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(1);
+        let day_from_start = matches!(freq, "WEEKLY" | "MONTHLY" | "YEARLY")
+            && ["BYDAY", "BYMONTHDAY", "BYYEARDAY", "BYWEEKNO"]
+                .iter()
+                .all(|k| part(&parts, k).is_none());
+        let why = if interval > 1 {
+            Some("`INTERVAL` counts from it")
+        } else if part(&parts, "COUNT").is_some() {
+            Some("`COUNT` counts from it")
+        } else if day_from_start {
+            Some("the rule takes its day from it")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            out.push((
+                "schedule-needs-anchor",
+                format!("this rule needs `starting` (its first date): {why}, so its occurrences would depend on when you look; {LATER}"),
+            ));
+        }
+    }
+    out
+}
+
+/// A warning when nothing gives a timing a time of day, so it fires at midnight.
+pub fn no_time(timing: &JsonMap<String, Json>) -> Option<String> {
+    if timing.contains_key("at") || timing.contains_key("cron") {
+        return None;
+    }
+    if let Some(parts) = timing
+        .get("rrule")
+        .and_then(Json::as_str)
+        .and_then(|r| rule_parts(r).ok())
+    {
+        let daily_or_coarser = matches!(
+            part(&parts, "FREQ"),
+            Some("DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY")
+        );
+        if !daily_or_coarser || part(&parts, "BYHOUR").is_some() {
+            return None;
+        }
+    }
+    Some(
+        "no time of day is given, so it fires at 00:00 in its timezone; set `at: \"HH:MM\"` to say when"
+            .into(),
+    )
 }

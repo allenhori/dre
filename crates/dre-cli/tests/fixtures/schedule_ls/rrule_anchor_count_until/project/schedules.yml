@@ -1,0 +1,8 @@
+# Every other Monday from 7 September: the anchor fixes which Mondays.
+- {name: fortnightly, report: filing, rrule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO", starting: "2026-09-07", at: "09:00"}
+# Three runs, then done.
+- {name: three_times, report: filing, rrule: "FREQ=DAILY;COUNT=3", starting: "2026-09-29", at: "10:00"}
+# Daily until (and including) 2 October.
+- {name: until_oct_2, report: filing, rrule: "FREQ=DAILY;UNTIL=20261002", starting: "2026-09-30", at: "11:00"}
+# The rule sets the hour, so `at` is ignored.
+- {name: rule_sets_time, report: filing, rrule: "FREQ=WEEKLY;BYDAY=WE;BYHOUR=16", at: "09:00"}

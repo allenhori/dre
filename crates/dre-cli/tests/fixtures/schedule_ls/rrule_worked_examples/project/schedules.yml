@@ -1,0 +1,7 @@
+# Every 2nd Tuesday of the month at 07:00.
+- {name: second_tuesday, report: filing, rrule: "FREQ=MONTHLY;BYDAY=2TU", at: "07:00"}
+# The first Friday of every month, and of March only.
+- {name: first_friday, report: filing, rrule: "FREQ=MONTHLY;BYDAY=1FR", at: "07:00"}
+- {name: first_friday_march, report: filing, rrule: "FREQ=YEARLY;BYMONTH=3;BYDAY=1FR", at: "07:00"}
+# The last weekday of the month.
+- {name: last_weekday, report: filing, rrule: "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1", at: "18:00"}

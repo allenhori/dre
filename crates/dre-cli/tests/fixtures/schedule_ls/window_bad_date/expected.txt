@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+error: --from: `01/02/2026` isn't a date (YYYY-MM-DD) or an RFC 3339 date-time

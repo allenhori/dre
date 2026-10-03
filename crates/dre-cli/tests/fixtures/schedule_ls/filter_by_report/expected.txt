@@ -1,0 +1,6 @@
+exit: 0
+--- stdout
+TIME                  SCHEDULE    REPORTS
+2026-09-28 09:30 UTC  regulatory  filing
+2026-09-29 09:30 UTC  regulatory  filing
+--- stderr

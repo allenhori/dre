@@ -100,6 +100,28 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
              select '{{ run.report }}' as report, '{{ run.date }}' as run_date, 'Hello from DRE' as message\n"
                 .to_string(),
         ),
+        (
+            "timings.yml",
+            format!(
+                "{}# Named timings: write one once, then use it from any schedule in schedules.yml with\n\
+                 # `timing: <name>`. `dre schedule ls` shows when your schedules fire.\n\
+                 #\n\
+                 # month_start:\n\
+                 #   cron: \"0 6 1 * *\"            # 06:00 on the 1st\n\
+                 #   timezone: Australia/Sydney\n\
+                 #   except: [\"2027-01-01\"]       # dates to skip\n\
+                 #\n\
+                 # second_tuesday:\n\
+                 #   rrule: \"FREQ=MONTHLY;BYDAY=2TU\"\n\
+                 #   at: \"07:00\"\n\
+                 #\n\
+                 # Then, in schedules.yml:\n\
+                 # - name: hello_monthly\n\
+                 #   report: hello\n\
+                 #   timing: month_start\n",
+                schema_line("timings")
+            ),
+        ),
         ("macros/.gitkeep", String::new()),
         ("templates/.gitkeep", String::new()),
         (".gitignore", "target/\nlogs/\ndre_deps/\n".to_string()),

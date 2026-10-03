@@ -2,7 +2,7 @@
 title: "Lookup config reference"
 description: "Every key of a lookup's config file."
 sidebar:
-  order: 26
+  order: 29
 ---
 
 # Lookup config reference

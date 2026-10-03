@@ -1,0 +1,2 @@
+- {name: sydney_0230, report: filing, rrule: "FREQ=DAILY;BYHOUR=2;BYMINUTE=30", timezone: Australia/Sydney}
+- {name: sydney_hourly, report: filing, rrule: "FREQ=HOURLY;BYMINUTE=30", timezone: Australia/Sydney}

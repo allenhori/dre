@@ -9,11 +9,12 @@ use dre_core::project::{self, LoadOptions};
 use dre_core::yaml::YamlFile;
 use serde_json::Value;
 
-const FILES: [&str; 7] = [
+const FILES: [&str; 8] = [
     "project",
     "report",
     "sets",
     "schedules",
+    "timings",
     "profiles",
     "dependencies",
     "lookup",
@@ -169,8 +170,13 @@ fn the_schemas_have_the_keys_the_parser_has() {
         props(&raw("schedules")["$defs"]["schedule"]),
         plus(
             minus(dre_core::schedule::SCHEDULE_KEYS, &[]),
-            &["name", "report", "set", "select", "vars", "timezone"],
+            dre_core::project::SCHEDULE_ENTRY_KEYS,
         ),
+    );
+    same(
+        "timing",
+        props(&raw("timings")["$defs"]["timing"]),
+        minus(dre_core::schedule::TIMING_KEYS, &[]),
     );
     same(
         "profiles.yml",
@@ -302,6 +308,9 @@ fn kind_of(root: &Path, path: &Path, value: &Value) -> Option<&'static str> {
     if rel_s == "dre_project.yml" {
         return Some("project");
     }
+    if name == "timings.yml" {
+        return Some("timings");
+    }
     if rel_s == "dependencies.yml" || rel_s == "packages.yml" {
         return Some("dependencies");
     }
@@ -389,7 +398,7 @@ fn every_project_the_parser_accepts_validates_against_the_schemas() {
 
 #[test]
 fn the_schemas_reject_what_is_wrong() {
-    let cases: [(&str, &str); 8] = [
+    let cases: [(&str, &str); 10] = [
         ("project", r#"{"name": "p", "colour": "blue"}"#),
         ("project", r#"{"run_query_max_rows": 0, "name": "p"}"#),
         ("project", r#"{"week_start": "friday", "name": "p"}"#),
@@ -403,6 +412,11 @@ fn the_schemas_reject_what_is_wrong() {
             "profiles",
             r#"{"sources": {"w": {"target": "dev", "targets": {"dev": {"path": "x"}}}}}"#,
         ),
+        (
+            "timings",
+            r#"{"month_start": {"cron": "0 6 1 * *", "colour": "blue"}}"#,
+        ),
+        ("timings", r#"{"month start": {"cron": "0 6 1 * *"}}"#),
         (
             "dependencies",
             r#"{"packages": [{"git": "https://example.com/p.git"}]}"#,
@@ -431,6 +445,7 @@ fn what_dre_new_writes_validates_and_points_at_the_schemas() {
         ("dre_project.yml", "project"),
         ("dependencies.yml", "dependencies"),
         ("reports/examples/hello/hello.yml", "report"),
+        ("timings.yml", "timings"),
     ] {
         let text = std::fs::read_to_string(project_dir.join(rel)).unwrap();
         let first = text.lines().next().unwrap();
@@ -439,7 +454,18 @@ fn what_dre_new_writes_validates_and_points_at_the_schemas() {
             format!("# yaml-language-server: $schema=https://getdre.com/schemas/v{minor}/{kind}.schema.json"),
             "{rel}"
         );
-        let doc: Value = project::yaml_to_json(&serde_yaml_ng::from_str(&text).unwrap());
+        let mut doc: Value = project::yaml_to_json(&serde_yaml_ng::from_str(&text).unwrap());
+        if doc.is_null() {
+            // All comments: check the commented-out example instead.
+            let example: String = text
+                .lines()
+                .skip_while(|l| !l.starts_with("# month_start:"))
+                .take_while(|l| !l.starts_with("# Then"))
+                .map(|l| format!("{}\n", l.strip_prefix("# ").unwrap_or("")))
+                .collect();
+            doc = project::yaml_to_json(&serde_yaml_ng::from_str(&example).unwrap());
+            assert!(doc.is_object(), "{rel}: {example}");
+        }
         let errors: Vec<String> = validator(kind).iter_errors(&doc).map(|e| e.to_string()).collect();
         assert!(errors.is_empty(), "{rel}: {errors:?}");
     }

@@ -2,7 +2,7 @@
 title: "Updating DRE"
 description: "dre system update, and how each install method updates."
 sidebar:
-  order: 13
+  order: 15
 ---
 
 # Updating DRE

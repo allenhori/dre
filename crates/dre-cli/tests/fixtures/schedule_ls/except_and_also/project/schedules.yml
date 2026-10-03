@@ -1,0 +1,23 @@
+# Weekdays at 07:00 Sydney, except Christmas and Boxing Day; also on Saturday the 2nd of January.
+- name: weekday_flash
+  report: filing
+  cron: "0 7 * * MON-FRI"
+  timezone: Australia/Sydney
+  except: ["2026-12-25", "2026-12-28"]
+  also: ["2027-01-02"]
+# Skipping a date it doesn't fire on changes nothing; an added date it already fires on is one firing.
+- name: monthly_close
+  report: filing
+  rrule: "FREQ=MONTHLY;BYMONTHDAY=1"
+  at: "06:00"
+  timezone: Australia/Sydney
+  except: ["2026-12-15"]
+  also: ["2027-01-01"]
+# An `every` schedule with an added date fires at its `at`.
+- name: every_week
+  report: filing
+  every: {weeks: 1}
+  starting: "2026-12-04"
+  at: "09:30"
+  timezone: Australia/Sydney
+  also: ["2026-12-30"]
