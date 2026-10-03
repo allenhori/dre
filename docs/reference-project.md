@@ -24,7 +24,8 @@ For editor autocomplete and validation, add this as the first line of the file (
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `name` (required) | string |  | The project's name. Required. |
-| `default_profile` | string |  | The source profile reports use when they don't name one. |
+| `default_profile` | string |  | The connection (in `profiles.yml`) reports use when nothing else names one. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
+| `target` | string |  | The run's target (environment) when neither `--target` nor `DRE_TARGET` sets one. Default: `dev`. |
 | `default_output` | map, as in [the report reference](reference-report.md) |  | The output every report starts from (the built-in default is `format: csv`). A report's own `output` is merged on top. |
 | `format_options` | map |  | Default options per output format, under every output of that format. A report's own keys win. |
 | `default_set` | string |  | The Set used when a report has Sets and none is chosen. |
@@ -39,6 +40,7 @@ For editor autocomplete and validation, add this as the first line of the file (
 | `reports` | map (see below) |  | Folder config: settings for the report folders, by folder name, nested to match the folders under `reports/`. |
 | `target_path` | string |  | Where DRE writes its generated files (compiled SQL, run outputs, the manifest). Default: `target/` in the project. `--target-path` and `DRE_TARGET_PATH` override it. |
 | `plugins` | list of plugin packages: a name, `name: "<version>"`, or a map (see below) |  | The plugin packages this project uses. DRE installs them on demand into `dre_deps/` and pins them in `dre.lock`. May be written in any project YAML file; `dependencies.yml` is the usual place. |
+| `sources` | map, as in [the sources reference](reference-sources.md) |  | dbt-style source declarations (see the sources schema). May be written in any project YAML file. |
 
 ## `dispatch[]`
 
@@ -57,7 +59,7 @@ Folder config: settings for the report folders, by folder name, nested to match 
 |---|---|---|---|
 | `+tags` | list of string |  | Tags added to every report in the folder. |
 | `+output` | map, as in [the report reference](reference-report.md) |  | Output settings every report in the folder starts from; a report's own keys win. |
-| `+profile` | string |  | The source profile for reports in the folder. |
+| `+profile` | string |  | The connection for reports in the folder. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
 | `+vars` | map |  | Variables, read in SQL and YAML with `var('name')`. Values can be strings, numbers, booleans, lists or maps. |
 | `+timezone` | string |  | The timezone `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: UTC. |
 

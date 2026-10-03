@@ -39,8 +39,10 @@ sets: [client_a, client_b]
 default_set: client_a
 ```
 
-Queries run one after another in the order listed, on one database session, so a temp table
-made by one is there for the next. Each `.sql` file makes one tab (a sheet in xlsx, or one file
+Queries run one after another in the order listed, each on its connection's session (one per
+connection the report uses), so a temp table made by one is there for the next query on the same
+connection. A query can run on its own connection with `profile:`, or by reading a
+[source](sources.md) that names one; see [Connections and targets](connections.md). Each `.sql` file makes one tab (a sheet in xlsx, or one file
 for csv, parquet and the other single-table formats), named by `tab_name` or else the file's
 name, in the same order. The YAML decides the tabs, not the data:
 
@@ -62,25 +64,30 @@ output:
   columns: [...]
 ```
 
+> **Changed in 0.2.** Connections are under `connections:` (was `sources:`), and the run has
+> one target. See [Upgrading to 0.2](migrating-to-0.2.md).
+
 Connections live in `profiles.yml`. DRE looks for it, in order, in `--profiles-dir`,
 `DRE_PROFILES_DIR`, the project directory (next to `dre_project.yml`), and `~/.dre`, the same order
 as dbt; `dre validate` and `dre run -v` say which file they used. Database connections go under
-`sources:` and delivery targets under `destinations:`. Each profile picks a default `target`
-(environment) from its named `targets`:
+`connections:` and delivery targets under `destinations:`, each with one entry per target
+(environment):
 
 ```yaml
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: dev.duckdb}
       prod: {type: postgres, host: db.internal, user: reports, password: "{{ env_var('PG_PASSWORD') }}"}
 destinations:
   reports_s3:
-    target: prod
     targets:
       prod: {type: s3, bucket: reports}
 ```
+
+The run uses one target for every profile: `--target`, else `DRE_TARGET`, else `target:` in
+`dre_project.yml`, else `dev`. A destination with no entry for it (`reports_s3` on a dev run) is
+skipped, and the output stays in the target folder. See [Connections and targets](connections.md).
 
 `dre init` writes this file for you, in `~/.dre` (never into a project). A `profiles.yml` kept
 in the project, e.g. for CI, a container or a Databricks job, should take every secret from
@@ -90,9 +97,8 @@ Targets can share settings with YAML anchors and merge keys, in `profiles.yml` a
 YAML file DRE reads; keys written out win over merged ones:
 
 ```yaml
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: &pg {type: postgres, host: db.internal, user: reports, database: shop}
       prod:

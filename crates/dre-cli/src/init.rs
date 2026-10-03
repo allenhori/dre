@@ -302,7 +302,7 @@ fn env_name(profile: &str, field: &str) -> String {
         .collect()
 }
 
-/// The source profile just set up, whose values a destination on the same platform can reuse.
+/// The connection profile just set up, whose values a destination on the same platform can reuse.
 struct SourceConn<'a> {
     kind: &'a str,
     profile: &'a str,

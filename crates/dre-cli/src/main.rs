@@ -161,7 +161,7 @@ struct InitArgs {
 struct NewArgs {
     /// Directory to create (must be missing or empty).
     dir: PathBuf,
-    /// The source profile the project uses by default.
+    /// The connection profile the project uses by default.
     #[arg(long, default_value = "warehouse")]
     profile: String,
     /// The source plugin the project declares.

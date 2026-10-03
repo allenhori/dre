@@ -182,7 +182,7 @@ another plugin kind, are answered with `error`.
 `describe` lists the fields a `profiles.yml` target of this plugin's type accepts. `dre init`
 uses it to prompt for connection details. By default it offers fields marked `secret` as
 `env_var()` references. A destination field with `"same_as_source": "<source type>"` defaults
-to the value entered for a source profile of that type (for example one Databricks host for
+to the value entered for a connection profile of that source type (for example one Databricks host for
 both). Format plugins return an empty list.
 
 `option_fields` lists the options the plugin takes (see [The plugin interface](#the-plugin-interface)).

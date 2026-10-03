@@ -9,7 +9,7 @@ sidebar:
 
 Plugins come in packages, declared once each under `plugins:` in `dependencies.yml` (see
 [the registry docs](registry.md)). A source or destination is configured through a profile in
-`profiles.yml` (under `sources:` or `destinations:`) whose target has its `type`. Fields holding
+`profiles.yml` (under `connections:` or `destinations:`) whose target has its `type`. Fields holding
 secrets can use `env_var()`.
 
 | Package | Provides |
@@ -92,9 +92,8 @@ than 825 days is rejected (Apple's limit), so issue server certificates for 825 
 | `retry_timeout` | Seconds to keep waiting while a stopped warehouse starts. Default 900. While it waits, DRE says so every 30 seconds. A host that doesn't resolve, or refuses the connection, fails at once. |
 
 ```yaml
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev:        # you, through the browser
         type: databricks
@@ -123,8 +122,8 @@ When no one is at the terminal (a scheduler, CI, a Databricks job), DRE never wa
 browser: it fails at once and lists what would work. In a Databricks job, give it
 `DATABRICKS_TOKEN` or a service principal.
 
-DRE signs in only when a report actually uses the profile: a source when its first query runs,
-a destination when it delivers.
+DRE signs in only when a report actually uses the profile: a connection when the first query
+on it runs, a destination when it delivers.
 
 Browser sign-in opens your browser the first time and saves the session in
 `~/.dre/oauth_sessions.json`, which only you can read. The file has one entry per workspace and
@@ -363,8 +362,8 @@ The built-in `local` destination copies the file to a path, relative to the proj
 plugin and no declaration.
 
 A destination entry's keys other than `profile` and `path` are the plugin's options, and the
-plugin checks them the same way formats do, against the destination profile's output for the
-active target (`--target`). A value holding Jinja is checked once it's rendered, at delivery.
+plugin checks them the same way formats do, against the destination profile's entry for the
+run's target. A value holding Jinja is checked once it's rendered, at delivery.
 
 ### Several destinations
 
@@ -388,8 +387,9 @@ output:
 
 - Entries are delivered in order. If one fails, the rest are still attempted; the Binding then
   fails and the run exits non-zero.
-- Each entry follows `--target` on its own: an entry whose profile has no output for the active
-  target is skipped and logged, while the others are delivered.
+- Each entry follows the run's target on its own: an entry whose profile has no entry for the
+  target is skipped and logged, while the others are delivered. So a dev run delivers only where
+  a destination defines `dev`.
 - `run_results.json` lists every entry under `deliveries`, with `profile`, `type`, `status`
   (`delivered`, `skipped` or `failed`), `location` and `error`.
 - A Set can replace the whole list. Overriding only `path:` works when exactly one destination
@@ -452,7 +452,6 @@ source.
 ```yaml
 destinations:
   lakehouse:
-    target: prod
     targets:
       prod: {type: databricks, host: dbc-123.cloud.databricks.com}
 ```

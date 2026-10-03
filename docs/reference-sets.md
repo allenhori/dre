@@ -25,5 +25,5 @@ The file maps names to entries; each entry has these keys.
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `profile` | string |  | The source profile a Binding with this Set runs against. |
+| `profile` | string |  | The connection a Binding with this Set runs on. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
 | `vars` | map |  | Variables, read in SQL and YAML with `var('name')`. Values can be strings, numbers, booleans, lists or maps. |

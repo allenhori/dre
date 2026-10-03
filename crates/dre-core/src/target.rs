@@ -3,7 +3,7 @@
 //! set, highest first, by `--target-path`, `DRE_TARGET_PATH` or `target_path:` in
 //! `dre_project.yml`. It's always a local (or mounted) path, never inside the project's sources.
 //!
-//! Unrelated to a profile's `target` (the environment a connection uses).
+//! Unrelated to the run's target (`--target`, the environment every profile uses).
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
