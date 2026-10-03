@@ -18,7 +18,7 @@ This puts `dre` in `~/.local/bin`, after checking the download against the relea
 newest, pre-releases included):
 
 ```bash
-curl -fsSL https://getdre.com/install.sh | DRE_VERSION=v0.1.2 DRE_INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://getdre.com/install.sh | DRE_VERSION=v0.2.0 DRE_INSTALL_DIR=/usr/local/bin sh
 ```
 
 The same line works in a Databricks job (a cluster init script or a `%sh` cell), a CI runner or a

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "x-dre-schema-version": "0.1",
+  "x-dre-schema-version": "0.2",
   "title": "DRE timings",
   "description": "The timings file, `timings.yml`: timing names mapped to timings that any schedule can use with `timing: <name>`.",
   "type": "object",

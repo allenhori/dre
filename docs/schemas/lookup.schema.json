@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "x-dre-schema-version": "0.1",
+  "x-dre-schema-version": "0.2",
   "title": "DRE lookup config",
   "description": "The optional config of a lookup, `lookups/<name>.yml` next to a csv, xlsx, xls, json or jsonl file. (A `.yml` lookup that holds the rows themselves can also set `rows`.)",
   "type": "object",
