@@ -1,0 +1,12 @@
+exit: 0
+warning[schedule-needs-anchor]: schedules.yml:4: schedule `every_no_start`: `every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0
+warning[schedule-needs-anchor]: schedules.yml:5: schedule `interval_no_start`: this rule needs `starting` (its first date): `INTERVAL` counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0
+warning[schedule-needs-anchor]: schedules.yml:6: schedule `count_no_start`: this rule needs `starting` (its first date): `COUNT` counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0
+warning[schedule-needs-anchor]: schedules.yml:7: schedule `day_from_start`: this rule needs `starting` (its first date): the rule takes its day from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0
+warning[schedule-too-frequent]: schedules.yml:8: schedule `minutely`: `FREQ=MINUTELY` is finer than DRE schedules go: use `FREQ=HOURLY` with `BYMINUTE`, or a cron expression; this becomes an error in DRE 0.2.0
+warning[schedule-seconds]: schedules.yml:9: schedule `seconds`: `BYSECOND` isn't supported: schedules fire on whole minutes; this becomes an error in DRE 0.2.0
+warning[schedule-no-time]: schedules.yml:10: schedule `no_time_every`: no time of day is given, so it fires at 00:00 in its timezone; set `at: "HH:MM"` to say when
+warning[schedule-no-time]: schedules.yml:11: schedule `no_time_rule`: no time of day is given, so it fires at 00:00 in its timezone; set `at: "HH:MM"` to say when
+Compiled 1 Binding into target/compiled/
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+Validation passed: 0 errors, 8 warnings

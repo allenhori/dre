@@ -222,3 +222,30 @@ fn schedule_ls_needs_no_profiles_and_writes_nothing() {
     assert!(!p.path("target").exists());
     assert!(!p.path("logs").exists());
 }
+
+#[test]
+fn occurrences_are_the_same_whatever_window_is_asked_for() {
+    let p = project();
+    p.write(
+        "schedules.yml",
+        "- {name: fortnightly, report: sales, rrule: \"FREQ=WEEKLY;INTERVAL=2;BYDAY=MO\", starting: \"2026-01-05\", at: \"09:00\"}\n\
+         - {name: second_tuesday, report: sales, rrule: \"FREQ=MONTHLY;BYDAY=2TU\", at: \"07:00\"}\n\
+         - {name: every_5_days, report: sales, every: {days: 5}, starting: \"2026-01-03\", at: \"06:00\"}\n\
+         - {name: three_times, report: sales, rrule: \"FREQ=DAILY;COUNT=3\", starting: \"2026-03-30\", at: \"10:00\"}\n",
+    );
+    let keys = |from: &str, to: &str| -> Vec<String> {
+        doc(&p, &["--from", from, "--to", to])["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o["key"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let whole = keys("2026-03-01", "2026-06-01");
+    let mut parts = keys("2026-03-01", "2026-03-31T09:00:00Z");
+    parts.extend(keys("2026-03-31T09:00:00Z", "2026-04-17"));
+    parts.extend(keys("2026-04-17", "2026-06-01"));
+    assert_eq!(parts, whole);
+    assert!(whole.iter().any(|k| k.starts_with("three_times/")), "{whole:?}");
+    assert_eq!(whole.iter().filter(|k| k.starts_with("three_times/")).count(), 3);
+}

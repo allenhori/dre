@@ -1,0 +1,16 @@
+exit: 0
+--- stdout
+TIME                  SCHEDULE        REPORTS
+2026-09-29 10:00 UTC  three_times     filing
+2026-09-30 10:00 UTC  three_times     filing
+2026-09-30 11:00 UTC  until_oct_2     filing
+2026-09-30 16:00 UTC  rule_sets_time  filing
+2026-10-01 10:00 UTC  three_times     filing
+2026-10-01 11:00 UTC  until_oct_2     filing
+2026-10-02 11:00 UTC  until_oct_2     filing
+2026-10-05 09:00 UTC  fortnightly     filing
+2026-10-07 16:00 UTC  rule_sets_time  filing
+2026-10-14 16:00 UTC  rule_sets_time  filing
+2026-10-19 09:00 UTC  fortnightly     filing
+2026-10-21 16:00 UTC  rule_sets_time  filing
+--- stderr

@@ -1,0 +1,225 @@
+exit: 0
+--- stdout
+{
+  "dre_schedule_version": 1,
+  "dre_version": "$VERSION",
+  "project": "acme",
+  "window": {
+    "from": "2026-09-28T00:00:00Z",
+    "to": "2026-09-30T00:00:00Z"
+  },
+  "split": false,
+  "project_hash": "fa4f0d570bd9a6e355bd75b6212d2733c2ba558c9f40ad2c11ccbc3886df052d",
+  "schedules": {
+    "good": {
+      "definition_hash": "57a15472ca89d0a47f1103f34ae903381bd97a9410ff1fbe907bf425b0ab3594",
+      "enabled": true,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    },
+    "every_no_start": {
+      "definition_hash": "960633b9b3a50f98395e134318d367bde699d982766c5be39e2100c51fc7b395",
+      "enabled": true,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    },
+    "interval_no_start": {
+      "definition_hash": "35a3052a45b511dd23e04b86f38c42bf04dbd58c190bc52375e87e73de4f6f76",
+      "enabled": true,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    },
+    "count_no_start": {
+      "definition_hash": "7d975a827c16c8053cce203e6e4773aa5488b3cfb6743fe0482ed44684eb3647",
+      "enabled": true,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    },
+    "day_from_start": {
+      "definition_hash": "70848171412b108ea14cab320e1625319d83f2e45f996fe5a3a43edbf0506e42",
+      "enabled": true,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    },
+    "minutely": {
+      "definition_hash": "470df605524fb6f8c115c03b4ca31242094e32e8e0e39b978111fb0e13afd1e9",
+      "enabled": true,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    },
+    "seconds": {
+      "definition_hash": "5519055b2a998445d10460b186868b8159f6a6b96ff65bf9ed716c1816ecb743",
+      "enabled": true,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    },
+    "not_expandable": {
+      "definition_hash": "ae2f3829838e47ceec05733584da48085c04127f3089a548a93e2c5772074838",
+      "enabled": true,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    }
+  },
+  "occurrences": [
+    {
+      "key": "good/2026-09-28T06:00:00Z",
+      "schedule": "good",
+      "timing": null,
+      "fires_at": "2026-09-28T06:00:00Z",
+      "fires_at_local": "2026-09-28T06:00:00+00:00",
+      "timezone": "UTC",
+      "run_date": "2026-09-28",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "good"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-09-28T06:00:00Z",
+          "DRE_RUN_DATE": "2026-09-28"
+        }
+      }
+    },
+    {
+      "key": "good/2026-09-29T06:00:00Z",
+      "schedule": "good",
+      "timing": null,
+      "fires_at": "2026-09-29T06:00:00Z",
+      "fires_at_local": "2026-09-29T06:00:00+00:00",
+      "timezone": "UTC",
+      "run_date": "2026-09-29",
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ],
+      "vars": {},
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "good"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2026-09-29T06:00:00Z",
+          "DRE_RUN_DATE": "2026-09-29"
+        }
+      }
+    }
+  ],
+  "problems": [
+    {
+      "schedule": "every_no_start",
+      "code": "schedule-needs-anchor",
+      "message": "`every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0"
+    },
+    {
+      "schedule": "interval_no_start",
+      "code": "schedule-needs-anchor",
+      "message": "this rule needs `starting` (its first date): `INTERVAL` counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0"
+    },
+    {
+      "schedule": "count_no_start",
+      "code": "schedule-needs-anchor",
+      "message": "this rule needs `starting` (its first date): `COUNT` counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0"
+    },
+    {
+      "schedule": "day_from_start",
+      "code": "schedule-needs-anchor",
+      "message": "this rule needs `starting` (its first date): the rule takes its day from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0"
+    },
+    {
+      "schedule": "minutely",
+      "code": "schedule-too-frequent",
+      "message": "`FREQ=MINUTELY` is finer than DRE schedules go: use `FREQ=HOURLY` with `BYMINUTE`, or a cron expression; this becomes an error in DRE 0.2.0"
+    },
+    {
+      "schedule": "seconds",
+      "code": "schedule-seconds",
+      "message": "`BYSECOND` isn't supported: schedules fire on whole minutes; this becomes an error in DRE 0.2.0"
+    },
+    {
+      "schedule": "not_expandable",
+      "code": "schedule-not-expandable",
+      "message": "can't expand rrule `FREQ=WEEKLY;BYMONTHDAY=1`: RRule validation error: `BYMONTHDAY` can not be used with the current frequency (WEEKLY)."
+    }
+  ]
+}
+--- stderr

@@ -1,0 +1,8 @@
+- {name: good, report: filing, cron: "0 6 * * *"}
+- {name: every_no_start, report: filing, every: {days: 5}, at: "06:00"}
+- {name: interval_no_start, report: filing, rrule: "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO", at: "06:00"}
+- {name: count_no_start, report: filing, rrule: "FREQ=DAILY;COUNT=3", at: "06:00"}
+- {name: day_from_start, report: filing, rrule: "FREQ=MONTHLY", at: "06:00"}
+- {name: minutely, report: filing, rrule: "FREQ=MINUTELY;INTERVAL=15", starting: "2026-01-01"}
+- {name: seconds, report: filing, rrule: "FREQ=DAILY;BYSECOND=30", at: "06:00"}
+- {name: not_expandable, report: filing, rrule: "FREQ=WEEKLY;BYMONTHDAY=1", at: "06:00"}

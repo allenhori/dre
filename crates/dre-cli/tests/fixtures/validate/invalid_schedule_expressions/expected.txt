@@ -16,5 +16,10 @@ error[duplicate-schedule-name]: schedules.yml:9: schedule `a_hourly` is already 
 error[invalid-schedule]: schedules.yml:10: schedule name `7days` must be letters, digits and `_`, not starting with a digit
 error[invalid-schedule]: schedules.yml:11: schedule `vars_list`: `vars` must be a map
 error[invalid-schedule]: schedules.yml:12: schedule `no_target` needs `report:` (optionally with `set:`) or `select:`
+error[invalid-schedule]: schedules.yml:13: `starting` doesn't apply to a `cron` schedule; the expression sets its days and time
+error[invalid-schedule]: schedules.yml:13: `at` doesn't apply to a `cron` schedule; the expression sets its days and time
+error[invalid-schedule]: schedules.yml:14: `except` must be a list of dates in YYYY-MM-DD form
+error[invalid-schedule]: schedules.yml:14: `also` must be a list of dates in YYYY-MM-DD form
+error[invalid-schedule]: schedules.yml:15: `also` needs a schedule that fires at one time of day (e.g. `0 6 * * *` or `at: "06:00"`), so the added dates fire then
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-Validation failed: 17 errors, 0 warnings
+Validation failed: 22 errors, 0 warnings

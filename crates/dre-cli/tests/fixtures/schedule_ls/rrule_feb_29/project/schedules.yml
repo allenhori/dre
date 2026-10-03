@@ -1,0 +1,2 @@
+- {name: leap_day, report: filing, rrule: "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29", at: "06:00"}
+- {name: month_end, report: filing, rrule: "FREQ=MONTHLY;BYMONTHDAY=-1", at: "06:00"}

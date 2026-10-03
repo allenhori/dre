@@ -1,0 +1,10 @@
+exit: 0
+--- stdout
+TIME                   SCHEDULE       REPORTS
+2026-10-04 00:30 AEST  sydney_hourly  filing
+2026-10-04 01:30 AEST  sydney_hourly  filing
+2026-10-04 03:00 AEDT  sydney_0230    filing
+2026-10-04 03:00 AEDT  sydney_hourly  filing
+2026-10-04 03:30 AEDT  sydney_hourly  filing
+2026-10-04 04:30 AEDT  sydney_hourly  filing
+--- stderr

@@ -357,7 +357,7 @@ pub fn strictness(timing: &JsonMap<String, Json>) -> Vec<(&'static str, String)>
     if timing.contains_key("every") && !anchored {
         out.push((
             "schedule-needs-anchor",
-            format!("`every` needs `starting` (its first date), so its occurrences don't depend on when you look; {LATER}"),
+            format!("`every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; {LATER}"),
         ));
     }
     let Some(parts) = timing

@@ -1,0 +1,7 @@
+exit: 0
+--- stdout
+TIME                  SCHEDULE  REPORTS
+2026-09-28 06:00 UTC  good      filing
+2026-09-29 06:00 UTC  good      filing
+--- stderr
+warning[schedule-needs-anchor]: schedule `every_no_start`: `every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0
