@@ -10,8 +10,10 @@
      `client_id` and `client_secret` from `env_var()` (SEC-3);
   4. a personal access token only if none of these is possible: `token` from `env_var()`.
 - `host` and `http_path` are on the SQL warehouse's Connection details tab. They aren't secret.
-- `catalog` and `schema` save writing them in every query; `target.catalog` and `target.schema`
-  make SQL follow the environment (SET-2).
+- `catalog` and `schema` save writing them in every query; `connection.catalog` and
+  `connection.schema` make SQL follow the environment (SET-2). A source's `database` and
+  `schema` can't read `connection.*`; use `target.name` there
+  (`database: "{{ 'prod_cat' if target.name == 'prod' else 'dev_cat' }}"`).
 - A stopped warehouse starts on the first query; DRE waits up to `retry_timeout` seconds and
   says so every 30 seconds.
 - With no one at the terminal, browser sign-in fails at once and lists what would work.
