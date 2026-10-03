@@ -15,7 +15,7 @@
 //! stands in for a destination on the same platform (`dre init` tests).
 //!
 //! SQL it understands: `rows N` (N rows of `n`, batches of 3), `none`, `fail`, `crash`,
-//! `log <text>`, `panic`. `check` accepts anything except `bad`.
+//! `log <text>`, `log_prefix <text>`, `panic`. `check` accepts anything except `bad`.
 
 use std::io::Write;
 use std::sync::Arc;
@@ -47,8 +47,9 @@ impl Source for Fixture {
         connection: &Map<String, Value>,
         _read_only: bool,
     ) -> dre_protocol::plugin::Result<()> {
-        if connection.get("fail").is_some() {
-            return Err("can't connect: fixture told to fail".into());
+        if let Some(fail) = connection.get("fail") {
+            let detail = fail.as_str().unwrap_or("fixture told to fail");
+            return Err(format!("can't connect: {detail}").into());
         }
         self.opened = true;
         eprintln!("fixture: opened read_only={_read_only}");
@@ -87,6 +88,10 @@ impl Source for Fixture {
             "none" => out.no_result(Some(0)),
             "log" => {
                 eprintln!("{arg}");
+                out.no_result(None)
+            }
+            "log_prefix" => {
+                eprintln!("{}", arg.chars().take(20).collect::<String>());
                 out.no_result(None)
             }
             "crash" => std::process::exit(3),

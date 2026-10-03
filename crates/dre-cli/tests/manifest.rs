@@ -349,6 +349,45 @@ fn validate_json_project_is_the_manifest() {
     assert_eq!(j["project"], manifest(&p));
 }
 
+#[test]
+fn every_manifest_json_surface_redacts_escaped_secrets() {
+    let p = project();
+    p.write(
+        "dre_project.yml",
+        r#"name: acme_reports
+default_profile: warehouse
+timezone: UTC
+vars:
+  token: "q\"\\\n\té"
+"#,
+    );
+    let secret = "q\"\\\n\té";
+    let env = [("DRE_SECRET_MANIFEST", secret)];
+
+    p.dre_env("compile", &[], &env).ok();
+    let manifest = p.read("target/manifest.json");
+    let validate = p.dre_env("validate", &["--json"], &env);
+    validate.ok();
+    let list = p.dre_env("ls", &["--output", "json"], &env);
+    list.ok();
+
+    let quoted = serde_json::to_string(secret).unwrap();
+    let escaped = &quoted[1..quoted.len() - 1];
+    for (name, text) in [
+        ("manifest", manifest.as_str()),
+        ("validate", validate.stdout.as_str()),
+        ("ls", list.stdout.as_str()),
+    ] {
+        serde_json::from_str::<Value>(text).unwrap_or_else(|e| panic!("{name}: {e}\n{text}"));
+        assert!(!text.contains(secret), "{name} leaks the raw secret:\n{text}");
+        assert!(
+            !text.contains(escaped),
+            "{name} leaks the escaped secret:\n{text}"
+        );
+        assert!(text.contains("*****"), "{name} contains no mask:\n{text}");
+    }
+}
+
 // -- checksums --------------------------------------------------------------------------------
 
 fn checksums(p: &TestProject) -> (String, Value) {
