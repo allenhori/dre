@@ -91,8 +91,9 @@ struct RunArgs {
     #[arg(long)]
     set: Option<String>,
     /// Run the Bindings a schedules.yml entry targets, with its vars. Pass the scheduled
-    /// (logical) date through DRE_RUN_DATE so reruns render the same.
-    #[arg(long, value_name = "NAME", conflicts_with_all = ["selector", "select", "set"])]
+    /// instant through DRE_RUN_AT (or the date through DRE_RUN_DATE) so reruns render the same.
+    /// With a selector and/or --set, run just those of its Bindings.
+    #[arg(long, value_name = "NAME")]
     schedule: Option<String>,
     /// Use this source profile instead of the resolved one (e.g. for an ad hoc Set).
     #[arg(long)]

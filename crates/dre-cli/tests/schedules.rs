@@ -187,11 +187,50 @@ fn schedule_usage_errors() {
         .failed()
         .says("no schedule `nope`; valid names: flash_daily, close_monthly, regulatory_monthly");
     assert_eq!(p.dre("run", &["--schedule", "nope"]).code, 2);
-    let r = p.dre("run", &["sales_summary", "--schedule", "flash_daily"]);
-    assert_eq!(r.code, 2, "{}", r.stderr);
-    assert!(r.stderr.contains("cannot be used with"), "{}", r.stderr);
-    let r = p.dre("run", &["--set", "client_a", "--schedule", "flash_daily"]);
-    assert_eq!(r.code, 2, "{}", r.stderr);
+    // Narrowing a schedule to something it doesn't run names what it does run.
+    p.dre("run", &["other", "--schedule", "flash_daily"])
+        .failed()
+        .says("schedule `flash_daily` doesn't run `other`; it runs: sales_summary/client_a");
+    p.dre("run", &["--set", "client_b", "--schedule", "flash_daily"])
+        .failed()
+        .says("schedule `flash_daily` doesn't run Set `client_b`; it runs: sales_summary/client_a");
+    p.dre("run", &["-s", "sales_summary", "--set", "client_b", "--schedule", "close_monthly"])
+        .failed()
+        .says("schedule `close_monthly` doesn't run `sales_summary` with Set `client_b`; it runs: sales_summary/client_a");
+}
+
+#[test]
+fn a_schedule_narrowed_to_one_binding_keeps_its_vars_and_timezone() {
+    let p = project(&[]);
+    let mut schedules = SCHEDULES.to_string();
+    schedules.push_str(
+        "- name: both_clients\n  report: sales_summary\n  cron: \"0 8 * * *\"\n  timezone: Pacific/Kiritimati\n  vars: {period: both}\n",
+    );
+    p.write("schedules.yml", &schedules);
+    p.write(
+        "reports/finance/sales_summary/summary.sql",
+        "select '{{ var('client') }}' as client, '{{ var('period') }}' as period, '{{ run.timezone }}' as tz\n",
+    );
+    p.dre(
+        "run",
+        &[
+            "--schedule",
+            "both_clients",
+            "-s",
+            "sales_summary",
+            "--set",
+            "client_b",
+        ],
+    )
+    .ok();
+    assert_eq!(ran(&p), ["sales_summary/client_b"]);
+    assert_eq!(
+        p.read("out/both-20260125.csv"),
+        "client,period,tz\r\nclient_b,both,Pacific/Kiritimati\r\n"
+    );
+    let r = p.json("target/run/sales_summary/client_b/run_results.json");
+    assert_eq!(r["schedule"], "both_clients");
+    assert_eq!(r["params"]["set"], "client_b");
 }
 
 #[test]

@@ -212,22 +212,13 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
             summary.error = Some(unknown_schedule(project, name));
             return summary;
         }
-        let planned: Vec<(&Report, Binding)> = project
-            .reports
-            .iter()
-            .flat_map(|r| {
-                r.bindings
-                    .iter()
-                    .filter(|b| b.schedules.contains(name))
-                    .map(move |b| {
-                        let mut b = b.clone();
-                        if let Some(p) = &opts.profile {
-                            b.profile = Some(p.clone());
-                        }
-                        (r, b)
-                    })
-            })
-            .collect();
+        let planned = match schedule_bindings(project, name, opts) {
+            Ok(p) => p,
+            Err(e) => {
+                summary.error = Some(e);
+                return summary;
+            }
+        };
         ui.plan(planned.len());
         for (report, b) in &planned {
             ui.binding_start(&report.name, b.set.as_deref());
@@ -286,6 +277,74 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
         summary.outcomes.push(outcome);
     }
     summary
+}
+
+/// The Bindings `--schedule <name>` runs: all of them, or those a selector and/or `--set` pick.
+/// Picking something the schedule doesn't run is an error naming what it does run.
+fn schedule_bindings<'a>(
+    project: &'a Project,
+    name: &str,
+    opts: &RunOptions,
+) -> Result<Vec<(&'a Report, Binding)>, String> {
+    let reports: Option<Vec<&str>> = match &opts.selector {
+        None => None,
+        Some(s) => Some(
+            selector::resolve(project, s)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|r| r.name.as_str())
+                .collect(),
+        ),
+    };
+    let set = opts.set.as_deref().filter(|s| *s != "all");
+    let all: Vec<(&Report, &Binding)> = project
+        .reports
+        .iter()
+        .flat_map(|r| {
+            r.bindings
+                .iter()
+                .filter(|b| b.schedules.iter().any(|s| s == name))
+                .map(move |b| (r, b))
+        })
+        .collect();
+    let picked: Vec<(&Report, Binding)> = all
+        .iter()
+        .filter(|(r, _)| reports.as_ref().is_none_or(|rs| rs.contains(&r.name.as_str())))
+        .filter(|(_, b)| set.is_none() || b.set.as_deref() == set)
+        .map(|(r, b)| {
+            let mut b = (*b).clone();
+            if let Some(p) = &opts.profile {
+                b.profile = Some(p.clone());
+            }
+            (*r, b)
+        })
+        .collect();
+    if picked.is_empty() && (reports.is_some() || set.is_some()) {
+        let mut asked = Vec::new();
+        if let Some(s) = &opts.selector {
+            asked.push(format!("`{s}`"));
+        }
+        if let Some(s) = set {
+            asked.push(format!("Set `{s}`"));
+        }
+        let runs: Vec<String> = all
+            .iter()
+            .map(|(r, b)| match &b.set {
+                Some(s) => format!("{}/{s}", r.name),
+                None => r.name.clone(),
+            })
+            .collect();
+        return Err(format!(
+            "schedule `{name}` doesn't run {}; it runs: {}",
+            asked.join(" with "),
+            if runs.is_empty() {
+                "nothing".to_string()
+            } else {
+                runs.join(", ")
+            }
+        ));
+    }
+    Ok(picked)
 }
 
 /// The usage error for `--schedule` with a name that isn't declared.

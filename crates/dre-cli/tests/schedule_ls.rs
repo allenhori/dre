@@ -288,3 +288,50 @@ fn editing_a_shared_timing_changes_every_schedule_that_uses_it() {
     assert_ne!(after.1, before.1);
     assert_eq!(after.2, before.2);
 }
+
+#[test]
+fn a_split_occurrence_renders_what_its_binding_renders_in_the_full_run() {
+    let p = project();
+    let window = [
+        "--from",
+        "2026-09-30T00:00:00Z",
+        "--to",
+        "2026-10-01T00:00:00Z",
+        "--schedule",
+        "close_monthly",
+    ];
+    let full = doc(&p, &window)["occurrences"][0].clone();
+    execute(&p, &full);
+    let sql = |set: &str| p.read(&format!("target/compiled/sales/{set}/summary.sql"));
+    let expected = (sql("client_a"), sql("client_b"));
+    std::fs::remove_dir_all(p.path("target/compiled")).unwrap();
+
+    let mut split_args = window.to_vec();
+    split_args.push("--split");
+    let split = doc(&p, &split_args);
+    let occurrences = split["occurrences"].as_array().unwrap();
+    assert_eq!(split["split"], true);
+    assert_eq!(occurrences.len(), 2);
+    assert_eq!(
+        occurrences[0]["key"],
+        "close_monthly/2026-09-30T20:00:00Z/sales/client_a"
+    );
+    assert_eq!(
+        occurrences[1]["invocation"]["argv"],
+        serde_json::json!([
+            "dre",
+            "run",
+            "--schedule",
+            "close_monthly",
+            "-s",
+            "sales",
+            "--set",
+            "client_b"
+        ])
+    );
+    execute(&p, &occurrences[0]);
+    assert_eq!(sql("client_a"), expected.0);
+    assert!(!p.path("target/compiled/sales/client_b").exists());
+    execute(&p, &occurrences[1]);
+    assert_eq!(sql("client_b"), expected.1);
+}
