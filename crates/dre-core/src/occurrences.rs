@@ -73,10 +73,7 @@ pub struct Request {
     pub split: bool,
 }
 
-/// An instant as DRE writes it: RFC 3339 in UTC, to the second.
-pub fn rfc3339(t: DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
+pub use crate::run::rfc3339;
 
 /// The timezone a schedule fires in: its own (or its timing's), then the project's, then UTC.
 /// A report's timezone and the run-time overrides never move a firing.
@@ -209,6 +206,8 @@ fn cron_times(expr: &str, lo: NaiveDateTime, hi: NaiveDateTime) -> Result<Vec<Na
             break;
         }
         out.push(t);
+        // A minutely cron over the longest window is ~530,000 firings; past that it's a
+        // runaway, not a schedule.
         if out.len() > MAX_FIRINGS * 8 {
             return Err(format!("cron `{expr}` fires too often to list"));
         }

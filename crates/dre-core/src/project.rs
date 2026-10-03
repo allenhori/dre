@@ -2770,7 +2770,7 @@ impl Loader {
                         block.insert(Value::String(k.to_string()), v.clone());
                     }
                 }
-                let shape = schedule::validate_block(&block, "a timing");
+                let shape = schedule::validate_block(&block, "a timing", "`cron`, `every` or `rrule`");
                 for e in &shape {
                     self.diags.error(
                         "invalid-timing",
@@ -2973,15 +2973,7 @@ impl Loader {
                     }
                     errs
                 } else {
-                    schedule::validate_block(&sched, "a schedule")
-                        .into_iter()
-                        .map(|e| {
-                            e.replace(
-                                "needs exactly one of `cron`",
-                                "needs exactly one of `timing`, `cron`",
-                            )
-                        })
-                        .collect()
+                    schedule::validate_block(&sched, "a schedule", "`timing`, `cron`, `every` or `rrule`")
                 };
                 if shape.is_empty() && timing.is_none() {
                     let block = yaml_map_to_json(&sched);
@@ -4016,16 +4008,17 @@ fn is_one_of(k: &Value, keys: &[&str]) -> bool {
     k.as_str().is_some_and(|k| keys.contains(&k))
 }
 
-/// Every entry is a Set: a map of `profile`/`vars`, which may be empty (`plain: {}`, the
-/// report's defaults) or left blank.
 /// A map of names to timings: every value holds `cron`, `every` or `rrule`.
 fn is_timing_registry(m: &Mapping) -> bool {
-    m.values().all(|v| {
-        v.as_mapping()
-            .is_some_and(|t| ["cron", "every", "rrule"].iter().any(|k| t.contains_key(*k)))
-    })
+    !m.is_empty()
+        && m.values().all(|v| {
+            v.as_mapping()
+                .is_some_and(|t| ["cron", "every", "rrule"].iter().any(|k| t.contains_key(*k)))
+        })
 }
 
+/// Every entry is a Set: a map of `profile`/`vars`, which may be empty (`plain: {}`, the
+/// report's defaults) or left blank.
 fn is_set_registry(m: &Mapping) -> bool {
     m.values().any(Value::is_mapping)
         && m.values().all(|v| {

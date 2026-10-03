@@ -15,20 +15,21 @@ pub const TIMING_KEYS: &[&str] = &[
 /// each optionally with `except` and `also`).
 /// Returns human-readable problems; empty means valid. Keys outside `SCHEDULE_KEYS` are the
 /// caller's business (schedules.yml entries carry `select`/`report`/`set` next to them).
-/// `what` names the block in messages: "a schedule needs exactly one of ...".
-pub fn validate_block(m: &Mapping, what: &str) -> Vec<String> {
+/// `what` names the block in messages and `forms` its alternatives: "a schedule needs exactly
+/// one of `cron`, `every` or `rrule`".
+pub fn validate_block(m: &Mapping, what: &str, forms: &str) -> Vec<String> {
     let mut errs = Vec::new();
     let has = |k: &str| m.contains_key(k);
-    let forms: Vec<&str> = ["cron", "every", "rrule"]
+    let found: Vec<&str> = ["cron", "every", "rrule"]
         .into_iter()
         .filter(|k| has(k))
         .collect();
-    match forms.len() {
-        0 => errs.push(format!("{what} needs exactly one of `cron`, `every` or `rrule`")),
+    match found.len() {
+        0 => errs.push(format!("{what} needs exactly one of {forms}")),
         1 => {}
         _ => errs.push(format!(
-            "{what} needs exactly one of `cron`, `every` or `rrule`, found {}",
-            forms
+            "{what} needs exactly one of {forms}, found {}",
+            found
                 .iter()
                 .map(|f| format!("`{f}`"))
                 .collect::<Vec<_>>()

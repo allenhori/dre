@@ -104,7 +104,7 @@ schedule-name rule. An unknown timing is an error and an unused one a warning. T
   changes nothing.
 - `also` adds firings on those dates, at the schedule's time of day. It needs a timing that fires at
   one time of day: a cron with one minute and hour, `at`, or a rule with one `BYHOUR`. A date it
-  already fires on is still one firing.
+  already fires on is still one firing, and a date in both lists fires.
 - `enabled: false` pauses a schedule without deleting it. It keeps its name and settings,
   `dre schedule ls` lists it as paused with no occurrences, and `dre run --schedule` still runs it
   by hand.
