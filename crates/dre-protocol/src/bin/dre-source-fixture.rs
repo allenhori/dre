@@ -32,6 +32,10 @@ struct Fixture {
 }
 
 impl Source for Fixture {
+    fn identifier_quote(&self) -> Option<&'static str> {
+        Some("\"")
+    }
+
     fn connection_fields(&self) -> Vec<ConnectionField> {
         vec![
             // `same_as_source` matters for the `inbox` destination, which has these fields too.

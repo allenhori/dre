@@ -46,6 +46,15 @@ pub struct PluginInfo {
     pub provides: Vec<PluginId>,
 }
 
+/// A plugin's `describe` reply.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Description {
+    pub connection_fields: Vec<ConnectionField>,
+    pub option_fields: Vec<OptionField>,
+    /// A source's identifier quote character.
+    pub identifier_quote: Option<String>,
+}
+
 #[derive(Debug)]
 pub enum HostError {
     Spawn {
@@ -548,12 +557,23 @@ impl PluginProcess {
 
     /// The connection fields and the options the plugin declares.
     pub fn describe_all(&mut self) -> Result<(Vec<ConnectionField>, Vec<OptionField>)> {
+        let d = self.description()?;
+        Ok((d.connection_fields, d.option_fields))
+    }
+
+    /// The whole `describe` reply.
+    pub fn description(&mut self) -> Result<Description> {
         self.send(&Request::Describe {})?;
         match self.recv_json("a describe reply")? {
             Response::Describe {
                 connection_fields,
                 option_fields,
-            } => Ok((connection_fields, option_fields)),
+                identifier_quote,
+            } => Ok(Description {
+                connection_fields,
+                option_fields,
+                identifier_quote,
+            }),
             other => Err(self.unexpected("a describe reply", &Incoming::Json(other))),
         }
     }

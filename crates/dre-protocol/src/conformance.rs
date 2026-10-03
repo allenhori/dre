@@ -151,6 +151,22 @@ fn run_plugin(path: &Path, id: &PluginId, ask: bool, env: &[(&str, &str)]) -> Ve
         })(),
     );
 
+    if id.kind == crate::Kind::Source {
+        check(
+            "describe gives the identifier quote character",
+            (|| {
+                let mut p = start(path).map_err(|e| e.to_string())?;
+                let d = p.description().map_err(|e| e.to_string())?;
+                match d.identifier_quote.as_deref() {
+                    Some(q) if q.chars().count() == 1 => {}
+                    Some(q) => return Err(format!("`identifier_quote` must be one character, got {q:?}")),
+                    None => return Err("a source's describe reply has no `identifier_quote`".into()),
+                }
+                p.close().map_err(|e| e.to_string())
+            })(),
+        );
+    }
+
     check(
         "validate is advertised, answered, and refuses an option the plugin doesn't declare",
         (|| {

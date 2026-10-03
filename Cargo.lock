@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-duckdb"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "arrow",
  "dre-protocol",
@@ -1877,7 +1877,7 @@ dependencies = [
 
 [[package]]
 name = "dre-plugin-postgres"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "arrow",
  "chrono",
@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "dre-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "arrow",
  "serde",
