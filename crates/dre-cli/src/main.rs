@@ -164,9 +164,10 @@ struct NewArgs {
     /// The connection profile the project uses by default.
     #[arg(long, default_value = "warehouse")]
     profile: String,
-    /// The source plugin the project declares.
-    #[arg(long, default_value = "duckdb")]
-    source: String,
+    /// The plugin of that connection (its `type`), which the project declares. `--source` is the
+    /// 0.1 name.
+    #[arg(long = "type", alias = "source", default_value = "duckdb")]
+    plugin: String,
 }
 
 #[derive(Args)]
@@ -313,7 +314,7 @@ fn main() -> ExitCode {
         Command::System(system::SystemCommand::Update(a)) => system::update(a, &printer),
         Command::Deps(a) => deps(a, &printer),
         Command::Init(a) => init::init(a.profiles_dir, &printer),
-        Command::New(a) => init::new(a.dir, a.profile, a.source, &printer),
+        Command::New(a) => init::new(a.dir, a.profile, a.plugin, &printer),
         Command::Plugin(PluginCommand::List) => plugin_list(),
         Command::Plugin(PluginCommand::Install(a)) => {
             plugins::install(a.plugin, a.project_dir, false, &printer)

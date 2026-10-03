@@ -147,16 +147,17 @@ in the full scheduled run.
 
 ### Problems
 
-These are errors in `dre validate` (warnings on 0.1.x) and problems here:
+A rule that can't be expanded (`schedule-not-expandable`, e.g. a rule part that doesn't fit its
+`FREQ`) is listed under problems, without occurrences; `dre run --schedule` still runs it.
+
+These are errors, so the project doesn't load and `dre schedule ls` stops (on 0.1.x they were
+warnings, listed here as problems):
 
 | Code | |
 |---|---|
 | `schedule-needs-anchor` | `every`, or a rule with `INTERVAL` above 1, a `COUNT`, or a day it takes from its start, has no `starting`. Its occurrences would depend on when you look. |
 | `schedule-too-frequent` | `FREQ=SECONDLY` or `FREQ=MINUTELY`. A minute is the finest grain. |
 | `schedule-seconds` | `BYSECOND`. Schedules fire on whole minutes. |
-| `schedule-not-expandable` | The rule can't be expanded (e.g. a rule part that doesn't fit its `FREQ`). |
-
-`dre run --schedule` still runs such a schedule.
 
 ### Compatibility
 

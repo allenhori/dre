@@ -197,8 +197,8 @@ sign-in.
 ### Step 8: the starter project
 
 Ask for the folder name (recommend `my_reports`), confirm, and run
-`dre new <folder> --source <package> --profile <profile>`, e.g.
-`dre new my_reports --source postgres --profile warehouse`. It writes `dre_project.yml`,
+`dre new <folder> --type <package> --profile <profile>`, e.g.
+`dre new my_reports --type postgres --profile warehouse`. It writes `dre_project.yml`,
 `dependencies.yml` (the source's package and `csv`), a `hello` example report, and a
 `.gitignore`. Add each destination's package under `plugins:` in `dependencies.yml`.
 

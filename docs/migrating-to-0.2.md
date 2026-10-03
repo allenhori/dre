@@ -73,6 +73,10 @@ inherited connection, and `destination.*` (new) is the destination being rendere
 - A report no longer needs a connection of its own when every query has one (a query
   `profile:` or a source's). A query with none is the error `no-connection`.
 
+## The CLI
+
+- `dre new --source <plugin>` is `dre new --type <plugin>` (`--source` still works).
+
 ## Schedules
 
 - `schedule-needs-anchor`, `schedule-too-frequent` and `schedule-seconds` are now errors in
