@@ -48,8 +48,11 @@ pub struct RunOptions {
     pub accept_schema_change: bool,
     /// Whether a person is at a terminal to answer prompts.
     pub interactive: bool,
-    /// `run.date`.
+    /// `run.date` (`DRE_RUN_DATE`).
     pub date: Option<NaiveDate>,
+    /// The instant this run was scheduled for (`DRE_RUN_AT`): `run.now` and `run.scheduled_at`,
+    /// and `run.date` in the run's timezone unless `date` is set.
+    pub scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     /// `validate --live`: check statements instead of executing them.
     pub live_check: bool,
     /// `--schedule <name>`: run exactly the Bindings that schedule targets, with its vars.
@@ -71,6 +74,7 @@ impl RunOptions {
             "profile": self.profile,
             "vars": self.vars,
             "run_date": date.to_string(),
+            "scheduled_at": self.scheduled_at.map(rfc3339),
             "timezone": self.timezone,
             "output_name": self.output_name,
             "output_path": self.output_path,
@@ -208,22 +212,13 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
             summary.error = Some(unknown_schedule(project, name));
             return summary;
         }
-        let planned: Vec<(&Report, Binding)> = project
-            .reports
-            .iter()
-            .flat_map(|r| {
-                r.bindings
-                    .iter()
-                    .filter(|b| b.schedules.contains(name))
-                    .map(move |b| {
-                        let mut b = b.clone();
-                        if let Some(p) = &opts.profile {
-                            b.profile = Some(p.clone());
-                        }
-                        (r, b)
-                    })
-            })
-            .collect();
+        let planned = match schedule_bindings(project, name, opts) {
+            Ok(p) => p,
+            Err(e) => {
+                summary.error = Some(e);
+                return summary;
+            }
+        };
         ui.plan(planned.len());
         for (report, b) in &planned {
             ui.binding_start(&report.name, b.set.as_deref());
@@ -282,6 +277,74 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
         summary.outcomes.push(outcome);
     }
     summary
+}
+
+/// The Bindings `--schedule <name>` runs: all of them, or those a selector and/or `--set` pick.
+/// Picking something the schedule doesn't run is an error naming what it does run.
+fn schedule_bindings<'a>(
+    project: &'a Project,
+    name: &str,
+    opts: &RunOptions,
+) -> Result<Vec<(&'a Report, Binding)>, String> {
+    let reports: Option<Vec<&str>> = match &opts.selector {
+        None => None,
+        Some(s) => Some(
+            selector::resolve(project, s)
+                .map_err(|e| e.to_string())?
+                .into_iter()
+                .map(|r| r.name.as_str())
+                .collect(),
+        ),
+    };
+    let set = opts.set.as_deref().filter(|s| *s != "all");
+    let all: Vec<(&Report, &Binding)> = project
+        .reports
+        .iter()
+        .flat_map(|r| {
+            r.bindings
+                .iter()
+                .filter(|b| b.schedules.iter().any(|s| s == name))
+                .map(move |b| (r, b))
+        })
+        .collect();
+    let picked: Vec<(&Report, Binding)> = all
+        .iter()
+        .filter(|(r, _)| reports.as_ref().is_none_or(|rs| rs.contains(&r.name.as_str())))
+        .filter(|(_, b)| set.is_none() || b.set.as_deref() == set)
+        .map(|(r, b)| {
+            let mut b = (*b).clone();
+            if let Some(p) = &opts.profile {
+                b.profile = Some(p.clone());
+            }
+            (*r, b)
+        })
+        .collect();
+    if picked.is_empty() && (reports.is_some() || set.is_some()) {
+        let mut asked = Vec::new();
+        if let Some(s) = &opts.selector {
+            asked.push(format!("`{s}`"));
+        }
+        if let Some(s) = set {
+            asked.push(format!("Set `{s}`"));
+        }
+        let runs: Vec<String> = all
+            .iter()
+            .map(|(r, b)| match &b.set {
+                Some(s) => format!("{}/{s}", r.name),
+                None => r.name.clone(),
+            })
+            .collect();
+        return Err(format!(
+            "schedule `{name}` doesn't run {}; it runs: {}",
+            asked.join(" with "),
+            if runs.is_empty() {
+                "nothing".to_string()
+            } else {
+                runs.join(", ")
+            }
+        ));
+    }
+    Ok(picked)
 }
 
 /// The usage error for `--schedule` with a name that isn't declared.
@@ -445,7 +508,12 @@ impl<'a> BindingRun<'a> {
             week_start: project.week_start,
             numbering: project.week_numbering,
         };
-        let date = opts.date.unwrap_or_else(|| calendar.today());
+        let date = opts
+            .date
+            .or(opts
+                .scheduled_at
+                .map(|t| t.with_timezone(&calendar.tz).date_naive()))
+            .unwrap_or_else(|| calendar.today());
         // Binding vars, then the schedule's, then `--var` on top.
         let mut vars = b.vars.clone();
         vars.extend(schedule_vars.clone().unwrap_or_default());
@@ -590,7 +658,8 @@ impl<'a> BindingRun<'a> {
                 source_type: output.kind.clone(),
                 schedule: self.opts.schedule.clone(),
                 date: self.date,
-                now: self.started_at,
+                now: self.opts.scheduled_at.unwrap_or(self.started_at),
+                scheduled_at: self.opts.scheduled_at,
                 calendar: self.calendar,
             },
             vars: self.vars.clone(),
@@ -1128,7 +1197,8 @@ impl<'a> BindingRun<'a> {
                 source_type: self.source_type.clone(),
                 schedule: self.opts.schedule.clone(),
                 date: self.date,
-                now: self.started_at,
+                now: self.opts.scheduled_at.unwrap_or(self.started_at),
+                scheduled_at: self.opts.scheduled_at,
                 calendar: self.calendar,
             },
             vars: self.vars.clone(),
@@ -1450,6 +1520,7 @@ impl<'a> BindingRun<'a> {
             "schedule_vars": self.schedule_vars,
             "vars": self.rendered_vars,
             "run_date": self.date.to_string(),
+            "scheduled_at": self.opts.scheduled_at.map(rfc3339),
             "timezone": self.calendar.tz.name(),
             "params": self.opts.params(self.date),
             "status": status,
@@ -1927,6 +1998,11 @@ fn split_ext(name: &str) -> (&str, &str) {
 
 fn rel(root: &Path, p: &Path) -> PathBuf {
     crate::slash(p.strip_prefix(root).unwrap_or(p))
+}
+
+/// An instant as DRE records it: RFC 3339 in UTC, to the second.
+pub fn rfc3339(t: chrono::DateTime<chrono::Utc>) -> String {
+    t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// How a generated file is recorded in `run_results.json`: relative to the project root when

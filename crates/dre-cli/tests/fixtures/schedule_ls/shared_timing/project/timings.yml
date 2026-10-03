@@ -1,0 +1,2 @@
+# The 1st of the month at 06:00 in Sydney, skipping New Year's Day.
+month_start: {cron: "0 6 1 * *", timezone: Australia/Sydney, except: ["2027-01-01"]}

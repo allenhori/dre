@@ -160,6 +160,7 @@ fn schedules_resolve_to_bindings_and_bindings_list_their_schedules() {
             "name": "daily_all",
             "report": "daily",
             "schedule": {"cron": "0 6 * * *"},
+            "enabled": true,
             "vars": {"period": "day"},
             "timezone": "Australia/Sydney",
             "bindings": [{"report": "daily", "set": null}]

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-dre-schema-version": "0.1",
+  "title": "DRE timings",
+  "description": "The timings file, `timings.yml`: timing names mapped to timings that any schedule can use with `timing: <name>`.",
+  "type": "object",
+  "propertyNames": {
+    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+  },
+  "additionalProperties": {
+    "$ref": "#/$defs/timing"
+  },
+  "$defs": {
+    "timing": {
+      "type": "object",
+      "description": "One named timing: when it fires, in which timezone, and the dates it skips or adds.",
+      "properties": {
+        "cron": {
+          "type": "string",
+          "description": "A cron expression (5 fields, or a macro such as `@daily`). A timing needs exactly one of `cron`, `every` or `rrule`."
+        },
+        "every": {
+          "type": "object",
+          "description": "Every N days, weeks or months, with exactly one unit, e.g. `{days: 3}`.",
+          "properties": {
+            "days": {
+              "type": "integer",
+              "description": "Every this many days.",
+              "minimum": 1
+            },
+            "weeks": {
+              "type": "integer",
+              "description": "Every this many weeks.",
+              "minimum": 1
+            },
+            "months": {
+              "type": "integer",
+              "description": "Every this many months.",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1
+        },
+        "rrule": {
+          "type": "string",
+          "description": "An iCalendar recurrence rule, e.g. `FREQ=MONTHLY;BYDAY=2TU`. Use `starting` for a rule with `INTERVAL` above 1 or `COUNT`, and `at` for its time of day."
+        },
+        "starting": {
+          "type": "string",
+          "description": "With `every` or `rrule`: the first date, `YYYY-MM-DD`. `every` needs it, and so does a rule with `INTERVAL` above 1, a `COUNT`, or a day it takes from its start.",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "at": {
+          "type": "string",
+          "description": "With `every` or `rrule`: the time of day, `HH:MM` (24-hour), unless the rule sets `BYHOUR`/`BYMINUTE`. Default: 00:00.",
+          "pattern": "^[0-9]{2}:[0-9]{2}$"
+        },
+        "except": {
+          "type": "array",
+          "description": "Dates (`YYYY-MM-DD`, in its timezone) it doesn't fire on, e.g. holidays.",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          }
+        },
+        "also": {
+          "type": "array",
+          "description": "Extra dates (`YYYY-MM-DD`) it fires on, at its time of day in its timezone. Needs a timing that fires at one time of day.",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          }
+        },
+        "timezone": {
+          "type": "string",
+          "description": "The timezone it fires in, an IANA name such as `Australia/Sydney`; schedules using the timing also run in it. Default: the project's `timezone:`, then UTC."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

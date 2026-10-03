@@ -2,7 +2,7 @@
 title: "DRE plugin protocol, version 0"
 description: "How a plugin talks to DRE, for writing a plugin in any language."
 sidebar:
-  order: 16
+  order: 18
 ---
 
 # DRE plugin protocol, version 0

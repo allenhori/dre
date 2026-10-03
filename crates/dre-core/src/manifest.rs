@@ -205,6 +205,8 @@ fn schedule(project: &Project, name: &str) -> Json {
     insert_some(&mut m, "select", e.select.as_ref());
     insert_some(&mut m, "set", e.set.as_ref());
     m.insert("schedule".into(), Json::Object(e.schedule.clone()));
+    insert_some(&mut m, "timing", e.timing.as_ref());
+    m.insert("enabled".into(), json!(e.enabled));
     m.insert("vars".into(), Json::Object(e.vars.clone()));
     insert_some(&mut m, "timezone", e.timezone.as_ref());
     m.insert("bindings".into(), json!(bindings));
@@ -219,6 +221,11 @@ fn insert_some<T: serde::Serialize>(m: &mut JsonMap<String, Json>, key: &str, v:
 
 fn slash(p: &Path) -> String {
     crate::slash(p).to_string_lossy().into_owned()
+}
+
+/// `v` as compact JSON with every object's keys sorted: the same bytes for the same value.
+pub fn canonical(v: &Json) -> String {
+    serde_json::to_string(&sorted(v.clone())).unwrap()
 }
 
 /// `v` with every object's keys sorted, so the bytes don't depend on insertion order.

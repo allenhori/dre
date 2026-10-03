@@ -2,7 +2,7 @@
 title: "profiles.yml reference"
 description: "Every key of profiles.yml: sources, destinations and their targets."
 sidebar:
-  order: 24
+  order: 27
 ---
 
 # profiles.yml reference

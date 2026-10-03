@@ -1,0 +1,3 @@
+- {name: either_day, report: filing, cron: "0 6 1,15 * MON"}
+- {name: star_step_dom_and_mon, report: filing, cron: "0 6 */2 * MON"}
+- {name: dom_and_star_step_dow, report: filing, cron: "0 6 13 * */5"}

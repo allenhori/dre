@@ -2,7 +2,7 @@
 title: "Building from source"
 description: "Build dre and the first-party plugins with cargo and Go."
 sidebar:
-  order: 17
+  order: 19
 ---
 
 # Building from source

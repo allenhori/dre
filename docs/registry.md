@@ -2,7 +2,7 @@
 title: "Plugin packages, the registry and `dre.lock`"
 description: "Plugin packages, the registry index, dre.lock and macro packages."
 sidebar:
-  order: 10
+  order: 11
 ---
 
 # Plugin packages, the registry and `dre.lock`

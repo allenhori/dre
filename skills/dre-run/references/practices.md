@@ -2,7 +2,7 @@
 title: "DRE practices"
 description: "The opinions DRE’s agent skills give, and the reasons behind them."
 sidebar:
-  order: 15
+  order: 17
 ---
 
 # DRE practices
@@ -282,14 +282,16 @@ report: it limits rows and never delivers.
 
 *Why:* an email or Slack post can't be recalled.
 
-### RUN-3: Pass the scheduled date
+### RUN-3: Pass the scheduled time
 
 **Level:** advise
 
-A scheduler passes the run's logical date with `DRE_RUN_DATE=YYYY-MM-DD`, and runs a schedule
-with `dre run --schedule <name>`.
+A scheduler runs a schedule with `dre run --schedule <name>` and passes the instant it was
+scheduled for with `DRE_RUN_AT` (RFC 3339), or at least the run's logical date with
+`DRE_RUN_DATE=YYYY-MM-DD`. Each occurrence from `dre schedule ls` carries both in its command.
 
-*Why:* a rerun of last Monday's job renders last Monday's dates, not today's.
+*Why:* a rerun of last Monday's job renders last Monday's dates, not today's, and a rerun of the
+18:00 firing renders as 18:00 even when it starts at 21:00.
 
 ### RUN-4: A lasting target path on ephemeral runners
 
@@ -310,3 +312,37 @@ When a run stops because the output's columns changed, find out why before re-ru
 
 *Why:* the people or systems reading the file may depend on its columns; the check exists to
 stop an unexpected change from reaching them.
+
+## Schedules
+
+### SCH-1: Give every schedule a timezone
+
+**Level:** advise
+
+Set `timezone:` on each schedule, or on the shared timing it uses, rather than relying on the
+project's or UTC.
+
+*Why:* a schedule without one fires in the project's timezone (or UTC) but runs in its report's,
+so "06:00 on the 1st" can render as the 31st. One timezone on the schedule keeps firing and run
+date together, and `dre validate` warns when they differ.
+
+### SCH-2: Share timings in `timings.yml`
+
+**Level:** advise
+
+When two or more schedules fire at the same time, name the timing once in `timings.yml` and use
+`timing: <name>` in each, keeping their own report, Set and vars.
+
+*Why:* "the 1st of the month, 06:00 Sydney" changes in one place, for every client, and the
+change shows as one diff.
+
+### SCH-3: Check a timing with `dre schedule ls`
+
+**Level:** advise
+
+After writing or changing a timing, run `dre schedule ls --schedule <name>` and read the dates
+before relying on it. Give `every` schedules and rules with `INTERVAL` or `COUNT` a `starting`
+date, and every timing a time of day.
+
+*Why:* cron and recurrence rules are easy to get subtly wrong (both cron day fields, `BYSETPOS`,
+DST), and a rule without an anchor fires on dates that depend on when you look.

@@ -1,0 +1,5 @@
+- {name: m_daily, report: filing, cron: "@daily"}
+- {name: m_weekly, report: filing, cron: "@weekly"}
+- {name: m_monthly, report: filing, cron: "@monthly"}
+- {name: named, report: filing, cron: "15 8 * jan,jul sun"}
+- {name: sunday_7, report: filing, cron: "0 9 * * 7"}

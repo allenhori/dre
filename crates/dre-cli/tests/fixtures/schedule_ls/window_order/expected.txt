@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+error: --to (2026-01-01T00:00:00Z) must be after --from (2026-02-01T00:00:00Z)

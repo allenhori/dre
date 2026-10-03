@@ -1,0 +1,7 @@
+month_start: {cron: "0 6 1 * *", timezone: Australia/Sydney}
+never_used: {rrule: "FREQ=MONTHLY;BYDAY=2TU", at: "07:00"}
+bad_key: {cron: "0 6 * * *", colour: blue}
+two_forms: {cron: "0 6 * * *", rrule: "FREQ=DAILY"}
+bad_zone: {cron: "0 6 * * *", timezone: Mars/Olympus}
+"7_days": {every: {days: 7}, starting: "2026-01-01", at: "06:00"}
+no_anchor: {every: {days: 7}, at: "06:00"}

@@ -2,7 +2,7 @@
 title: "First-party plugins"
 description: "The first-party plugins, their profile fields and output options."
 sidebar:
-  order: 8
+  order: 9
 ---
 
 # First-party plugins

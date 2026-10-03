@@ -2,7 +2,7 @@
 title: "The manifest and `run_results.json`"
 description: "The project manifest and the per-run results file, with the manifest JSON Schema."
 sidebar:
-  order: 12
+  order: 13
 ---
 
 # The manifest and `run_results.json`
@@ -106,10 +106,11 @@ works on a fresh CI runner with no credentials.
 - **Each Binding**: its Set (`null` for a report without Sets), source profile name, fully merged
   vars, queries, output (format, options, extension, template file), destinations in delivery
   order (profile name and the path template, unrendered), and the schedules that run it.
-- **`schedules`**, by name: the report or selector and Set it targets, the schedule as declared
-  (`cron`, `every`, `rrule`, ...), its vars and timezone, and the Bindings it runs, resolved the way
-  `dre run --schedule <name>` resolves them. An orchestrator makes one task per schedule, each
-  running `dre run --schedule <name>` with `DRE_RUN_DATE` set to the scheduled date.
+- **`schedules`**, by name: the report or selector and Set it targets, its timing (`cron`,
+  `every` or `rrule` with `starting`, `at`, `except` and `also`; a shared timing's fields, with its
+  name in `timing`), whether it's `enabled`, its vars and timezone, and the Bindings it runs,
+  resolved the way `dre run --schedule <name>` resolves them. To know when each one fires, with the
+  exact command for each firing, use [`dre schedule ls`](schedule-ls.md).
 - **`plugins`**: the declared packages, each with its version requirement and source
   (`registry`, `github` or `local`, plus a `location` unless it's DRE's own registry).
 

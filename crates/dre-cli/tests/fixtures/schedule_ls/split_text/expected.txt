@@ -1,0 +1,6 @@
+exit: 0
+--- stdout
+TIME                   SCHEDULE  REPORTS
+2027-02-01 06:00 AEDT  close_a   sales/client_a
+2027-02-01 06:00 AEDT  close_b   sales/client_b
+--- stderr

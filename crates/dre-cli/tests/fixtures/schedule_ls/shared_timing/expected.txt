@@ -1,0 +1,116 @@
+exit: 0
+--- stdout
+{
+  "dre_schedule_version": 1,
+  "dre_version": "$VERSION",
+  "project": "acme",
+  "window": {
+    "from": "2026-12-15T00:00:00Z",
+    "to": "2027-02-15T00:00:00Z"
+  },
+  "split": false,
+  "complete": true,
+  "project_hash": "7e1fc059c9f4e03c096c3f308b376b57060a537d56b49bde2c1265a477d80889",
+  "schedules": {
+    "close_a": {
+      "definition_hash": "6d72d7355bb618299f108bfebc40e5cda848c3a06405a747d225aacbd9b64ac4",
+      "enabled": true,
+      "timing": "month_start",
+      "timezone": "Australia/Sydney",
+      "vars": {
+        "period": "month",
+        "tier": "gold"
+      },
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ]
+    },
+    "close_b": {
+      "definition_hash": "03ca280210d605503e9719059a457c8512fa83122159e5afab8f52b3d9c99d52",
+      "enabled": true,
+      "timing": "month_start",
+      "timezone": "Australia/Sydney",
+      "vars": {
+        "period": "month"
+      },
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_b",
+          "binding": "client_b"
+        }
+      ]
+    }
+  },
+  "occurrences": [
+    {
+      "key": "close_a/2027-01-31T19:00:00Z",
+      "schedule": "close_a",
+      "timing": "month_start",
+      "fires_at": "2027-01-31T19:00:00Z",
+      "fires_at_local": "2027-02-01T06:00:00+11:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2027-02-01",
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_a",
+          "binding": "client_a"
+        }
+      ],
+      "vars": {
+        "period": "month",
+        "tier": "gold"
+      },
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "close_a"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2027-01-31T19:00:00Z",
+          "DRE_RUN_DATE": "2027-02-01"
+        }
+      }
+    },
+    {
+      "key": "close_b/2027-01-31T19:00:00Z",
+      "schedule": "close_b",
+      "timing": "month_start",
+      "fires_at": "2027-01-31T19:00:00Z",
+      "fires_at_local": "2027-02-01T06:00:00+11:00",
+      "timezone": "Australia/Sydney",
+      "run_date": "2027-02-01",
+      "bindings": [
+        {
+          "report": "sales",
+          "set": "client_b",
+          "binding": "client_b"
+        }
+      ],
+      "vars": {
+        "period": "month"
+      },
+      "invocation": {
+        "argv": [
+          "dre",
+          "run",
+          "--schedule",
+          "close_b"
+        ],
+        "env": {
+          "DRE_RUN_AT": "2027-01-31T19:00:00Z",
+          "DRE_RUN_DATE": "2027-02-01"
+        }
+      }
+    }
+  ],
+  "problems": []
+}
+--- stderr

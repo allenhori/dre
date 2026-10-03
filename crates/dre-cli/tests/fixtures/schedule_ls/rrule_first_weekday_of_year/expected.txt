@@ -1,0 +1,5 @@
+exit: 0
+--- stdout
+TIME                  SCHEDULE       REPORTS
+2027-01-01 08:00 UTC  first_weekday  filing
+--- stderr

@@ -1,0 +1,5 @@
+exit: 1
+--- stdout
+--- stderr
+error[invalid-schedule]: schedules.yml:1: invalid cron `0 25 * * *`: hour field `25` has `25` outside 0-23
+error: the project has errors; fix them first (see `dre validate`)

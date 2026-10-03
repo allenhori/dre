@@ -2,7 +2,7 @@
 title: "The target path"
 description: "Where DRE writes compiled SQL, outputs, snapshots and the manifest."
 sidebar:
-  order: 11
+  order: 12
 ---
 
 # The target path

@@ -7,8 +7,16 @@ exit: 0
     "found_by": "--profiles-dir"
   },
   "errors": 0,
-  "warnings": 0,
-  "diagnostics": [],
+  "warnings": 1,
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "code": "schedule-no-time",
+      "message": "schedule `ops_tag_monthly`: no time of day is given, so it fires at 00:00 in its timezone; set `at: \"HH:MM\"` to say when",
+      "file": "schedules.yml",
+      "line": 4
+    }
+  ],
   "compiled": [
     {
       "report": "fin_monthly",
@@ -167,6 +175,7 @@ exit: 0
             "set": null
           }
         ],
+        "enabled": true,
         "name": "finance_monthly",
         "schedule": {
           "cron": "0 6 1 * *"
@@ -181,6 +190,7 @@ exit: 0
             "set": null
           }
         ],
+        "enabled": true,
         "name": "ops_every_5_days",
         "report": "ops_monthly",
         "schedule": {
@@ -199,6 +209,7 @@ exit: 0
             "set": null
           }
         ],
+        "enabled": true,
         "name": "ops_tag_monthly",
         "schedule": {
           "rrule": "FREQ=MONTHLY;BYDAY=2TU"
@@ -213,6 +224,7 @@ exit: 0
             "set": null
           }
         ],
+        "enabled": true,
         "name": "ops_weekly",
         "report": "ops_monthly",
         "schedule": {

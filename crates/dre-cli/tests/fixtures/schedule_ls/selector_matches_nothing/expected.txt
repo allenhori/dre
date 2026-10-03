@@ -1,0 +1,4 @@
+exit: 1
+--- stdout
+--- stderr
+error: selector `nope` matches no report name, tag or folder

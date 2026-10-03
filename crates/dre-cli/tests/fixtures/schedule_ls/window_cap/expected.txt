@@ -1,0 +1,4 @@
+exit: 2
+--- stdout
+--- stderr
+error: the window from 2026-01-01T00:00:00Z to 2027-01-03T00:00:00Z is longer than 366 days; ask for less, in several calls if needed

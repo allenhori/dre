@@ -2,7 +2,7 @@
 title: "sets.yml reference"
 description: "Every key of a Sets file."
 sidebar:
-  order: 22
+  order: 24
 ---
 
 # sets.yml reference
@@ -18,3 +18,12 @@ For editor autocomplete and validation, add this as the first line of the file (
 ```yaml
 # yaml-language-server: $schema=https://getdre.com/schemas/v0.1/sets.schema.json
 ```
+
+The file maps names to entries; each entry has these keys.
+
+## Keys
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `profile` | string |  | The source profile a Binding with this Set runs against. |
+| `vars` | map |  | Variables, read in SQL and YAML with `var('name')`. Values can be strings, numbers, booleans, lists or maps. |

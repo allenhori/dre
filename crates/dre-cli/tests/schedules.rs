@@ -187,11 +187,50 @@ fn schedule_usage_errors() {
         .failed()
         .says("no schedule `nope`; valid names: flash_daily, close_monthly, regulatory_monthly");
     assert_eq!(p.dre("run", &["--schedule", "nope"]).code, 2);
-    let r = p.dre("run", &["sales_summary", "--schedule", "flash_daily"]);
-    assert_eq!(r.code, 2, "{}", r.stderr);
-    assert!(r.stderr.contains("cannot be used with"), "{}", r.stderr);
-    let r = p.dre("run", &["--set", "client_a", "--schedule", "flash_daily"]);
-    assert_eq!(r.code, 2, "{}", r.stderr);
+    // Narrowing a schedule to something it doesn't run names what it does run.
+    p.dre("run", &["other", "--schedule", "flash_daily"])
+        .failed()
+        .says("schedule `flash_daily` doesn't run `other`; it runs: sales_summary/client_a");
+    p.dre("run", &["--set", "client_b", "--schedule", "flash_daily"])
+        .failed()
+        .says("schedule `flash_daily` doesn't run Set `client_b`; it runs: sales_summary/client_a");
+    p.dre("run", &["-s", "sales_summary", "--set", "client_b", "--schedule", "close_monthly"])
+        .failed()
+        .says("schedule `close_monthly` doesn't run `sales_summary` with Set `client_b`; it runs: sales_summary/client_a");
+}
+
+#[test]
+fn a_schedule_narrowed_to_one_binding_keeps_its_vars_and_timezone() {
+    let p = project(&[]);
+    let mut schedules = SCHEDULES.to_string();
+    schedules.push_str(
+        "- name: both_clients\n  report: sales_summary\n  cron: \"0 8 * * *\"\n  timezone: Pacific/Kiritimati\n  vars: {period: both}\n",
+    );
+    p.write("schedules.yml", &schedules);
+    p.write(
+        "reports/finance/sales_summary/summary.sql",
+        "select '{{ var('client') }}' as client, '{{ var('period') }}' as period, '{{ run.timezone }}' as tz\n",
+    );
+    p.dre(
+        "run",
+        &[
+            "--schedule",
+            "both_clients",
+            "-s",
+            "sales_summary",
+            "--set",
+            "client_b",
+        ],
+    )
+    .ok();
+    assert_eq!(ran(&p), ["sales_summary/client_b"]);
+    assert_eq!(
+        p.read("out/both-20260125.csv"),
+        "client,period,tz\r\nclient_b,both,Pacific/Kiritimati\r\n"
+    );
+    let r = p.json("target/run/sales_summary/client_b/run_results.json");
+    assert_eq!(r["schedule"], "both_clients");
+    assert_eq!(r["params"]["set"], "client_b");
 }
 
 #[test]
@@ -332,4 +371,125 @@ fn dre_secrets_needing_json_escapes_never_reach_json_output() {
         .failed();
     assert!(p.read("target/compiled/secret/default/s.sql").contains(&long));
     p.json("target/run/secret/default/run_results.json");
+}
+
+/// A report whose SQL and output path show what a pinned firing renders.
+fn pinned_project() -> TestProject {
+    project(&[
+        (
+            "reports/ops/intraday/intraday.yml",
+            "queries: [i]\ntimezone: Australia/Sydney\n\
+             output:\n  destination: {profile: local_fs, path: \"out/intraday-{{ run.scheduled_at.format('%Y%m%d%H%M') }}.csv\"}\n",
+        ),
+        (
+            "reports/ops/intraday/i.sql",
+            "select '{{ run.date }}' as d, '{{ run.now.iso }}' as now, '{{ run.scheduled_at.iso }}' as at\n",
+        ),
+    ])
+}
+
+#[test]
+fn dre_run_at_pins_run_now_the_run_date_and_scheduled_at() {
+    let p = pinned_project();
+    // 07:00 UTC is 18:00 in Sydney (AEDT), so the run date is Sydney's.
+    let env = [("DRE_RUN_DATE", ""), ("DRE_RUN_AT", "2026-01-25T07:00:00Z")];
+    p.dre_env("run", &["intraday"], &env).ok();
+    let out = p.read("out/intraday-202601251800.csv");
+    assert_eq!(
+        out,
+        "d,now,at\r\n2026-01-25,2026-01-25T18:00:00+11:00,2026-01-25T18:00:00+11:00\r\n"
+    );
+    let r = p.json("target/run/intraday/default/run_results.json");
+    assert_eq!(r["scheduled_at"], "2026-01-25T07:00:00Z");
+    assert_eq!(r["run_date"], "2026-01-25");
+    assert_eq!(r["params"]["scheduled_at"], "2026-01-25T07:00:00Z");
+    // started_at is when it really ran, not the pinned instant.
+    assert_ne!(r["started_at"], "2026-01-25T07:00:00Z");
+
+    // A rerun with the same DRE_RUN_AT renders identical SQL.
+    let first = p.read("target/compiled/intraday/default/i.sql");
+    p.dre_env("run", &["intraday"], &env).ok();
+    assert_eq!(p.read("target/compiled/intraday/default/i.sql"), first);
+
+    // An offset instant means the same thing.
+    p.dre_env(
+        "run",
+        &["intraday"],
+        &[("DRE_RUN_DATE", ""), ("DRE_RUN_AT", "2026-01-25T18:00:00+11:00")],
+    )
+    .ok();
+    assert_eq!(p.read("target/compiled/intraday/default/i.sql"), first);
+}
+
+#[test]
+fn an_explicit_dre_run_date_beats_dre_run_at() {
+    let p = pinned_project();
+    let env = [
+        ("DRE_RUN_DATE", "2026-01-01"),
+        ("DRE_RUN_AT", "2026-01-25T07:00:00Z"),
+    ];
+    p.dre_env("run", &["intraday"], &env).ok();
+    assert_eq!(
+        p.read("out/intraday-202601251800.csv"),
+        "d,now,at\r\n2026-01-01,2026-01-25T18:00:00+11:00,2026-01-25T18:00:00+11:00\r\n"
+    );
+}
+
+#[test]
+fn run_scheduled_at_is_none_without_dre_run_at_and_the_record_holds_the_schedule() {
+    let p = project(&[
+        ("reports/ops/plain/plain.yml", "queries: [q]\n"),
+        (
+            "reports/ops/plain/q.sql",
+            "select '{{ run.scheduled_at is none }}' as unset\n",
+        ),
+    ]);
+    p.dre("run", &["plain"]).ok();
+    assert_eq!(p.read("target/run/plain/default/plain.csv"), "unset\r\nTrue\r\n");
+    let r = p.json("target/run/plain/default/run_results.json");
+    assert!(r["scheduled_at"].is_null(), "{r}");
+
+    p.dre_env(
+        "run",
+        &["--schedule", "close_monthly"],
+        &[("DRE_RUN_DATE", ""), ("DRE_RUN_AT", "2026-02-01T06:00:00Z")],
+    )
+    .ok();
+    let r = p.json("target/run/sales_summary/client_a/run_results.json");
+    assert_eq!(r["schedule"], "close_monthly");
+    assert_eq!(r["scheduled_at"], "2026-02-01T06:00:00Z");
+    assert_eq!(r["run_date"], "2026-02-01");
+}
+
+#[test]
+fn an_invalid_dre_run_at_fails_clearly() {
+    let p = project(&[]);
+    for cmd in ["run", "compile", "validate"] {
+        let r = p.dre_env(cmd, &[], &[("DRE_RUN_AT", "tomorrow 6am")]);
+        assert_eq!(r.code, 2, "{cmd}: {}{}", r.stdout, r.stderr);
+        r.says("DRE_RUN_AT: `tomorrow 6am` isn't an RFC 3339 date-time (e.g. 2026-09-01T06:00:00Z)");
+    }
+}
+
+#[test]
+fn a_schedule_using_a_shared_timing_runs_in_the_timings_timezone() {
+    let p = project(&[
+        (
+            "timings.yml",
+            "early: {cron: \"0 6 * * *\", timezone: Pacific/Kiritimati}\n",
+        ),
+        ("reports/ops/zoned/zoned.yml", "queries: [z]\n"),
+        (
+            "reports/ops/zoned/z.sql",
+            "select '{{ run.timezone }}' as tz, '{{ run.schedule }}' as s\n",
+        ),
+    ]);
+    let mut schedules = SCHEDULES.to_string();
+    schedules.push_str("- {name: zoned_early, report: zoned, timing: early}\n");
+    p.write("schedules.yml", &schedules);
+    p.dre("run", &["--schedule", "zoned_early"]).ok();
+    assert_eq!(
+        p.read("target/run/zoned/default/zoned.csv"),
+        "tz,s\r\nPacific/Kiritimati,zoned_early\r\n"
+    );
 }

@@ -10,3 +10,6 @@
 - {name: 7days, report: c, cron: "0 7 * * *"}
 - {name: vars_list, report: d, cron: "0 7 * * *", vars: [period, day]}
 - {name: no_target, cron: "0 7 * * *"}
+- {name: cron_with_at, report: a, cron: "0 7 * * *", starting: "2026-01-01", at: "07:00"}
+- {name: bad_dates, report: a, cron: "0 7 * * *", except: ["2026-13-01"], also: "2026-12-25"}
+- {name: also_needs_one_time, report: a, cron: "0 7,19 * * *", also: ["2026-12-25"]}

@@ -2,7 +2,7 @@
 title: "Lookups"
 description: "Mapping tables kept as files: typed columns, inline or temp table."
 sidebar:
-  order: 7
+  order: 8
 ---
 
 # Lookups
