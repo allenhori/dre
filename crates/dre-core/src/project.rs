@@ -85,6 +85,8 @@ pub const PROJECT_KEYS: &[&str] = &[
     "reports",
     crate::target::KEY,
 ];
+/// Keys of a schedules.yml entry besides its timing (`schedule::SCHEDULE_KEYS`).
+pub const SCHEDULE_ENTRY_KEYS: &[&str] = &["name", "select", "report", "set", "vars", "timezone", "enabled"];
 pub const FOLDER_CONFIG_KEYS: &[&str] = &["+tags", "+output", "+profile", "+schedule", "+vars", "+timezone"];
 pub const SET_ENTRY_KEYS: &[&str] = &[
     "name",
@@ -2747,7 +2749,7 @@ impl Loader {
                 let mut sched = Mapping::new();
                 for (k, v) in m {
                     let Some(k) = k.as_str() else { continue };
-                    if ["name", "select", "report", "set", "vars", "timezone"].contains(&k) {
+                    if SCHEDULE_ENTRY_KEYS.contains(&k) {
                         continue;
                     }
                     if !schedule::SCHEDULE_KEYS.contains(&k) {
@@ -2865,6 +2867,20 @@ impl Loader {
                         t
                     }
                 };
+                let enabled = match m.get("enabled") {
+                    None => true,
+                    Some(Value::Bool(b)) => *b,
+                    Some(_) => {
+                        self.diags.error(
+                            "invalid-schedule",
+                            file.clone(),
+                            line,
+                            format!("schedule `{name}`: `enabled` must be true or false"),
+                        );
+                        ok = false;
+                        true
+                    }
+                };
                 if ok {
                     out.push(ScheduleEntry {
                         name,
@@ -2873,7 +2889,7 @@ impl Loader {
                         set,
                         schedule: yaml_map_to_json(&sched),
                         timing: None,
-                        enabled: true,
+                        enabled,
                         vars,
                         timezone,
                         location: (yf.display.clone(), line),

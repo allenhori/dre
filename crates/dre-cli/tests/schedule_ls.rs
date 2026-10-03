@@ -129,6 +129,11 @@ fn hashes_are_stable_and_change_with_what_they_cover() {
         ),
         ("{period: month}", "{period: quarter}"),
         ("report: sales\n  cron", "report: sales\n  set: client_b\n  cron"),
+        (
+            "{period: quarter}",
+            "{period: quarter}\n  except: [\"2026-10-01\"]",
+        ),
+        ("{period: quarter}", "{period: quarter}\n  enabled: false"),
     ] {
         let before = hashes(&doc(&p, &window));
         let after = edit(from, to);

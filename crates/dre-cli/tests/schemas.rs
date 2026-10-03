@@ -169,7 +169,7 @@ fn the_schemas_have_the_keys_the_parser_has() {
         props(&raw("schedules")["$defs"]["schedule"]),
         plus(
             minus(dre_core::schedule::SCHEDULE_KEYS, &[]),
-            &["name", "report", "set", "select", "vars", "timezone"],
+            dre_core::project::SCHEDULE_ENTRY_KEYS,
         ),
     );
     same(

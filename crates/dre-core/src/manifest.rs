@@ -205,6 +205,8 @@ fn schedule(project: &Project, name: &str) -> Json {
     insert_some(&mut m, "select", e.select.as_ref());
     insert_some(&mut m, "set", e.set.as_ref());
     m.insert("schedule".into(), Json::Object(e.schedule.clone()));
+    insert_some(&mut m, "timing", e.timing.as_ref());
+    m.insert("enabled".into(), json!(e.enabled));
     m.insert("vars".into(), Json::Object(e.vars.clone()));
     insert_some(&mut m, "timezone", e.timezone.as_ref());
     m.insert("bindings".into(), json!(bindings));

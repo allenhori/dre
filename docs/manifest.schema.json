@@ -127,9 +127,18 @@
         "report": {"type": "string"},
         "select": {"type": "string"},
         "set": {"type": "string"},
-        "schedule": {"type": "object", "description": "As declared: `cron`, `every`, `rrule`, `calendar`, ..."},
+        "schedule": {
+          "type": "object",
+          "description": "The resolved timing: `cron`, `every` or `rrule`, with `starting`, `at`, `except` and `also` when given. With `timing`, the shared timing's fields.",
+          "properties": {
+            "except": {"type": "array", "items": {"type": "string"}, "description": "Dates it doesn't fire on."},
+            "also": {"type": "array", "items": {"type": "string"}, "description": "Extra dates it fires on."}
+          }
+        },
+        "timing": {"type": "string", "description": "The timings.yml entry the timing comes from, when it's a shared one."},
+        "enabled": {"type": "boolean", "description": "False when the schedule is paused (`enabled: false`)."},
         "vars": {"type": "object"},
-        "timezone": {"type": "string"},
+        "timezone": {"type": "string", "description": "The schedule's `timezone:`, or its shared timing's."},
         "bindings": {
           "type": "array",
           "description": "What `dre run --schedule <name>` runs.",

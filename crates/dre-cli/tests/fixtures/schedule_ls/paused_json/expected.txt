@@ -1,0 +1,32 @@
+exit: 0
+--- stdout
+{
+  "dre_schedule_version": 1,
+  "dre_version": "$VERSION",
+  "project": "acme",
+  "window": {
+    "from": "2026-09-28T00:00:00Z",
+    "to": "2026-11-02T00:00:00Z"
+  },
+  "split": false,
+  "project_hash": "765767a060954a45fa7ce49972ab3cee5141ef6c645d035bfe72b40d7c6bb5b3",
+  "schedules": {
+    "on_hold": {
+      "definition_hash": "76ed9cb3ba3d7de24dea257d7652317999adc0b1b572aa1d30fe42a49122ab6a",
+      "enabled": false,
+      "timing": null,
+      "timezone": "UTC",
+      "vars": {},
+      "bindings": [
+        {
+          "report": "filing",
+          "set": null,
+          "binding": "default"
+        }
+      ]
+    }
+  },
+  "occurrences": [],
+  "problems": []
+}
+--- stderr

@@ -175,6 +175,7 @@ exit: 0
             "set": null
           }
         ],
+        "enabled": true,
         "name": "finance_monthly",
         "schedule": {
           "cron": "0 6 1 * *"
@@ -189,6 +190,7 @@ exit: 0
             "set": null
           }
         ],
+        "enabled": true,
         "name": "ops_every_5_days",
         "report": "ops_monthly",
         "schedule": {
@@ -207,6 +209,7 @@ exit: 0
             "set": null
           }
         ],
+        "enabled": true,
         "name": "ops_tag_monthly",
         "schedule": {
           "rrule": "FREQ=MONTHLY;BYDAY=2TU"
@@ -221,6 +224,7 @@ exit: 0
             "set": null
           }
         ],
+        "enabled": true,
         "name": "ops_weekly",
         "report": "ops_monthly",
         "schedule": {

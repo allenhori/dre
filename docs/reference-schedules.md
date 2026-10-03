@@ -31,6 +31,7 @@ The file is a list; each entry has these keys.
 | `select` | string |  | A selector for the reports to run, e.g. `tag:regulatory`. Use `report` or `select`, not both. |
 | `vars` | map |  | Variables for the run: above the report's own and below `--var`. |
 | `timezone` | string |  | The timezone it fires in, and the one `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: the project's `timezone:` for firing (the report's for the run), then UTC. |
+| `enabled` | boolean |  | `false` pauses the schedule: it keeps its name and settings but `dre schedule ls` lists no occurrences for it. Default: `true`. |
 | `cron` | string |  | A cron expression (5 fields, or a macro such as `@daily`). A schedule needs exactly one of `cron`, `every` or `rrule`. |
 | `every` | map (see below) |  | Every N days, weeks or months, with exactly one unit, e.g. `{days: 3}`. |
 | `rrule` | string |  | An iCalendar recurrence rule, e.g. `FREQ=MONTHLY;BYDAY=2TU`. Use `starting` for a rule with `INTERVAL` above 1 or `COUNT`, and `at` for its time of day. |
