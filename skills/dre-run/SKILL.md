@@ -3,8 +3,8 @@ name: dre-run
 description: Validate, compile, run and preview DRE reports, check the output files, and deliver them - confirming before production runs or real deliveries - and explain errors when a run fails. Also previews when schedules fire, reruns a scheduled firing exactly, and wires DRE into an orchestrator (cron, Airflow, Databricks Jobs). Use when the user wants to run, test, preview or deliver a dre report, see upcoming scheduled runs, rerun a firing, set up an orchestrator, or asks why a dre run, validate or delivery failed.
 license: GPL-3.0-only
 metadata:
-  version: "1.1.0"
-  dre: ">=0.1.0, <0.2.0"
+  version: "2.0.0"
+  dre: ">=0.2.0, <0.3.0"
 ---
 
 # Run, check and deliver DRE reports
@@ -104,15 +104,15 @@ Do this before anything else. It needs no network.
 - What the user asked for: which reports, which Set (`--set`), which environment (`--target`),
   whether it should deliver.
 
-Selecting: report names, `tag:<tag>` or folder names, as arguments (`dre run daily monthly`) or
-with `-s`. `--set <name>` runs one Set, `--set all` every Set. `--var name=value` overrides a
+Selecting: report names, `tag:<tag>`, `source:<source>` or `source:<source>.<table>` (every
+report that reads it), or folder names, as arguments (`dre run daily monthly`) or with `-s`. `--set <name>` runs one Set, `--set all` every Set. `--var name=value` overrides a
 variable for this run.
 
 ### Step 3: validate
 
 Run `dre validate -s <report>`. It checks the project, compiles the SQL, checks every format and
-destination option, and for each selected Binding shows the compiled files, the source and its
-target, the output file, and every destination. Non-dev targets stand out. Read that list back
+destination option, and for each selected Binding shows the compiled files, the target, each
+query's connection, the output file, and every destination. Non-dev targets stand out. Read that list back
 to the user: it's what a run will do.
 
 `dre compile -s <report>` only renders the SQL into `target/compiled/` and lists the files, to
@@ -142,10 +142,11 @@ Say what matches and what doesn't. A mismatch goes back to `dre-report`.
 
 A run without `--preview` writes the full output to `target/run/` and **delivers it to every
 destination** in the report. Before any run that delivers anywhere but the local folder, or
-reads a production target (`--target prod`, or a profile whose default target isn't dev),
-confirm first (RUN-2):
+reads a production target (`--target prod`, `DRE_TARGET=prod`, or `target: prod` in
+`dre_project.yml`; `dre validate` prints the target and where it came from), confirm first
+(RUN-2):
 
-1. show what will happen, from step 3's `dre validate -s <report>` (source, target, output,
+1. show what will happen, from step 3's `dre validate -s <report>` (target, connections, output,
    each destination with its recipients, channel or path);
 2. ask for an explicit yes;
 3. run `dre run <report>` with the same selection, Set and target.

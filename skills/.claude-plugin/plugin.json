@@ -1,8 +1,8 @@
 {
   "name": "dre",
   "displayName": "DRE",
-  "version": "1.1.0",
-  "description": "An interactive guide to DRE, the Declarative Reporting Engine: install it, connect a source, write a report, run it and deliver it.",
+  "version": "2.0.0",
+  "description": "An interactive guide to DRE, the Declarative Reporting Engine: install it, connect a database, write a report, run it and deliver it.",
   "author": {"name": "get-dre"},
   "homepage": "https://github.com/get-dre/dre/tree/master/skills",
   "repository": "https://github.com/get-dre/dre",
