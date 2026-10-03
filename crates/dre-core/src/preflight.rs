@@ -10,8 +10,6 @@ pub const RUN_ATTRS: &[&str] = &[
     "report",
     "set",
     "target",
-    "profile",
-    "source_type",
     "schedule",
     "date",
     "date_format",
@@ -35,6 +33,48 @@ static CALL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[^\w.])([A-Za-
 
 static REF: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?:^|[^\w.])ref\s*\(\s*['"]([^'"]+)['"]\s*\)"#).unwrap());
+
+static TARGET: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:^|[^\w.])target\.([A-Za-z_]\w*)").unwrap());
+static SOURCE_ROLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#"role\s*=\s*['"]source['"]"#).unwrap());
+
+/// Template names DRE 0.2 removed, inside Jinja blocks: `(name, what to write instead, line)`.
+pub fn removed_names(src: &str) -> Vec<(String, String, usize)> {
+    let mut out = Vec::new();
+    for seg in SEGMENT.find_iter(src) {
+        for c in TARGET.captures_iter(seg.as_str()) {
+            let field = &c[1];
+            if field == "name" {
+                continue;
+            }
+            let line = line_at(src, seg.start() + c.get(0).unwrap().start());
+            let instead = match field {
+                "type" => "`connection.type` (the query's connection)".to_string(),
+                "profile" => "`connection.name` (the query's connection)".to_string(),
+                f => format!(
+                    "`connection.{f}` (the query's connection) or `profile('<name>').{f}`; `target` is now only the environment, `target.name`"
+                ),
+            };
+            out.push((format!("target.{field}"), instead, line));
+        }
+        for c in RUN.captures_iter(seg.as_str()) {
+            let instead = match &c[1] {
+                "profile" => "`connection.name` (the query's connection)",
+                "source_type" => "`connection.type` (the query's connection)",
+                _ => continue,
+            };
+            let line = line_at(src, seg.start() + c.get(0).unwrap().start());
+            out.push((format!("run.{}", &c[1]), instead.to_string(), line));
+        }
+        for m in SOURCE_ROLE.find_iter(seg.as_str()) {
+            out.push((
+                "role='source'".into(),
+                "`role='connection'`".into(),
+                line_at(src, seg.start() + m.start()),
+            ));
+        }
+    }
+    out
+}
 
 /// Every `ref('name')` with a literal name inside Jinja blocks, with its 1-based line.
 pub fn refs(src: &str) -> Vec<(String, usize)> {
@@ -138,6 +178,10 @@ pub fn unknown_run_refs(src: &str) -> Vec<(String, usize)> {
         for c in RUN.captures_iter(seg.as_str()) {
             let attr = &c[1];
             let line = line_at(src, seg.start() + c.get(0).unwrap().start());
+            if matches!(attr, "profile" | "source_type") {
+                // Reported by `removed_names`, with the replacement.
+                continue;
+            }
             if !RUN_ATTRS.contains(&attr) {
                 out.push((format!("run.{attr}"), line));
             } else if attr == "date"

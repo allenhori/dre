@@ -1,31 +1,29 @@
-//! `target.*`, `profile()` and `columns()` in templates.
+//! `connection.*`, `destination.*`, `target.name`, `profile()`, `run_query()` and `columns()` in
+//! templates, and the names DRE 0.2 removed.
 
 mod common;
 
 use common::{PLUGINS_YML, TestProject};
 
 const PROFILES: &str = "\
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: data.duckdb, catalog: client_a_catalog, schema: sales_dev, password: \"{{ env_var('DRE_SECRET_WH') }}\"}
       prod: {type: duckdb, path: data.duckdb, catalog: client_a_catalog, schema: sales_prod}
   cloud:
-    target: prod
     targets:
-      prod: {type: snowflake, account: acme, api_key: abc123, warehouse: small}
+      dev: {type: snowflake, account: acme, api_key: abc123, warehouse: small}
+      prod: {type: snowflake, account: acme_prod, api_key: abc123, warehouse: large}
   shared:
-    target: dev
     targets:
       dev: {type: duckdb, path: other.duckdb}
 destinations:
   reports_s3:
-    target: prod
     targets:
+      dev: {type: local, bucket: acme-reports-dev}
       prod: {type: local, bucket: acme-reports}
   shared:
-    target: dev
     targets:
       dev: {type: local}
 ";
@@ -40,7 +38,7 @@ fn project(sql: &str) -> TestProject {
             ("dependencies.yml", PLUGINS_YML),
             (
                 "reports/finance/monthly/monthly.yml",
-                "queries: [q]\noutput:\n  format: csv\n  destination:\n    profile: reports_s3\n    path: \"out/{{ profile('reports_s3').bucket }}/{{ target.schema }}.csv\"\n",
+                "queries: [q]\noutput:\n  format: csv\n  destination:\n    profile: reports_s3\n    path: \"out/{{ destination.bucket }}/{{ connection.schema }}-{{ target.name }}.csv\"\n",
             ),
             ("reports/finance/monthly/q.sql", sql),
         ],
@@ -64,18 +62,71 @@ fn compiled(p: &TestProject, args: &[&str]) -> String {
 }
 
 #[test]
-fn target_fields_follow_the_active_target() {
+fn connection_fields_follow_the_run_target() {
     let p = project(
-        "select * from {{ target.catalog }}.{{ target.schema }}.orders -- {{ target.name }} {{ target.type }} {{ target.profile }}\n",
+        "select * from {{ connection.catalog }}.{{ connection.schema }}.orders -- {{ target.name }} {{ target }} {{ connection.type }} {{ connection.name }} {{ connection }} {{ connection.target }}\n",
     );
     assert_eq!(
         compiled(&p, &[]),
-        "select * from client_a_catalog.sales_dev.orders -- dev duckdb warehouse\n"
+        "select * from client_a_catalog.sales_dev.orders -- dev dev duckdb warehouse warehouse dev\n"
     );
     assert_eq!(
         compiled(&p, &["--target", "prod"]),
-        "select * from client_a_catalog.sales_prod.orders -- prod duckdb warehouse\n"
+        "select * from client_a_catalog.sales_prod.orders -- prod prod duckdb warehouse warehouse prod\n"
     );
+}
+
+#[test]
+fn removed_names_fail_with_their_replacement() {
+    for (sql, says) in [
+        (
+            "select '{{ target.schema }}'\n",
+            "`target.schema` was removed in DRE 0.2: use `connection.schema` (the query's connection)",
+        ),
+        (
+            "select '{{ target.type }}'\n",
+            "`target.type` was removed in DRE 0.2: use `connection.type`",
+        ),
+        (
+            "select '{{ run.profile }}'\n",
+            "`run.profile` was removed in DRE 0.2: use `connection.name`",
+        ),
+        (
+            "select '{{ run.source_type }}'\n",
+            "`run.source_type` was removed in DRE 0.2: use `connection.type`",
+        ),
+        (
+            "select '{{ profile('shared', role='source').type }}'\n",
+            "`role='source'` was removed in DRE 0.2: use `role='connection'`",
+        ),
+    ] {
+        let p = project(sql);
+        p.dre_env("validate", &[], &[SECRET])
+            .failed()
+            .says("error[removed-template-name]")
+            .says(says);
+    }
+}
+
+#[test]
+fn destination_is_the_destination_being_rendered_and_nothing_else() {
+    let p = project("select '{{ destination.bucket }}'\n");
+    p.dre_env("compile", &[], &[SECRET])
+        .failed()
+        .says("`destination` only exists while rendering a destination's `path` and options");
+}
+
+#[test]
+fn run_query_and_columns_take_a_profile() {
+    let p = project(
+        "{% set n = run_query('select count(*) as n from orders', profile='shared') %}\
+         select {{ n[0].n }} as shared_n, {{ columns('orders', profile='warehouse') | length }} as cols\n",
+    );
+    p.duckdb(
+        "other.duckdb",
+        "create table orders (a int); insert into orders values (1), (2), (3);",
+    );
+    assert_eq!(compiled(&p, &[]), "select 3 as shared_n, 4 as cols\n");
 }
 
 #[test]
@@ -88,7 +139,7 @@ fn profile_reads_any_profile_and_output_paths_can_use_both() {
     r.ok();
     p.dre_env("validate", &["-s", "monthly"], &[SECRET])
         .ok()
-        .says("out/acme-reports/sales_dev.csv");
+        .says("out/acme-reports-dev/sales_dev-dev.csv");
 }
 
 #[test]
@@ -100,9 +151,9 @@ fn unknown_and_ambiguous_profiles_are_errors() {
     let p = project("select '{{ profile('shared').type }}'\n");
     p.dre_env("compile", &[], &[SECRET])
         .failed()
-        .says("`shared` is both a source and a destination profile")
-        .says("role='source'");
-    let p = project("select '{{ target.colour }}'\n");
+        .says("`shared` is both a connection and a destination profile")
+        .says("role='connection'");
+    let p = project("select '{{ connection.colour }}'\n");
     p.dre_env("compile", &[], &[SECRET])
         .failed()
         .says("profile `warehouse` (target `dev`) has no field `colour`");
@@ -111,7 +162,7 @@ fn unknown_and_ambiguous_profiles_are_errors() {
 #[test]
 fn secret_fields_are_refused_and_never_compiled() {
     // From a DRE_SECRET_* variable.
-    let p = project("select '{{ target.password }}'\n");
+    let p = project("select '{{ connection.password }}'\n");
     let r = p.dre_env("compile", &[], &[SECRET]);
     r.failed()
         .says("`password` of profile `warehouse` holds a secret");

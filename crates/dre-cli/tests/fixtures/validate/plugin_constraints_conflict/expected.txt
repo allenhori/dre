@@ -1,4 +1,5 @@
 exit: 1
 error[conflicting-plugin-constraints]: reports/ops/daily/daily.yml: plugin package `duckdb` is declared `>=2.0` in dependencies.yml and `<1.0` in reports/ops/daily/daily.yml; no version satisfies both
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation failed: 1 error, 0 warnings

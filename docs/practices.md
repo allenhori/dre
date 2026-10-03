@@ -155,20 +155,25 @@ every secret from `env_var()` (SEC-3), since the project is committed.
 
 **Level:** advise
 
-Give each system one profile, with a target per environment (`dev`, `prod`) and `dev` as its
-default `target`. Run production with `--target prod`. Two Databricks workspaces are two profiles.
+Give each system one connection profile, with an entry per environment (`dev`, `prod`). Leave the
+run's target at `dev` locally, and set `DRE_TARGET=prod` (or pass `--target prod`) where reports
+run for real. Give destinations only the targets they should deliver from. Two Databricks
+workspaces are two profiles.
 
 ```yaml
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: postgres, host: localhost, user: me, database: shop, password: "{{ env_var('PG_DEV_PASSWORD') }}"}
       prod: {type: postgres, host: db.internal, user: reports, database: shop, password: "{{ env_var('PG_PROD_PASSWORD') }}"}
+destinations:
+  finance_mail:
+    targets:
+      prod: {type: email, host: smtp.internal, from: reports@example.com}
 ```
 
-*Why:* the same report runs against dev and prod unchanged, and a plain `dre run` can't reach
-production by accident.
+*Why:* the same report runs against dev and prod unchanged, and a plain `dre run` reads dev data
+and delivers nowhere it shouldn't.
 
 ### SET-3: Start from a validated project
 
@@ -254,6 +259,30 @@ Reuse a query through `ref('file')`, and keep mapping tables you maintain by han
 (`lookups/`) rather than as `CASE` expressions or tables someone has to load.
 
 *Why:* one definition, used everywhere.
+
+### REP-7: Declare the tables you read as sources
+
+**Level:** advise
+
+Declare every table reports read under `sources:` (in `sources/`), and write
+`{{ source('sales', 'orders') }}` in SQL rather than the table's name. Put `profile:` on a source
+that lives on one system, and declare `columns` for tables whose shape other reports rely on.
+
+*Why:* table names live in one place, `dre run -s source:sales.orders` finds every report that
+reads a table that changed, `dre ls --resource-type source` shows what's unused, and
+`dre validate --live` catches upstream drift before a report runs.
+
+### REP-8: Name the connection where it's true
+
+**Level:** advise
+
+Let the data decide the connection: a source's `profile:` for tables on one system, a query's
+`profile:` only for a tab with no source, and the report's `profile:` (or `default_profile`) for
+the rest. Keep a report's `tab: false` setup queries on the same connection as the tabs that read
+what they make.
+
+*Why:* one rule (explicit beats inherited, and they must agree) then explains every tab's
+connection, and a setup query can't silently prepare a session the tabs never use.
 
 ## Running and delivering
 

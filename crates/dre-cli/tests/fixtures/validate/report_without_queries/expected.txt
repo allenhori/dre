@@ -1,4 +1,5 @@
 exit: 1
 error[missing-queries]: reports/ops/daily/daily.yml: report `daily` has no `queries`
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation failed: 1 error, 0 warnings

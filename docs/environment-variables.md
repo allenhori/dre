@@ -12,6 +12,7 @@ sidebar:
 | `DRE_PROFILES_DIR` | Directory holding `profiles.yml` (default: the project directory if it has one, else `~/.dre`). `--profiles-dir` overrides it. |
 | `DRE_PLUGINS_DIR` | One plugins directory for every project, instead of each project's `dre_deps/plugins`. |
 | `DRE_REGISTRY_URL` | The plugin package registry index (a URL or a local path). |
+| `DRE_TARGET` | The run's target (environment) for every profile. `--target` overrides it; it overrides `target:` in `dre_project.yml`; the default is `dev`. New in 0.2. |
 | `DRE_TARGET_PATH` | Where DRE writes its generated files (default: `target/` in the project). `--target-path` overrides it; it overrides `target_path:` in `dre_project.yml`. |
 | `GITHUB_TOKEN` | Sent to GitHub by `dre system update` and `github:` plugin sources (private repositories, rate limits). |
 | `DRE_GITHUB_API_URL` | The GitHub API for `github:` plugin sources and `dre system update` (GitHub Enterprise, a mirror). |

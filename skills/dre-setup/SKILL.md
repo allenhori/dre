@@ -154,9 +154,8 @@ Recommend the profile name `warehouse` (it's `dre new`'s default) and the target
 Show the exact YAML you'll add and where, e.g.:
 
 ```yaml
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev:
         type: postgres
@@ -170,16 +169,21 @@ sources:
 Then ask before writing. Rules:
 
 - Add to `~/.dre/profiles.yml` (SET-1); create it with this content if it doesn't exist.
-- Edit the file in place: add the profile at the end of the `sources:` section (or add the
-  section), keeping every other line, comment and profile as it was.
+- Edit the file in place: add the profile at the end of the `connections:` section (or add the
+  section), keeping every other line, comment and profile as it was. A file from DRE 0.1 has
+  `sources:` instead: suggest renaming it to `connections:` (dre warns about it), and never have
+  both. Remove a profile's own `target:` line if there is one (DRE 0.2 ignores it, with a warning).
 - If a profile with that name already exists, don't overwrite it without an explicit yes; offer
   another name, or a new target inside it (SET-2).
 - Never write a secret's value (SEC-3).
 
 **Several environments** (dev and prod): add another target to the same profile, with its own
-`env_var()` names, and keep `target: dev` as the default. Production runs then use
-`--target prod`. Two Databricks workspaces, or two unrelated databases, are two profiles; the
-report names the one it uses with `profile:`, or the project's `default_profile`.
+`env_var()` names. The run picks one target for every profile: `--target`, else `DRE_TARGET`, else
+`target:` in `dre_project.yml`, else `dev`, so a plain local run is a dev run. Production runs set
+`DRE_TARGET=prod` or pass `--target prod` (SET-2). A destination only delivers on the targets it
+has an entry for. Two Databricks workspaces, or two unrelated databases, are two profiles; a
+report names the one it uses with `profile:` (a query or a source can name its own), or the
+project's `default_profile`.
 
 ### Step 7: destinations (optional)
 
@@ -230,7 +234,7 @@ Afterwards, carry on from step 9 here.
   release downloads). Behind a proxy, set `HTTPS_PROXY`. GitHub's anonymous rate limit on
   shared IPs: have the user set `GITHUB_TOKEN` themselves.
 - **`unknown-profile` from `dre validate`:** the profile name in `dre_project.yml`
-  (`default_profile`) or a report isn't under `sources:` in the profiles file `dre validate`
+  (`default_profile`) or a report isn't under `connections:` in the profiles file `dre validate`
   names on its `Profiles` line. Fix the name, or check which `profiles.yml` it read (a project's
   own `profiles.yml` and `$DRE_PROFILES_DIR` come before `~/.dre`).
 - **A YAML error in `profiles.yml`:** usually indentation or an unquoted `{{ env_var(...) }}`,

@@ -228,7 +228,9 @@ nothing to do for a local package. A package declared in several files must name
 in each.
 
 Before packages, projects declared plugins one by one under `sources:`, `formats:` and
-`destinations:`. Those blocks are now an error that says to use `plugins:`.
+`destinations:`. Those blocks are now an error that says to use `plugins:`. (Since DRE 0.2,
+`sources:` declares tables instead, in dbt's format; a list of plugin names there gets the same
+error.)
 
 ## Macro packages
 

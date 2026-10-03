@@ -1,19 +1,23 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/get-dre/dre/blob/master/docs/manifest.schema.json",
-  "title": "DRE project manifest, schema 1",
-  "description": "target/manifest.json, written by `dre compile`, `dre validate` and `dre run`, and the document `dre ls --output json` prints (holding only the matching reports and schedules). New optional fields may appear within schema 1; consumers should ignore fields they don't know. See docs/manifest.md.",
+  "title": "DRE project manifest, schema 2",
+  "description": "target/manifest.json, written by `dre compile`, `dre validate` and `dre run`, and the document `dre ls --output json` prints (holding only the matching reports and schedules). Resolved for the run's inputs, as dbt's is: the target, vars, environment variables and run.* decide Jinja in `profile:` values and source fields, so the same project and the same inputs give the same bytes. New optional fields may appear within schema 2; consumers should ignore fields they don't know. See docs/manifest.md.",
   "type": "object",
-  "required": ["schema", "version", "project", "reports", "schedules", "plugins"],
+  "required": ["schema", "version", "project", "reports", "schedules", "sources", "plugins"],
   "properties": {
-    "schema": {"const": 1, "description": "The manifest format's version."},
+    "schema": {"const": 2, "description": "The manifest format's version (2 since DRE 0.2: connections and sources)."},
     "version": {"type": "string", "description": "The DRE version that wrote it."},
     "project": {
       "type": "object",
-      "required": ["name", "checksum"],
+      "required": ["name", "target", "checksum"],
       "properties": {
         "name": {"type": "string"},
-        "default_profile": {"type": "string", "description": "The default source profile's name."},
+        "target": {
+          "type": "string",
+          "description": "The run's target (environment): --target, DRE_TARGET, `target` in dre_project.yml, else `dev`."
+        },
+        "default_profile": {"type": "string", "description": "The default connection's name, as written (it may hold Jinja)."},
         "timezone": {"type": "string", "description": "The project's `timezone:` (IANA name)."},
         "checksum": {
           "$ref": "#/$defs/sha256",
@@ -21,15 +25,16 @@
         }
       }
     },
-    "reports": {
-      "type": "object",
-      "description": "By report name.",
-      "additionalProperties": {"$ref": "#/$defs/report"}
-    },
+    "reports": {"type": "object", "description": "By report name.", "additionalProperties": {"$ref": "#/$defs/report"}},
     "schedules": {
       "type": "object",
       "description": "By schedule name (schedules.yml).",
       "additionalProperties": {"$ref": "#/$defs/schedule"}
+    },
+    "sources": {
+      "type": "object",
+      "description": "Declared sources (`sources:`), by name.",
+      "additionalProperties": {"$ref": "#/$defs/source"}
     },
     "plugins": {
       "type": "array",
@@ -45,7 +50,10 @@
             "required": ["type"],
             "properties": {
               "type": {"enum": ["registry", "github", "local"]},
-              "location": {"type": "string", "description": "Another registry's URL or path, a GitHub `owner/repo`, or a local executable's path. Absent for DRE's default registry."}
+              "location": {
+                "type": "string",
+                "description": "Another registry's URL or path, a GitHub `owner/repo`, or a local executable's path. Absent for DRE's default registry."
+              }
             }
           }
         }
@@ -61,7 +69,27 @@
       "properties": {
         "query": {"type": "string"},
         "file": {"$ref": "#/$defs/path"},
-        "tab": {"type": "boolean", "description": "Whether its result becomes a tab (false: run for its effects only)."},
+        "profile": {"type": "string", "description": "The query's own `profile:`, as written."},
+        "connection": {
+          "type": ["string", "null"],
+          "description": "In a Binding: the connection the query runs on, from the parse pass (its own `profile:`, a source's, else the inherited one). Null when none resolves."
+        },
+        "depends_on": {
+          "type": "object",
+          "required": ["sources"],
+          "properties": {
+            "sources": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "`source.table` of every `source()` the query calls, in order of first use."
+            }
+          },
+          "description": "In a Binding: what the query reads."
+        },
+        "tab": {
+          "type": "boolean",
+          "description": "Whether its result becomes a tab (false: run for its effects only)."
+        },
         "tab_name": {"type": "string"},
         "anchor": {"type": "string"},
         "header": {"type": "boolean"},
@@ -70,7 +98,7 @@
     },
     "report": {
       "type": "object",
-      "required": ["name", "managed", "file", "folder", "tags", "queries", "checksum", "valid", "bindings"],
+      "required": ["name", "managed", "file", "folder", "tags", "queries", "depends_on", "checksum", "valid", "bindings"],
       "properties": {
         "name": {"type": "string"},
         "managed": {"type": "boolean", "description": "False for a bare .sql under reports/ (an unmanaged report)."},
@@ -80,7 +108,16 @@
         "timezone": {"type": "string"},
         "default_set": {"type": "string"},
         "queries": {"type": "array", "items": {"$ref": "#/$defs/query"}},
-        "checksum": {"$ref": "#/$defs/sha256", "description": "Over the defining file, every query file and any template."},
+        "depends_on": {
+          "type": "object",
+          "required": ["sources"],
+          "properties": {"sources": {"type": "array", "items": {"type": "string"}}},
+          "description": "Every source any of the report's Bindings reads, `source.table`."
+        },
+        "checksum": {
+          "$ref": "#/$defs/sha256",
+          "description": "Over the defining file, every query file and any template."
+        },
         "valid": {"type": "boolean"},
         "errors": {"type": "array", "items": {"type": "string"}, "description": "Present when invalid: what's wrong."},
         "bindings": {"type": "array", "items": {"$ref": "#/$defs/binding"}}
@@ -91,7 +128,10 @@
       "required": ["set", "profile", "vars", "queries", "output", "destinations", "schedules"],
       "properties": {
         "set": {"type": ["string", "null"], "description": "Null for a report without Sets."},
-        "profile": {"type": ["string", "null"], "description": "The source profile's name."},
+        "profile": {
+          "type": ["string", "null"],
+          "description": "The inherited connection (Set, report, folder `+profile`, `default_profile`), rendered. A query's own connection is on the query."
+        },
         "vars": {"type": "object", "description": "Fully merged: project < folders < report < Set."},
         "queries": {"type": "array", "items": {"$ref": "#/$defs/query"}},
         "output": {
@@ -111,7 +151,7 @@
             "type": "object",
             "required": ["profile"],
             "properties": {
-              "profile": {"type": "string"},
+              "profile": {"type": "string", "description": "The destination profile, rendered."},
               "path": {"type": "string", "description": "The path template, unrendered."}
             }
           }
@@ -135,7 +175,10 @@
             "also": {"type": "array", "items": {"type": "string"}, "description": "Extra dates it fires on."}
           }
         },
-        "timing": {"type": "string", "description": "The timings.yml entry the timing comes from, when it's a shared one."},
+        "timing": {
+          "type": "string",
+          "description": "The timings.yml entry the timing comes from, when it's a shared one."
+        },
         "enabled": {"type": "boolean", "description": "False when the schedule is paused (`enabled: false`)."},
         "vars": {"type": "object"},
         "timezone": {"type": "string", "description": "The schedule's `timezone:`, or its shared timing's."},
@@ -145,11 +188,72 @@
           "items": {
             "type": "object",
             "required": ["report", "set"],
+            "properties": {"report": {"type": "string"}, "set": {"type": ["string", "null"]}}
+          }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "required": ["name", "file", "schema", "tags", "meta", "tables"],
+      "properties": {
+        "name": {"type": "string"},
+        "file": {"$ref": "#/$defs/path", "description": "The YAML file declaring it."},
+        "profile": {
+          "type": "string",
+          "description": "The connection it lives on, rendered. Absent: it runs wherever its query runs."
+        },
+        "database": {"type": "string", "description": "Rendered. Absent: `source()` renders two parts."},
+        "schema": {"type": "string", "description": "Rendered; the source's name unless set."},
+        "description": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "meta": {"type": "object"},
+        "tables": {
+          "type": "object",
+          "description": "By table name.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["name", "identifier", "quoting", "tags", "meta", "columns", "used_by"],
             "properties": {
-              "report": {"type": "string"},
-              "set": {"type": ["string", "null"]}
+              "name": {"type": "string"},
+              "identifier": {"type": "string", "description": "The real table name, rendered; the table's name unless set."},
+              "quoting": {
+                "type": "object",
+                "required": ["database", "schema", "identifier"],
+                "properties": {
+                  "database": {"type": "boolean"},
+                  "schema": {"type": "boolean"},
+                  "identifier": {"type": "boolean"}
+                },
+                "description": "Which parts `source()` quotes, the table's over the source's."
+              },
+              "description": {"type": "string"},
+              "tags": {"type": "array", "items": {"type": "string"}},
+              "meta": {"type": "object"},
+              "columns": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name"],
+                  "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "data_type": {"type": "string"}
+                  }
+                }
+              },
+              "used_by": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "The reports that read it. Empty: unused."
+              }
             }
           }
+        },
+        "errors": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Fields that didn't render (left as written)."
         }
       }
     }

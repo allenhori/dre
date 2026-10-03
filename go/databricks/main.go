@@ -258,7 +258,7 @@ func (s *server) handle(t string, req map[string]json.RawMessage) error {
 	}
 	switch t {
 	case "describe":
-		s.send(map[string]any{"type": "describe", "connection_fields": connectionFields()})
+		s.send(map[string]any{"type": "describe", "connection_fields": connectionFields(), "identifier_quote": "`"})
 		return nil
 	case "open":
 		var conn map[string]any

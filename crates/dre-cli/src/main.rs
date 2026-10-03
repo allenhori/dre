@@ -95,7 +95,8 @@ struct RunArgs {
     /// With a selector and/or --set, run just those of its Bindings.
     #[arg(long, value_name = "NAME")]
     schedule: Option<String>,
-    /// Use this source profile instead of the resolved one (e.g. for an ad hoc Set).
+    /// Use this connection instead of the inherited one (report, Set, folder `+profile`,
+    /// `default_profile`), e.g. for an ad hoc Set. A query's own `profile:` or a source's wins.
     #[arg(long)]
     profile: Option<String>,
     /// Override the output file name for this run.
@@ -160,7 +161,7 @@ struct InitArgs {
 struct NewArgs {
     /// Directory to create (must be missing or empty).
     dir: PathBuf,
-    /// The source profile the project uses by default.
+    /// The connection profile the project uses by default.
     #[arg(long, default_value = "warehouse")]
     profile: String,
     /// The source plugin the project declares.
@@ -188,7 +189,8 @@ struct ProjectArgs {
     /// Fail instead of installing declared plugins that are missing.
     #[arg(long)]
     no_auto_install: bool,
-    /// Use this target (environment) of every profile instead of each profile's default `target`.
+    /// The run's target (environment): every profile uses its entry for it (default:
+    /// $DRE_TARGET, then `target` in dre_project.yml, then `dev`).
     #[arg(long)]
     target: Option<String>,
     /// Where DRE writes its generated files (default: $DRE_TARGET_PATH, then `target_path` in
@@ -219,11 +221,14 @@ impl ProjectArgs {
             target: self.target.clone(),
             vars: self.vars.iter().cloned().collect(),
             target_path: self.target_path.clone(),
+            date: run_date(),
+            scheduled_at: run_at().ok().flatten(),
+            timezone: self.timezone(),
         }
     }
 }
 
-fn parse_var(s: &str) -> Result<(String, String), String> {
+pub(crate) fn parse_var(s: &str) -> Result<(String, String), String> {
     match s.split_once('=') {
         Some((k, v)) if !k.trim().is_empty() => Ok((k.trim().to_string(), v.to_string())),
         _ => Err(format!("expected NAME=VALUE, got `{s}`")),
@@ -327,6 +332,10 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     }
     let selector = selection(&a.select, &a.selector);
     let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
+    // validate checks every report, so templates that don't render are its errors too.
+    for d in project.iter().flat_map(|p| p.parse_errors.values().flatten()) {
+        diags.push(d.clone());
+    }
     let report_errors = project
         .as_ref()
         .map(|p| dre_core::manifest::report_errors(p, &diags))
@@ -343,7 +352,7 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
         let offline = a.project.no_auto_install || diags.has_errors();
         plugins::check_for_validate(p, !a.project.no_auto_install, &mut diags, printer);
         check_plugin_uses(p, &a.project, &mut diags);
-        dre_core::options::check(p, a.project.target.as_deref(), offline, &mut diags);
+        dre_core::options::check(p, offline, &mut diags);
     }
     // Only a project that checks out gets compiled.
     let plans = match &project {
@@ -358,6 +367,10 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
                 "path": p.profiles.path,
                 "exists": p.profiles.exists(),
                 "found_by": p.profiles.found_by,
+            })),
+            "target": project.as_ref().map(|p| serde_json::json!({
+                "name": p.target_name,
+                "from": p.target_from.to_string(),
             })),
             "errors": diags.error_count(),
             "warnings": diags.warning_count(),
@@ -386,6 +399,7 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
         }
         if let Some(p) = &project {
             printer.line(output::Tone::Note, "Profiles", &profiles_line(&p.profiles));
+            printer.line(output::Tone::Note, "Target", &target_line(p));
         }
         let (e, w) = (diags.error_count(), diags.warning_count());
         let verdict = if ok { "passed" } else { "failed" };
@@ -638,6 +652,11 @@ fn profiles_line(p: &dre_core::profiles::Profiles) -> String {
     format!("{} (from {}{missing})", p.path.display(), p.found_by)
 }
 
+/// The run's target and where it came from.
+fn target_line(p: &dre_core::project::Project) -> String {
+    format!("{} (from {})", p.target_name, p.target_from)
+}
+
 /// Load the project for `compile` and `run`, writing its manifest; `None` (after printing
 /// why) when it can't run. Also returns the SHA-256 of the manifest written.
 fn load_for_run(
@@ -660,11 +679,8 @@ fn load_for_run(
         }
     };
     for d in diags.sorted() {
-        // Unmanaged reports warn again when they run, and a selected Binding whose profile
-        // lacks the `--target` fails with its own error; the rest aren't this run's concern.
-        if d.severity == dre_core::Severity::Warning
-            && matches!(d.code, "unmanaged-report" | "missing-target")
-        {
+        // Unmanaged reports warn again when they run.
+        if d.severity == dre_core::Severity::Warning && d.code == "unmanaged-report" {
             continue;
         }
         printer.diag(d);
@@ -732,7 +748,7 @@ fn report_diags(diags: &dre_core::Diagnostics, printer: &output::Printer) -> boo
     true
 }
 
-fn run_date() -> Option<chrono::NaiveDate> {
+pub(crate) fn run_date() -> Option<chrono::NaiveDate> {
     std::env::var("DRE_RUN_DATE")
         .ok()
         .and_then(|d| chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok())
@@ -740,7 +756,7 @@ fn run_date() -> Option<chrono::NaiveDate> {
 
 /// `DRE_RUN_AT`: the instant a scheduled run was scheduled for (RFC 3339). Checked before any
 /// project command starts, so callers can treat an error as unset.
-fn run_at() -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+pub(crate) fn run_at() -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
     match std::env::var("DRE_RUN_AT") {
         Ok(v) if !v.is_empty() => chrono::DateTime::parse_from_rfc3339(&v)
             .map(|t| Some(t.with_timezone(&chrono::Utc)))
@@ -766,7 +782,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     let mut diags = dre_core::Diagnostics::default();
     check_plugin_uses(&project, &a.project, &mut diags);
     if !diags.has_errors() {
-        dre_core::options::check(&project, a.project.target.as_deref(), false, &mut diags);
+        dre_core::options::check(&project, false, &mut diags);
     }
     if !report_diags(&diags, &printer) {
         return ExitCode::FAILURE;
@@ -802,10 +818,12 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         .or(opts.scheduled_at.map(|t| t.date_naive()))
         .unwrap_or_else(|| chrono::Utc::now().date_naive());
     let mut params = opts.params(date);
+    params["target"] = serde_json::json!(project.target_name);
     params["profiles"] = serde_json::json!(project.profiles.path);
     params["target_path"] = serde_json::json!(project.target_dir);
     printer.log_params(&params);
     printer.detail(output::Tone::Note, "Profiles", &profiles_line(&project.profiles));
+    printer.detail(output::Tone::Note, "Target", &target_line(&project));
     let summary = dre_core::run::run(&project, &opts, &mut printer);
     if let Some(e) = &summary.error {
         printer.error(e);

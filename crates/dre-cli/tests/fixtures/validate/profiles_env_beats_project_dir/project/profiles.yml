@@ -1,2 +1,2 @@
-sources:
-  other: {target: dev, targets: {dev: {type: duckdb, path: ./x.duckdb}}}
+connections:
+  other: {targets: {dev: {type: duckdb, path: ./x.duckdb}}}

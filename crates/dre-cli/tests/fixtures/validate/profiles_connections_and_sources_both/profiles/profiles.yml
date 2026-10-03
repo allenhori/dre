@@ -1,0 +1,8 @@
+connections:
+  local_dev:
+    targets:
+      dev: {type: duckdb, path: ./dev.duckdb}
+sources:
+  other:
+    targets:
+      dev: {type: duckdb, path: ./other.duckdb}

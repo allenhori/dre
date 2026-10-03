@@ -8,7 +8,7 @@ sidebar:
 # The target path
 
 The target path is the folder DRE writes its generated files to. It has nothing to do with a
-profile's `target` (the environment a connection uses). It's `target/` in the project unless set,
+run's target (`--target`, the environment every profile uses). It's `target/` in the project unless set,
 highest first, by:
 
 1. `--target-path <path>` on `compile`, `validate`, `run`, `clean` and `ls`;

@@ -1,0 +1,27 @@
+version: 2
+
+sources:
+  - name: sales
+    description: The shop's orders
+    schema: "{{ 'sales_prod' if target.name == 'prod' else 'sales' }}"
+    profile: "{{ var('sales_conn', 'duck') }}"
+    loader: fivetran
+    freshness: {warn_after: {count: 12, period: hour}}
+    tables:
+      - name: orders
+        identifier: raw_orders_v2
+        loaded_at_field: _etl_ts
+        columns:
+          - name: id
+            data_type: bigint
+            data_tests: [unique]
+      - name: customers
+  - name: crm
+    database: analytics
+    profile: pg
+    tables:
+      - name: accounts
+      - name: contacts
+  - name: lookups
+    tables:
+      - name: regions

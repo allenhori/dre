@@ -1,0 +1,4 @@
+queries:
+  - {query: a1, profile: "{{ var('conn') }}"}
+  - {query: a2, profile: "{{ columns('t') }}"}
+vars: {conn: pg}

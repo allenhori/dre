@@ -101,15 +101,25 @@ output:
   formats), in the YAML's order, named by `tab_name` or the file name. A file can hold several
   statements; the last is the tab. A second `SELECT` in a tab file is an error. The YAML decides
   the tabs, never the data.
-- **Queries** run in the listed order on one database session, so a temp table made by one is
-  there for the next.
+- **Queries** run in the listed order, each on its connection's session (one per connection), so
+  a temp table made by one is there for later queries on the same connection. A query runs on
+  its own `profile:`, else the connection of the sources it reads, else the report's (Set,
+  report, folder `+profile`, `default_profile`); they must agree. One workbook can hold tabs from
+  several databases (REP-8).
+- **Sources** (REP-7): declare the tables reports read in dbt's format under `sources:` (in
+  `sources/<name>.yml`), with DRE's `profile:` for the connection they live on, and write
+  `{{ source('sales', 'orders') }}` in SQL. `identifier` is the real table name, `schema`
+  defaults to the source's name, `database` makes three parts, and `quoting` quotes parts.
 - **Jinja** works in SQL, paths and options: `var('name')`, `run.date` (e.g.
   `run.date.prev_month.start.date`, `run.date.yyyymmdd`), `env_var()`, `ref('file')` for another
-  `.sql` file as a subquery, `target.*` for connection settings, and macros from `macros/`.
-- Report keys: `queries`, `output`, `vars`, `profile` (a source profile other than the project's
+  `.sql` file as a subquery, `source()` for a declared table, `connection.*` for the query's
+  connection settings (`connection.schema`, `connection.type`), `target.name` for the
+  environment, and macros from `macros/`. Never `target.<field>`, `run.profile` or
+  `run.source_type`: DRE 0.2 removed them (`dre validate` names the replacement).
+- Report keys: `queries`, `output`, `vars`, `profile` (a connection other than the project's
   `default_profile`), `sets`, `default_set`, `tags`, `timezone`. Schedules live in `schedules.yml`,
   never in a report (see Scheduling a report). Query entry keys:
-  `query`, `tab`, `tab_name`, `anchor`, `header`, `columns`. Output keys DRE owns: `format`,
+  `query`, `profile`, `tab`, `tab_name`, `anchor`, `header`, `columns`. Output keys DRE owns: `format`,
   `destination`, `template`, `extension`; every other output key is the format plugin's option.
 
 ## Steps
@@ -141,8 +151,9 @@ Do this before anything else. It needs no network.
 
 - Find the project root (`dre_project.yml`) and run `dre ls` for its reports.
 - Read `dre_project.yml` (`default_profile`, `vars`, `format_options`), `dependencies.yml`
-  (declared plugin packages), and the source profile's `type` (names and types only from
-  `profiles.yml`, e.g. `grep -nE '^  [A-Za-z0-9_-]+:|type:' ~/.dre/profiles.yml`).
+  (declared plugin packages), the declared sources (`dre ls --resource-type source`), and each
+  connection's `type` (names and types only from `profiles.yml`, e.g.
+  `grep -nE '^  [A-Za-z0-9_-]+:|type:' ~/.dre/profiles.yml`).
 - For a change: read the report's YAML and SQL files first.
 - Read the plugin references this report will use, and only those:
   `references/plugins/source-<type>.md`, `format-<format>.md`, `destination-<type>.md`.
@@ -286,8 +297,12 @@ Then point to `dre-run` for running a firing or wiring the orchestrator.
 - **"a second SELECT" in a tab file:** give the second query its own `.sql` file and tab (REP-1).
 - **A tab file whose last statement returns nothing:** it only prepares data; list it with
   `tab: false`.
-- **`unknown-profile`:** the destination or source profile isn't in `profiles.yml`; add it
+- **`unknown-profile`:** the destination or connection profile isn't in `profiles.yml`; add it
   (`dre-setup`) or fix the name.
+- **`connection-conflict`:** a query's `profile:` disagrees with a source it reads, or it reads
+  sources on two connections; split the query, or make the profiles agree.
+- **`removed-template-name`:** DRE 0.1's `target.schema`, `run.profile` and the like; write the
+  replacement the message gives (`connection.schema`, `connection.name`).
 - **A plugin isn't declared or installed:** add its package under `plugins:` in
   `dependencies.yml`; `dre validate` then installs it.
 - **Template errors** (`undefined`, unknown `var`): a `var()` without a default and no value, a

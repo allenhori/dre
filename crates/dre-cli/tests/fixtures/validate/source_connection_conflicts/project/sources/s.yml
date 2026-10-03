@@ -1,0 +1,7 @@
+sources:
+  - name: sales
+    profile: duck
+    tables: [{name: orders}]
+  - name: crm
+    profile: pg
+    tables: [{name: accounts}]

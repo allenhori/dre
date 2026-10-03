@@ -189,6 +189,9 @@ func TestHandshakeDescribeAndRequestErrors(t *testing.T) {
 	if strings.Join(names, ",") != "host,http_path,auth_type,token,client_id,client_secret,catalog,schema" {
 		t.Fatalf("fields: %v", names)
 	}
+	if d["identifier_quote"] != "`" {
+		t.Fatalf("identifier_quote: %v", d["identifier_quote"])
+	}
 	c.send(map[string]any{"type": "nonsense"})
 	expectError(t, c.reply(), "unsupported request `nonsense`")
 	c.send(map[string]any{"type": "write", "path": "x", "format": "csv", "options": map[string]any{}, "result_sets": []any{}})

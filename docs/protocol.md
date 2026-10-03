@@ -175,14 +175,14 @@ another plugin kind, are answered with `error`.
 
 | Request | Reply |
 |---|---|
-| `{"type":"describe"}` | `{"type":"describe","connection_fields":[{"name","description","required","secret","default","same_as_source"}],"option_fields":[{"name","type","description","required","default","choices","min","max"}]}` |
+| `{"type":"describe"}` | `{"type":"describe","connection_fields":[{"name","description","required","secret","default","same_as_source"}],"option_fields":[{"name","type","description","required","default","choices","min","max"}],"identifier_quote":"\""}` |
 | `{"type":"validate","options":{…}}` | `{"type":"validated","errors":["…"]}` |
 | `{"type":"close"}` | `{"type":"ok"}`, then the plugin exits 0 |
 
 `describe` lists the fields a `profiles.yml` target of this plugin's type accepts. `dre init`
 uses it to prompt for connection details. By default it offers fields marked `secret` as
 `env_var()` references. A destination field with `"same_as_source": "<source type>"` defaults
-to the value entered for a source profile of that type (for example one Databricks host for
+to the value entered for a connection profile of that source type (for example one Databricks host for
 both). Format plugins return an empty list.
 
 `option_fields` lists the options the plugin takes (see [The plugin interface](#the-plugin-interface)).
@@ -190,6 +190,12 @@ both). Format plugins return an empty list.
 `strings` (a string or a list of strings), `list`, `map` or `any`. `choices` limits a string to
 those values; `min` and `max` bound a number, inclusive. It may be omitted when the plugin
 takes no options.
+
+`identifier_quote` (sources only) is the character the database quotes identifiers with: `"` for
+DuckDB and Postgres, a backtick for Databricks. Core quotes the parts of a
+[source](sources.md) that ask for it (`quoting:`) with this character, doubling it inside a name.
+Every source returns it; formats and destinations leave it out. Added in DRE 0.2 (duckdb and
+postgres 1.1.0, databricks 1.1.0); core 0.2 needs it only for a source with `quoting:`.
 
 `validate` checks one config block of options and replies `validated` with every problem found,
 each a sentence naming the key; `errors` is empty when the block is fine. The plugin doesn't
@@ -340,7 +346,8 @@ optional field to a message does not change the version; anything else does.
 ## Conformance
 
 `dre_protocol::conformance::run(path)` checks a plugin binary. It covers the handshake and
-identity, refusal of an unsupported version, `describe`, error replies for unknown and wrong-kind
+identity, refusal of an unsupported version, `describe` (and, for a source, that it gives a
+one-character `identifier_quote`), error replies for unknown and wrong-kind
 requests, `validate` (advertised, answered, and refusing an option the plugin doesn't declare),
 behaviour on a malformed frame, and a clean exit on `close` and on end of input. For a
 destination it also sends a `deliver` carrying `options` and, when `multi_file` is advertised, a

@@ -27,12 +27,13 @@ For editor autocomplete and validation, add this as the first line of the file (
 | `tags` | list of string |  | Tags to select the report with, `-s tag:<tag>`. |
 | `queries` | list of string or map (see below) |  | The `.sql` files whose results make the report's tabs, in the order they run, on one database session. |
 | `output` | map (see below) |  | How a report's result is written and where it goes. Besides the keys below, each format takes its own options (for example `delimiter` for `delimited`, `columns` for `fixed_width`); they are documented with the plugins. |
-| `profile` | string |  | The source profile (in `profiles.yml`) the queries run against. Default: the folder's `+profile`, then `default_profile`. Can't be combined with `sets`. |
+| `profile` | string |  | The connection (in `profiles.yml`) the queries run on, unless a query's own `profile:` or a source's says otherwise. Default: the folder's `+profile`, then `default_profile`. Can't be combined with `sets`. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
 | `sets` | list of string or map (see below) |  | The Sets the report can run as, by name (declared in `sets.yml`) or declared here. |
 | `default_set` | string |  | The Set a plain `dre run` uses. Must be one of `sets`. |
 | `vars` | map |  | Variables, read in SQL and YAML with `var('name')`. Values can be strings, numbers, booleans, lists or maps. |
 | `timezone` | string |  | The timezone `run.date` and `run.now` use, an IANA name such as `Australia/Sydney`. Default: UTC. |
 | `plugins` | list of plugin packages: a name, `name: "<version>"`, or a map (see below) |  | The plugin packages this project uses. DRE installs them on demand into `dre_deps/` and pins them in `dre.lock`. May be written in any project YAML file; `dependencies.yml` is the usual place. |
+| `sources` | map, as in [the sources reference](reference-sources.md) |  | dbt-style source declarations (see the sources schema). May be written in any project YAML file. |
 
 ## `queries[]`
 
@@ -41,6 +42,7 @@ A query with settings, instead of just its name.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `query` (required) | string |  | The name of a `.sql` file under `reports/`, without folder or extension. |
+| `profile` | string |  | The connection this query runs on, over the report's, Set's, folder's and project's. Must agree with the `profile` of any source it uses. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
 | `tab` | boolean | `true` | `false` runs the file only for what it does (temp tables, `SET`s) and discards any result, so it gets no tab. |
 | `tab_name` | string |  | The tab (sheet) name. Default: the file's name. Not allowed with `tab: false`. |
 | `anchor` | string |  | Where the data starts on the sheet (xlsx only). Default: `A1`. |
@@ -75,8 +77,8 @@ Where a file is delivered: the name of a destination profile in `profiles.yml`, 
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `profile` (required) | string |  | The destination profile in `profiles.yml` (under `destinations:`) to deliver with. `local` is built in. |
-| `path` | string |  | Where to put the file: a path, or a URL such as `s3://bucket/key`, depending on the destination. Rendered with Jinja, so it can use `var()`, `run.*` and macros. |
+| `profile` (required) | string |  | The destination profile in `profiles.yml` (under `destinations:`) to deliver with. `local` is built in. A destination with no entry for the run's target is skipped. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
+| `path` | string |  | Where to put the file: a path, or a URL such as `s3://bucket/key`, depending on the destination. Rendered with Jinja, so it can use `var()`, `run.*`, macros and `destination.*` (this destination's settings). |
 | _other keys_ | | | Options of the plugin that handles this block; see [Plugins](plugins.md). |
 
 ## `output.template`
@@ -111,7 +113,7 @@ A Set declared in the report: a named variant of it.
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `name` (required) | string |  | The Set's name. A report can also name Sets declared in `sets.yml`. |
-| `profile` | string |  | The source profile this Set runs against. |
+| `profile` | string |  | The connection this Set runs on. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
 | `vars` | map |  | Variables, read in SQL and YAML with `var('name')`. Values can be strings, numbers, booleans, lists or maps. |
 | `exclude` | list of string |  | Queries to leave out of this Set, by name. |
 | `queries` | list of string or map (see below) |  | Replaces the report's queries for this Set. |

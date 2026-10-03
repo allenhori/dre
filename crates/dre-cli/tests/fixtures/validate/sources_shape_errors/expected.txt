@@ -1,0 +1,11 @@
+exit: 1
+error[duplicate-source]: sources/a.yml:2: source `sales` is also declared in dre_project.yml; source names must be unique
+error[invalid-source]: sources/a.yml:4: source `crm`: unknown `quoting` key `column`; use `database`, `schema` or `identifier`
+error[unknown-key]: sources/a.yml:5: source `crm`: unknown key `colour`; a source takes name, description, database, schema, quoting, tags, meta, tables, profile
+error[duplicate-source-table]: sources/a.yml:8: source `crm` declares table `accounts` twice
+error[unknown-key]: sources/a.yml:9: source `crm`, table `accounts`: unknown key `materialized`; a table takes name, identifier, description, quoting, tags, meta, columns
+error[unknown-key]: sources/a.yml:14: source `crm`, table `contacts`, column `id`: unknown key `data_typ`; a column takes name, description, data_type
+error[moved-plugin-declaration]: sources/b.yml:1: `sources:` declares tables now (dbt's format); list plugin packages under `plugins:` instead (e.g. `plugins: [duckdb]`)
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
+Validation failed: 7 errors, 0 warnings

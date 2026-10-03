@@ -1,0 +1,7 @@
+exit: 0
+warning[profiles-sources-renamed]: $CASE/profiles/profiles.yml:1: `sources:` in profiles.yml is now `connections:` (DRE 0.2); rename it. `sources:` still works in 0.2.x
+warning[profile-target-ignored]: $CASE/profiles/profiles.yml:3: connection profile `local_dev`: a profile's own `target:` is ignored since DRE 0.2; the run picks one target for every profile (--target, DRE_TARGET, `target:` in dre_project.yml, else `dev`). Remove it
+Compiled 1 Binding into target/compiled/
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
+Validation passed: 0 errors, 2 warnings

@@ -85,7 +85,7 @@ impl Env {
         std::fs::create_dir_all(dir.path().join("profiles")).unwrap();
         std::fs::write(
             dir.path().join("profiles/profiles.yml"),
-            "sources:\n  fx:\n    target: dev\n    targets:\n      dev: {type: fixture}\n",
+            "connections:\n  fx:\n    targets:\n      dev: {type: fixture}\n",
         )
         .unwrap();
         Env { dir }
@@ -545,6 +545,6 @@ fn sources_formats_and_destinations_blocks_point_at_plugins() {
     let e = Env::new("sources:\n  - fixture\nformats:\n  - csv\n");
     e.dre(&["validate", "--no-auto-install"])
         .failed()
-        .says("`sources:` no longer declares plugins: list plugin packages under `plugins:` instead")
+        .says("`sources:` declares tables now (dbt's format); list plugin packages under `plugins:` instead")
         .says("`formats:` no longer declares plugins");
 }

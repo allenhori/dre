@@ -1,0 +1,7 @@
+exit: 1
+error[connection-conflict]: reports/ops/a/q_vs_source.sql: report `a`: query `q_vs_source` can't run on one connection: query `q_vs_source` sets `profile: pg`, but source `sales.orders` is on connection `duck`; one query runs on one connection
+error[connection-conflict]: reports/ops/b/two_sources.sql: report `b`: query `two_sources` can't run on one connection: source `sales.orders` is on connection `duck`, but source `crm.accounts` is on connection `pg`; one query runs on one connection
+error[parse-failed]: reports/ops/c/unknown_source.sql:1: report `c`: query `unknown_source` doesn't parse: `source('sales', 'refunds')`: source `sales` has no table `refunds` (it has: orders)
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
+Validation failed: 3 errors, 0 warnings

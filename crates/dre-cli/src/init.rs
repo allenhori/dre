@@ -73,7 +73,7 @@ pub fn scaffold(dir: &Path, s: &Scaffold) -> Result<Vec<PathBuf>, String> {
         (
             "dre_project.yml",
             format!(
-                "{}name: {}\n# Profile under `sources:` in ~/.dre/profiles.yml for reports that don't name one.\ndefault_profile: {}\n",
+                "{}name: {}\n# Connection under `connections:` in ~/.dre/profiles.yml for reports that don't name one.\ndefault_profile: {}\n",
                 schema_line("project"),
                 s.name,
                 s.profile
@@ -302,7 +302,7 @@ fn env_name(profile: &str, field: &str) -> String {
         .collect()
 }
 
-/// The source profile just set up, whose values a destination on the same platform can reuse.
+/// The connection profile just set up, whose values a destination on the same platform can reuse.
 struct SourceConn<'a> {
     kind: &'a str,
     profile: &'a str,
@@ -403,8 +403,21 @@ fn add_profile(
     fields: Mapping,
 ) -> Result<(), String> {
     let existing = std::fs::read_to_string(path).unwrap_or_default();
-    if let Ok(v) = serde_yaml_ng::from_str::<Value>(&existing)
-        && v.get(role.section()).and_then(|s| s.get(name)).is_some()
+    let parsed = serde_yaml_ng::from_str::<Value>(&existing).ok();
+    // A DRE 0.1 file keeps its connections under `sources:`; add to that rather than start a
+    // second section.
+    let section = match &parsed {
+        Some(v)
+            if role == Role::Connection
+                && v.get(role.section()).is_none()
+                && v.get(dre_core::profiles::OLD_CONNECTIONS_SECTION).is_some() =>
+        {
+            dre_core::profiles::OLD_CONNECTIONS_SECTION
+        }
+        _ => role.section(),
+    };
+    if let Some(v) = &parsed
+        && v.get(section).and_then(|s| s.get(name)).is_some()
     {
         return Err(format!(
             "{} profile `{name}` already exists in {}",
@@ -418,7 +431,6 @@ fn add_profile(
     let mut targets = Mapping::new();
     targets.insert(Value::String(target.into()), Value::Mapping(settings));
     let mut profile = Mapping::new();
-    profile.insert("target".into(), Value::String(target.into()));
     profile.insert("targets".into(), Value::Mapping(targets));
     let mut root = Mapping::new();
     root.insert(Value::String(name.into()), Value::Mapping(profile));
@@ -429,7 +441,7 @@ fn add_profile(
         .collect();
 
     let mut lines: Vec<String> = existing.lines().map(str::to_string).collect();
-    let header = format!("{}:", role.section());
+    let header = format!("{section}:");
     match lines.iter().position(|l| l.trim_end() == header) {
         Some(start) => {
             // The section runs until the next top-level key; add the profile at its end.
@@ -498,7 +510,7 @@ fn init_inner(profiles_dir: Option<PathBuf>, printer: &Printer, input: impl BufR
     let conn = connection(&mut p, &profile, &fields, None)?;
     add_profile(
         &profiles_path,
-        Role::Source,
+        Role::Connection,
         &profile,
         &target,
         source.name(),

@@ -6,6 +6,10 @@ exit: 0
     "exists": true,
     "found_by": "--profiles-dir"
   },
+  "target": {
+    "name": "dev",
+    "from": "the default"
+  },
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],
@@ -17,7 +21,13 @@ exit: 0
         "target/compiled/daily_summary/default/summary.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "summary",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/daily_summary/default/daily_summary.csv",
@@ -31,7 +41,13 @@ exit: 0
         "target/compiled/quarterly_filing/default/filing_q.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "filing_q",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/quarterly_filing/default/quarterly_filing.csv",
@@ -59,7 +75,8 @@ exit: 0
     "project": {
       "checksum": "c0bb111ae2422a80a4e6ae4a0cd385c004763ad4dbb65ba5b2be2092b2c3b8de",
       "default_profile": "local_dev",
-      "name": "acme_reports"
+      "name": "acme_reports",
+      "target": "dev"
     },
     "reports": {
       "daily_summary": {
@@ -73,6 +90,10 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/ops/daily_summary/summary.sql",
                 "query": "summary",
                 "tab": true
@@ -84,6 +105,9 @@ exit: 0
           }
         ],
         "checksum": "3d7d62d173a660af1b5245acaca8c568aefc0f7dfe5aa9ae75c1ba03ccba8e33",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/ops/daily_summary/daily_summary.yml",
         "folder": [
           "ops",
@@ -112,6 +136,10 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/regulatory/quarterly/filing/filing_q.sql",
                 "query": "filing_q",
                 "tab": true
@@ -123,6 +151,9 @@ exit: 0
           }
         ],
         "checksum": "e2ce17c05bee6144ac1f84ff479eec7e0120197e13eefd9e107ce8d2a0f5a270",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/finance/regulatory/quarterly/filing/filing.yml",
         "folder": [
           "finance",
@@ -144,7 +175,8 @@ exit: 0
       }
     },
     "schedules": {},
-    "schema": 1,
+    "schema": 2,
+    "sources": {},
     "version": "$VERSION"
   }
 }

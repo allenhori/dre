@@ -1,6 +1,6 @@
 ---
 title: "Templates"
-description: "Jinja in SQL, paths and options: target, profile(), columns(), dates and timezones."
+description: "Jinja in SQL, paths and options: connection, destination, source(), profile(), columns(), dates and timezones."
 sidebar:
   order: 7
 ---
@@ -15,34 +15,51 @@ in `macros/` and packages, every template sees:
 |---|---|
 | `var('name', default)` | A variable: `--var`, then the schedule, Set, report, folders, project. |
 | `env_var('NAME', default)` | An environment variable. |
-| `run.*` | The run: `report`, `set`, `target`, `profile`, `source_type`, `schedule`, `date`, `now`, `timezone`. |
-| `target.*` | The Binding's source connection: its target's fields (below). |
-| `profile('name').*` | Any profile's active target (below). |
-| `run_query(sql)` | Rows from the report's own connection. |
-| `columns(rel)` | A relation's columns (below). |
+| `run.*` | The run: `report`, `set`, `target`, `schedule`, `date`, `now`, `timezone`. |
+| `target.name` | The run's target (environment). `target` has no other fields. |
+| `connection.*` | The query's connection: its fields for the run's target (below). |
+| `destination.*` | The destination being rendered, in its `path` and options only. |
+| `profile('name').*` | Any profile's entry for the run's target (below). |
+| `source('source', 'table')` | A declared table's name (see [Sources](sources.md)). |
+| `run_query(sql, profile=)` | Rows from the query's connection, or another. |
+| `columns(rel, profile=)` | A relation's columns (below). |
 | `ref('file')` / `lookup('name')` | Another `.sql` file as a subquery; a lookup's rows. |
 | `date()`, `datetime()`, `period()`, `month_of()`, ... | Calendar values (below). |
 | `dispatch('macro', 'package')` | A package macro's per-database variant. |
 | `raise_error('message')` | Stop rendering with this error, e.g. from a macro that checks its arguments. |
 
-## Names from profiles: `target` and `profile()`
+## Names from profiles: `connection`, `destination` and `profile()`
+
+> **Changed in 0.2.** `target.<field>` is now `connection.<field>`, `run.profile` is
+> `connection.name` and `run.source_type` is `connection.type`; `target` holds only `name`. The
+> old names fail with their replacement. See [Upgrading to 0.2](migrating-to-0.2.md).
 
 Build names from the connection instead of hard-coding them:
 
 ```sql
-select * from {{ target.catalog }}.{{ target.schema }}.orders   -- client_a_catalog.sales_dev.orders
+select * from {{ connection.catalog }}.{{ connection.schema }}.orders   -- client_a_catalog.sales_dev.orders
 ```
 
-- `target.name` is the active target (`dev`, `prod`, or `--target`), `target.type` the plugin
-  type, `target.profile` the profile's name, and every other field of the target is there by its
-  own name. Fields are read after `env_var()` has been applied.
-- `profile('reports_s3').bucket` reads another profile's active target the same way. It looks in
-  `sources:` and `destinations:`; when both have the name, say which:
-  `profile('shared', role='destination')`.
+- `connection` is the connection the query runs on (see
+  [Which connection a query runs on](connections.md#which-connection-a-query-runs-on)):
+  `connection.name` (also `.profile`) is the profile's name, `connection.type` the plugin type,
+  `connection.target` the run's target, and every other field of its entry for that target is
+  there by its own name. Fields are read after `env_var()` has been applied. Outside query SQL (an
+  output path, a subject), `connection` is the Binding's inherited connection.
+- `target.name` is the run's target (`dev`, `prod`): `--target`, `DRE_TARGET`, `target:` in
+  `dre_project.yml`, else `dev`.
+- `destination.*` is the destination whose `path` and options are being rendered:
+  `path: "out/{{ destination.bucket }}/{{ run.report }}.csv"`.
+- `profile('reports_s3').bucket` reads any profile's entry for the run's target the same way. It
+  looks in `connections:` and `destinations:`; when both have the name, say which:
+  `profile('shared', role='destination')` (or `role='connection'`).
 - **Secrets can't be read.** A field whose value comes from a `DRE_SECRET_*` variable, or that the
   plugin's `describe` marks secret, is an error to read, so a password never reaches compiled SQL,
   logs or a file path. When the plugin isn't installed to ask, fields named like `password`,
   `secret`, `token`, `key` or `credential` count as secret.
+
+For tables the project reads, declaring [sources](sources.md) is often simpler than building names:
+`{{ source('sales', 'orders') }}` renders the table's name and decides the connection.
 
 Keep the naming rule in one place with your own macro:
 
@@ -65,8 +82,9 @@ from orders
 
 `rel` is anything that can follow `from`: a table, a fully qualified name, a temp table made by an
 earlier query, or `ref('file')`. DRE asks the database with `select * from <rel> as _dre_cols
-where 1=0`, once per relation in each file it renders. Like `run_query()`, it connects only when a template
-calls it, so `dre compile` connects for reports that use it. Packages build on it:
+where 1=0`, once per relation in each file it renders, on the query's connection unless
+`profile=` names another (or a source in `rel` names one). Like `run_query()`, it connects only
+when a template calls it, so `dre compile` connects for reports that use it. Packages build on it:
 `dre_utils.star()` is one.
 
 `dre run` renders each query just before running it, so a template sees what the queries before
@@ -74,6 +92,22 @@ it made. `dre compile`, `--dry-run` and `dre validate` run nothing, so there a t
 an earlier query doesn't exist yet: `columns()` or `run_query()` on it fails there, and works in
 `dre run`. `dre validate` reports such a report as a warning (it can only be checked by
 `dre run`) and still checks everything else.
+
+## Another connection: `profile=`
+
+`run_query()` and `columns()` run on the query's connection (in an output path or a template
+value, the Binding's inherited one). `profile=` sends them to another connection's session, and a
+[source](sources.md) the SQL reads decides it when `profile=` isn't given; an explicit `profile=`
+must agree with every source the SQL reads.
+
+```sql
+{% set fx = run_query("select rate from " ~ source('finance', 'fx_rates') ~ " where day = current_date") %}
+{% set regions = run_query('select code from regions', profile='crm_pg') %}
+select amount * {{ fx[0].rate }} as amount_aud from {{ source('sales', 'orders') }}
+```
+
+A `source()` called anywhere in a query's file counts towards that query's sources, so a query
+reading sources on two connections, even through `run_query()`, is an error.
 
 ## Conditions, loops and Python-style methods
 

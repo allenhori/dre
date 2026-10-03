@@ -9,4 +9,5 @@ warning[schedule-no-time]: schedules.yml:10: schedule `no_time_every`: no time o
 warning[schedule-no-time]: schedules.yml:11: schedule `no_time_rule`: no time of day is given, so it fires at 00:00 in its timezone; set `at: "HH:MM"` to say when
 Compiled 1 Binding into target/compiled/
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation passed: 0 errors, 8 warnings

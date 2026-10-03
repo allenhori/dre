@@ -38,6 +38,9 @@ const RESERVED_NAMES: &[&str] = &[
     "week_of",
     "period",
     "raise_error",
+    "source",
+    "connection",
+    "destination",
 ];
 use crate::profiles::{LOCAL_TYPE, Profiles, Role};
 use crate::yaml::YamlFile;
@@ -66,8 +69,11 @@ pub const REPORT_KEYS: &[&str] = &[
 /// Declares the project's plugin packages, in any project YAML file.
 const PLUGINS_KEY: &str = "plugins";
 pub const PLUGIN_KEYS: &[&str] = &[PLUGINS_KEY];
-/// Where plugins were declared before packages; now an error pointing at `plugins:`.
-const OLD_PLUGIN_KEYS: &[&str] = &["sources", "destinations", "formats"];
+/// Where plugins were declared before packages; now an error pointing at `plugins:`. (`sources:`
+/// is the dbt-style table declarations now; a list of plugin names there gets the same hint.)
+const OLD_PLUGIN_KEYS: &[&str] = &["destinations", "formats"];
+/// dbt-style source declarations, in any project YAML file.
+pub const SOURCES_KEY: &str = "sources";
 pub const PROJECT_KEYS: &[&str] = &[
     "name",
     "default_profile",
@@ -83,6 +89,8 @@ pub const PROJECT_KEYS: &[&str] = &[
     "week_start",
     "week_numbering",
     "reports",
+    "target",
+    SOURCES_KEY,
     crate::target::KEY,
 ];
 /// Keys of a schedules.yml entry besides its timing (`schedule::SCHEDULE_KEYS`).
@@ -102,7 +110,9 @@ pub const SET_ENTRY_KEYS: &[&str] = &[
     "output",
     "schedule",
 ];
-pub const QUERY_ENTRY_KEYS: &[&str] = &["query", "tab", "tab_name", "anchor", "header", "columns"];
+pub const QUERY_ENTRY_KEYS: &[&str] = &[
+    "query", "profile", "tab", "tab_name", "anchor", "header", "columns",
+];
 pub const OUTPUT_SHARED_KEYS: &[&str] = &["format", "destination", "template", "extension"];
 /// Keys of one `output.template.bindings` entry.
 pub const TEMPLATE_BINDING_KEYS: &[&str] = &[
@@ -135,8 +145,18 @@ pub struct Project {
     /// Where the target path was set, for messages.
     #[serde(skip)]
     pub target_source: crate::target::Source,
+    /// The run's target (environment): `--target`, `DRE_TARGET`, `target:` here, else `dev`.
+    /// Every profile uses its entry for this target.
+    #[serde(skip)]
+    pub target_name: String,
+    /// Where `target_name` came from.
+    #[serde(skip)]
+    pub target_from: crate::profiles::TargetSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_profile: Option<String>,
+    /// Its line in dre_project.yml, for messages.
+    #[serde(skip)]
+    pub default_profile_line: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_set: Option<String>,
     pub vars: JsonMap<String, Json>,
@@ -188,11 +208,21 @@ pub struct Project {
     /// Every folder under `reports/`, as path segments.
     #[serde(skip)]
     pub folders: Vec<Vec<String>>,
-    /// The project's own source files, relative to the root with forward slashes, sorted:
-    /// every YAML file (not a root `profiles.yml`) and everything under `reports/`, `macros/`
-    /// and `lookups/`.
+    /// The project's own files, relative to the root with forward slashes, sorted: every YAML
+    /// file (not a root `profiles.yml`) and everything under `reports/`, `macros/` and
+    /// `lookups/`.
     #[serde(skip)]
-    pub sources: Vec<PathBuf>,
+    pub files: Vec<PathBuf>,
+    /// Templates the load's parse pass couldn't render, by report: they make the report invalid
+    /// in the manifest. Its own run, compile or validate reports them.
+    #[serde(skip)]
+    pub parse_errors: BTreeMap<String, Vec<crate::Diagnostic>>,
+    /// What the load's parse pass rendered with: the target, `--var`, the run date and timezone.
+    #[serde(skip)]
+    pub inputs: crate::parse::Inputs,
+    /// Declared sources (dbt's `sources:`), by name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub sources: BTreeMap<String, SourceDef>,
     #[serde(skip)]
     pub profiles: Profiles,
 }
@@ -237,6 +267,9 @@ pub struct QueryEntry {
     pub query: String,
     /// The `.sql` file, relative to the root.
     pub path: PathBuf,
+    /// The query's own connection (`profile:` on its entry), as written: it may hold Jinja.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     /// Whether this query's result becomes a tab (a sheet, or a file for single-table formats).
     /// One .sql file makes at most one tab: its last statement's result. `tab: false` runs the
     /// file only for its effects (temp views, `SET`s) and discards any result.
@@ -269,6 +302,8 @@ fn one_tab_per_file(name: &str) -> String {
 pub struct Binding {
     /// The Set name; `None` for a report without `sets:`.
     pub set: Option<String>,
+    /// The inherited connection (Set, report, folder `+profile`, `default_profile`), as
+    /// written: it may hold Jinja. A query's own `profile:` or a source's overrides it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     /// Fully merged vars: project < folders < report < Set registry < inline Binding.
@@ -278,6 +313,22 @@ pub struct Binding {
     /// Names of every `schedules.yml` entry that runs this Binding.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub schedules: Vec<String>,
+    /// The parse pass for the load's inputs: each query's connection and sources. `None` until
+    /// the project is loaded, and for an ad hoc Binding.
+    #[serde(skip)]
+    pub parsed: Option<std::sync::Arc<crate::parse::ParsedBinding>>,
+    /// Where the inherited `profile` is written, for messages about its value.
+    #[serde(skip)]
+    pub profile_at: Option<ProfileAt>,
+}
+
+/// Where a `profile:` value is written: its file, line and key, as messages name it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAt {
+    pub file: PathBuf,
+    pub line: Option<usize>,
+    /// E.g. "`default_profile`", "`+profile` of folder `finance`".
+    pub key: String,
 }
 
 impl Binding {
@@ -346,7 +397,142 @@ pub struct SetDef {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     pub vars: JsonMap<String, Json>,
+    /// Where it's declared, for messages.
+    #[serde(skip)]
+    pub file: PathBuf,
+    #[serde(skip)]
+    pub line: Option<usize>,
 }
+
+/// A dbt-style source: tables in one schema of one system.
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceDef {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// As written; `database`, `schema`, `profile` and table `identifier`s may hold Jinja.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// DRE's addition: the connection the source lives on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    pub quoting: QuotingDef,
+    pub tags: Vec<String>,
+    pub meta: JsonMap<String, Json>,
+    pub tables: Vec<SourceTableDef>,
+    /// Where it's declared, for messages.
+    #[serde(skip)]
+    pub file: PathBuf,
+    #[serde(skip)]
+    pub line: Option<usize>,
+}
+
+impl SourceDef {
+    pub fn table(&self, name: &str) -> Option<&SourceTableDef> {
+        self.tables.iter().find(|t| t.name == name)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceTableDef {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// The table's own `quoting`, over the source's.
+    pub quoting: QuotingDef,
+    pub tags: Vec<String>,
+    pub meta: JsonMap<String, Json>,
+    pub columns: Vec<SourceColumn>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceColumn {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_type: Option<String>,
+}
+
+/// `quoting:` as written: an unset part inherits (table from source), else isn't quoted.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct QuotingDef {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identifier: Option<bool>,
+}
+
+impl QuotingDef {
+    /// `self` over `under`, unset parts false.
+    pub fn over(&self, under: &QuotingDef) -> crate::render::Quoting {
+        crate::render::Quoting {
+            database: self.database.or(under.database).unwrap_or(false),
+            schema: self.schema.or(under.schema).unwrap_or(false),
+            identifier: self.identifier.or(under.identifier).unwrap_or(false),
+        }
+    }
+}
+
+/// Source keys DRE reads.
+pub const SOURCE_KEYS: &[&str] = &[
+    "name",
+    "description",
+    "database",
+    "schema",
+    "quoting",
+    "tags",
+    "meta",
+    "tables",
+    "profile",
+];
+pub const SOURCE_TABLE_KEYS: &[&str] = &[
+    "name",
+    "identifier",
+    "description",
+    "quoting",
+    "tags",
+    "meta",
+    "columns",
+];
+pub const SOURCE_COLUMN_KEYS: &[&str] = &["name", "description", "data_type"];
+/// dbt source keys DRE accepts but doesn't use yet.
+pub const DBT_SOURCE_KEYS: &[&str] = &[
+    "loader",
+    "loaded_at_field",
+    "loaded_at_query",
+    "config",
+    "overrides",
+    "freshness",
+    "docs",
+];
+pub const DBT_SOURCE_TABLE_KEYS: &[&str] = &[
+    "loaded_at_field",
+    "loaded_at_query",
+    "tests",
+    "data_tests",
+    "freshness",
+    "external",
+    "config",
+    "docs",
+];
+pub const DBT_SOURCE_COLUMN_KEYS: &[&str] = &[
+    "meta",
+    "tags",
+    "quote",
+    "tests",
+    "data_tests",
+    "constraints",
+    "config",
+    "docs",
+    "granularity",
+];
 
 /// A plugin's kind; the same type the protocol uses.
 pub use dre_protocol::Kind as PluginKind;
@@ -461,8 +647,13 @@ pub struct Timing {
 pub struct LoadOptions {
     /// `--profiles-dir`; falls back to `DRE_PROFILES_DIR`, the project directory, then `~/.dre`.
     pub profiles_dir: Option<PathBuf>,
-    /// `--target`, checked against referenced source profiles.
+    /// `--target`, above `DRE_TARGET` and the project's `target:`.
     pub target: Option<String>,
+    /// `DRE_RUN_DATE`, `DRE_RUN_AT` and `--timezone`/`DRE_TIMEZONE`: the parse pass renders
+    /// `run.*` as the run will.
+    pub date: Option<chrono::NaiveDate>,
+    pub scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub timezone: Option<String>,
     /// `--var name=value`, the top of every `var()` chain.
     pub vars: BTreeMap<String, String>,
     /// `--target-path`, above `DRE_TARGET_PATH` and `target_path:`.
@@ -593,7 +784,7 @@ impl Loader {
         let found = self.discover();
         project.folders = found.folders.clone();
         project.macros = found.macros.clone();
-        project.sources = found.sources.clone();
+        project.files = found.sources.clone();
         let declared = packages::declared(&self.root, &mut self.diags);
         project.packages = packages::resolve(&self.root, &declared, &mut self.diags);
         self.check_macro_namespaces(&project);
@@ -606,7 +797,7 @@ impl Loader {
         let folder_cfg = self.parse_folder_config(&pyaml, &project.folders);
         let mut used = Usage::default();
         if let Some(p) = &project.default_profile {
-            used.source(
+            used.connection(
                 p,
                 Some(pyaml.display.clone()),
                 pyaml.line_of("default_profile", None),
@@ -614,7 +805,7 @@ impl Loader {
         }
         for cfg in folder_cfg.values() {
             if let Some((p, line)) = &cfg.profile {
-                used.source(p, Some(pyaml.display.clone()), *line);
+                used.connection(p, Some(pyaml.display.clone()), *line);
             }
         }
 
@@ -624,13 +815,20 @@ impl Loader {
         let mut set_files = Vec::new();
         let mut schedule_files = Vec::new();
         let mut timing_files = Vec::new();
+        let mut source_decls: Vec<Rc<YamlFile>> = Vec::new();
         plugin_decls.push((pyaml.clone(), pick(&pyaml.value, PLUGIN_KEYS)));
+        if pyaml.value.get(SOURCES_KEY).is_some() {
+            source_decls.push(pyaml.clone());
+        }
         for path in &found.yaml {
             let display = self.rel(path);
             let Some(yf) = YamlFile::load(path, display.clone(), &mut self.diags) else {
                 continue;
             };
             let yf = Rc::new(yf);
+            if yf.value.get(SOURCES_KEY).is_some() {
+                source_decls.push(yf.clone());
+            }
             self.classify(
                 yf,
                 &mut fragments,
@@ -641,6 +839,7 @@ impl Loader {
             );
         }
 
+        project.sources = self.parse_sources(&source_decls);
         project.sets = self.parse_sets(&set_files);
         let sql_index = self.index_sql(&found.sql);
         project.sql = sql_index
@@ -713,13 +912,15 @@ impl Loader {
         resolved.sort_by(|a, b| a.name.cmp(&b.name));
         project.reports = resolved;
 
+        // Pre-flight first: its errors say a template's problem better than a failed parse does.
+        self.preflight(&project, &used);
+        self.parse_pass(&mut project, &mut used);
         self.check_profiles(&project, &used);
         self.check_plugins(&plugin_decls, &mut project, &used);
         let broken_timings;
         (project.timings, broken_timings) = self.parse_timings(&timing_files);
         project.schedules = self.parse_schedules(&schedule_files, &project, &broken_timings);
         self.apply_schedules(&mut project);
-        self.preflight(&project, &used);
         self.check_template_files(&project);
 
         Some(project)
@@ -772,6 +973,9 @@ impl Loader {
             }
         };
         let default_profile = self.opt_string(yf, m, "default_profile");
+        let project_target = self.opt_string(yf, m, "target");
+        let (target_name, target_from) =
+            crate::profiles::resolve_target(self.opts.target.as_deref(), project_target.as_deref());
         let default_set = self.opt_string(yf, m, "default_set");
         let vars = self.opt_vars(yf, m.get("vars"), "vars");
         let run_query_max_rows = match m.get("run_query_max_rows") {
@@ -861,6 +1065,9 @@ impl Loader {
             root: self.root.clone(),
             target_dir: self.target.dir.clone(),
             target_source: self.target.source,
+            target_name,
+            target_from,
+            default_profile_line: yf.line_of("default_profile", None),
             default_profile,
             default_set,
             vars,
@@ -888,7 +1095,10 @@ impl Loader {
                 .filter_map(|(k, v)| Some((k.as_str()?.to_string(), yaml_map_to_json(v.as_mapping()?))))
                 .collect(),
             folders: Vec::new(),
-            sources: Vec::new(),
+            files: Vec::new(),
+            inputs: crate::parse::Inputs::default(),
+            parse_errors: BTreeMap::new(),
+            sources: BTreeMap::new(),
             profiles: Profiles::default(),
         })
     }
@@ -1220,9 +1430,13 @@ impl Loader {
                         }
                     }
                 }
+                let has_sources = m.contains_key(SOURCES_KEY);
                 let rest: Mapping = m
                     .iter()
                     .filter(|(k, _)| !is_one_of(k, PLUGIN_KEYS) && k.as_str() != Some("packages"))
+                    .filter(|(k, _)| k.as_str() != Some(SOURCES_KEY))
+                    // dbt's `version: 2` at the top of a sources file.
+                    .filter(|(k, _)| !(has_sources && k.as_str() == Some("version")))
                     .filter(|(k, _)| !(dependency_file && is_one_of(k, OLD_PLUGIN_KEYS)))
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
@@ -1299,6 +1513,505 @@ impl Loader {
         });
     }
 
+    // -- sources ------------------------------------------------------------------------------
+
+    /// `sources:` from every project YAML file, in dbt's shape plus DRE's `profile:`. dbt keys
+    /// DRE doesn't use yet are noted once per file; any other key is an error.
+    fn parse_sources(&mut self, files: &[Rc<YamlFile>]) -> BTreeMap<String, SourceDef> {
+        let mut out: BTreeMap<String, SourceDef> = BTreeMap::new();
+        for yf in files {
+            let file = Some(yf.display.clone());
+            let top = yf.line_of(SOURCES_KEY, None);
+            let items = match yf.value.get(SOURCES_KEY) {
+                Some(Value::Sequence(items)) => items,
+                Some(Value::Null) => continue,
+                _ => {
+                    self.diags.error(
+                        "invalid-source",
+                        file,
+                        top,
+                        "`sources` must be a list of sources, as in dbt: `- name: sales` with `tables:`",
+                    );
+                    continue;
+                }
+            };
+            if items.iter().all(Value::is_string) {
+                // DRE 0.0.x declared source plugins here.
+                self.diags.error(
+                    "moved-plugin-declaration",
+                    file,
+                    top,
+                    "`sources:` declares tables now (dbt's format); list plugin packages under `plugins:` instead (e.g. `plugins: [duckdb]`)",
+                );
+                continue;
+            }
+            let mut unsupported: BTreeSet<String> = BTreeSet::new();
+            for item in items {
+                if let Some(src) = self.source_def(yf, item, &mut unsupported) {
+                    if let Some(prev) = out.get(&src.name) {
+                        self.diags.error(
+                            "duplicate-source",
+                            file.clone(),
+                            src.line,
+                            format!(
+                                "source `{}` is also declared in {}; source names must be unique",
+                                src.name,
+                                prev.file.display()
+                            ),
+                        );
+                        continue;
+                    }
+                    out.insert(src.name.clone(), src);
+                }
+            }
+            if !unsupported.is_empty() {
+                self.diags.warning(
+                    "source-key-not-supported",
+                    file,
+                    top,
+                    format!(
+                        "dbt source keys DRE doesn't support yet are ignored: {}",
+                        unsupported.into_iter().collect::<Vec<_>>().join(", ")
+                    ),
+                );
+            }
+        }
+        out
+    }
+
+    fn source_def(
+        &mut self,
+        yf: &YamlFile,
+        item: &Value,
+        unsupported: &mut BTreeSet<String>,
+    ) -> Option<SourceDef> {
+        let file = Some(yf.display.clone());
+        let top = yf.line_of(SOURCES_KEY, None);
+        let Some(m) = item.as_mapping() else {
+            self.diags.error(
+                "invalid-source",
+                file,
+                top,
+                "each source must be a map with `name:` and `tables:`",
+            );
+            return None;
+        };
+        let Some(name) = m.get("name").and_then(Value::as_str).filter(|n| !n.is_empty()) else {
+            self.diags
+                .error("invalid-source", file, top, "every source needs a `name`");
+            return None;
+        };
+        let line = yf.line_containing(&format!("name: {name}")).or(top);
+        let ctx = format!("source `{name}`");
+        let mut ok = self.source_keys(
+            yf,
+            m,
+            &ctx,
+            line,
+            SOURCE_KEYS,
+            DBT_SOURCE_KEYS,
+            "source",
+            unsupported,
+        );
+        let mut text = |s: &mut Self, k: &str| -> Option<String> {
+            match m.get(k) {
+                None | Some(Value::Null) => None,
+                Some(v) => match crate::yaml::scalar_str(v) {
+                    Some(t) if !v.is_mapping() && !v.is_sequence() => Some(t),
+                    _ => {
+                        s.diags.error(
+                            "invalid-source",
+                            file.clone(),
+                            line,
+                            format!("{ctx}: `{k}` must be a string"),
+                        );
+                        ok = false;
+                        None
+                    }
+                },
+            }
+        };
+        let description = text(self, "description");
+        let database = text(self, "database");
+        let schema = text(self, "schema");
+        let profile = text(self, "profile");
+        let quoting = self.quoting(yf, m, &ctx, line);
+        let tags = self.source_tags(yf, m, &ctx, line);
+        let meta = self.source_meta(yf, m, &ctx, line);
+        let mut tables = Vec::new();
+        match m.get("tables") {
+            None | Some(Value::Null) => {}
+            Some(Value::Sequence(ts)) => {
+                // Duplicates by name, whether or not each entry is otherwise valid.
+                let mut names = BTreeSet::new();
+                for n in ts.iter().filter_map(|t| t.get("name").and_then(Value::as_str)) {
+                    if !names.insert(n) {
+                        self.diags.error(
+                            "duplicate-source-table",
+                            file.clone(),
+                            yf.line_containing(&format!("name: {n}")).or(line),
+                            format!("{ctx} declares table `{n}` twice"),
+                        );
+                        ok = false;
+                    }
+                }
+                for t in ts {
+                    if let Some(t) = self.source_table(yf, name, t, line, unsupported)
+                        && !tables.iter().any(|x: &SourceTableDef| x.name == t.name)
+                    {
+                        tables.push(t);
+                    }
+                }
+            }
+            Some(_) => {
+                self.diags.error(
+                    "invalid-source",
+                    file.clone(),
+                    line,
+                    format!("{ctx}: `tables` must be a list"),
+                );
+                ok = false;
+            }
+        }
+        ok.then(|| SourceDef {
+            name: name.to_string(),
+            description,
+            database,
+            schema,
+            profile,
+            quoting,
+            tags,
+            meta,
+            tables,
+            file: yf.display.clone(),
+            line,
+        })
+    }
+
+    fn source_table(
+        &mut self,
+        yf: &YamlFile,
+        source: &str,
+        item: &Value,
+        source_line: Option<usize>,
+        unsupported: &mut BTreeSet<String>,
+    ) -> Option<SourceTableDef> {
+        let file = Some(yf.display.clone());
+        let Some(m) = item.as_mapping() else {
+            self.diags.error(
+                "invalid-source",
+                file,
+                source_line,
+                format!("source `{source}`: each table must be a map with a `name`"),
+            );
+            return None;
+        };
+        let Some(name) = m.get("name").and_then(Value::as_str).filter(|n| !n.is_empty()) else {
+            self.diags.error(
+                "invalid-source",
+                file,
+                source_line,
+                format!("source `{source}`: every table needs a `name`"),
+            );
+            return None;
+        };
+        let line = yf.line_containing(&format!("name: {name}")).or(source_line);
+        let ctx = format!("source `{source}`, table `{name}`");
+        let mut ok = self.source_keys(
+            yf,
+            m,
+            &ctx,
+            line,
+            SOURCE_TABLE_KEYS,
+            DBT_SOURCE_TABLE_KEYS,
+            "table",
+            unsupported,
+        );
+        let mut text = |s: &mut Self, k: &str| -> Option<String> {
+            match m.get(k) {
+                None | Some(Value::Null) => None,
+                Some(v) => match crate::yaml::scalar_str(v) {
+                    Some(t) if !v.is_mapping() && !v.is_sequence() => Some(t),
+                    _ => {
+                        s.diags.error(
+                            "invalid-source",
+                            file.clone(),
+                            line,
+                            format!("{ctx}: `{k}` must be a string"),
+                        );
+                        ok = false;
+                        None
+                    }
+                },
+            }
+        };
+        let identifier = text(self, "identifier");
+        let description = text(self, "description");
+        let quoting = self.quoting(yf, m, &ctx, line);
+        let tags = self.source_tags(yf, m, &ctx, line);
+        let meta = self.source_meta(yf, m, &ctx, line);
+        let mut columns: Vec<SourceColumn> = Vec::new();
+        match m.get("columns") {
+            None | Some(Value::Null) => {}
+            Some(Value::Sequence(cs)) => {
+                for c in cs {
+                    let Some(cm) = c.as_mapping() else {
+                        self.diags.error(
+                            "invalid-source",
+                            file.clone(),
+                            line,
+                            format!("{ctx}: each column must be a map with a `name`"),
+                        );
+                        ok = false;
+                        continue;
+                    };
+                    let Some(cname) = cm.get("name").and_then(Value::as_str).filter(|n| !n.is_empty()) else {
+                        self.diags.error(
+                            "invalid-source",
+                            file.clone(),
+                            line,
+                            format!("{ctx}: every column needs a `name`"),
+                        );
+                        ok = false;
+                        continue;
+                    };
+                    let cctx = format!("{ctx}, column `{cname}`");
+                    ok &= self.source_keys(
+                        yf,
+                        cm,
+                        &cctx,
+                        line,
+                        SOURCE_COLUMN_KEYS,
+                        DBT_SOURCE_COLUMN_KEYS,
+                        "column",
+                        unsupported,
+                    );
+                    if columns.iter().any(|c| c.name.eq_ignore_ascii_case(cname)) {
+                        self.diags.error(
+                            "duplicate-source-column",
+                            file.clone(),
+                            line,
+                            format!("{ctx} declares column `{cname}` twice"),
+                        );
+                        ok = false;
+                        continue;
+                    }
+                    let s = |k: &str| cm.get(k).and_then(crate::yaml::scalar_str);
+                    columns.push(SourceColumn {
+                        name: cname.to_string(),
+                        description: s("description"),
+                        data_type: s("data_type"),
+                    });
+                }
+            }
+            Some(_) => {
+                self.diags.error(
+                    "invalid-source",
+                    file.clone(),
+                    line,
+                    format!("{ctx}: `columns` must be a list"),
+                );
+                ok = false;
+            }
+        }
+        ok.then(|| SourceTableDef {
+            name: name.to_string(),
+            identifier,
+            description,
+            quoting,
+            tags,
+            meta,
+            columns,
+        })
+    }
+
+    /// Every key of one source, table or column map: DRE's own pass, dbt's are collected into
+    /// `unsupported`, anything else is an error. Returns false on an error.
+    #[allow(clippy::too_many_arguments)]
+    fn source_keys(
+        &mut self,
+        yf: &YamlFile,
+        m: &Mapping,
+        ctx: &str,
+        line: Option<usize>,
+        known: &[&str],
+        dbt: &[&str],
+        level: &str,
+        unsupported: &mut BTreeSet<String>,
+    ) -> bool {
+        let mut ok = true;
+        for k in m.keys().filter_map(Value::as_str) {
+            if known.contains(&k) {
+                continue;
+            }
+            if dbt.contains(&k) {
+                unsupported.insert(format!("{level} `{k}`"));
+                continue;
+            }
+            self.diags.error(
+                "unknown-key",
+                Some(yf.display.clone()),
+                yf.line_of(k, line).or(line),
+                format!("{ctx}: unknown key `{k}`; a {level} takes {}", known.join(", ")),
+            );
+            ok = false;
+        }
+        ok
+    }
+
+    fn quoting(&mut self, yf: &YamlFile, m: &Mapping, ctx: &str, line: Option<usize>) -> QuotingDef {
+        let mut q = QuotingDef::default();
+        let Some(v) = m.get("quoting") else { return q };
+        let bad = |s: &mut Self, msg: String| {
+            s.diags.error(
+                "invalid-source",
+                Some(yf.display.clone()),
+                line,
+                format!("{ctx}: {msg}"),
+            )
+        };
+        let Some(qm) = v.as_mapping() else {
+            bad(
+                self,
+                "`quoting` must be a map of `database`, `schema` and `identifier` to true or false".into(),
+            );
+            return q;
+        };
+        for (k, v) in qm {
+            let k = k.as_str().unwrap_or_default();
+            let Some(b) = v.as_bool() else {
+                bad(self, format!("`quoting.{k}` must be true or false"));
+                continue;
+            };
+            match k {
+                "database" => q.database = Some(b),
+                "schema" => q.schema = Some(b),
+                "identifier" => q.identifier = Some(b),
+                _ => bad(
+                    self,
+                    format!("unknown `quoting` key `{k}`; use `database`, `schema` or `identifier`"),
+                ),
+            }
+        }
+        q
+    }
+
+    fn source_tags(&mut self, yf: &YamlFile, m: &Mapping, ctx: &str, line: Option<usize>) -> Vec<String> {
+        match m.get("tags") {
+            None | Some(Value::Null) => Vec::new(),
+            Some(Value::String(t)) => vec![t.clone()],
+            Some(v) => string_list(v).unwrap_or_else(|| {
+                self.diags.error(
+                    "invalid-source",
+                    Some(yf.display.clone()),
+                    line,
+                    format!("{ctx}: `tags` must be a list of strings"),
+                );
+                Vec::new()
+            }),
+        }
+    }
+
+    fn source_meta(
+        &mut self,
+        yf: &YamlFile,
+        m: &Mapping,
+        ctx: &str,
+        line: Option<usize>,
+    ) -> JsonMap<String, Json> {
+        match m.get("meta") {
+            None | Some(Value::Null) => JsonMap::new(),
+            Some(Value::Mapping(mm)) => yaml_map_to_json(mm),
+            Some(_) => {
+                self.diags.error(
+                    "invalid-source",
+                    Some(yf.display.clone()),
+                    line,
+                    format!("{ctx}: `meta` must be a map"),
+                );
+                JsonMap::new()
+            }
+        }
+    }
+
+    // -- the parse pass -----------------------------------------------------------------------
+
+    /// Render every Binding without a database ([`crate::parse`]): each query's connection and
+    /// sources, for selection, the manifest, `dre ls` and validate. Problems go to diagnostics,
+    /// except for files that already have an error (the same cause, said better).
+    fn parse_pass(&mut self, project: &mut Project, used: &mut Usage) {
+        let inputs = crate::parse::Inputs {
+            target: project.target_name.clone(),
+            cli_vars: self.opts.vars.clone(),
+            date: self.opts.date,
+            scheduled_at: self.opts.scheduled_at,
+            timezone: self.opts.timezone.clone(),
+            schedule: None,
+            started_at: None,
+        };
+        project.inputs = inputs.clone();
+        let failed: BTreeSet<PathBuf> = self
+            .diags
+            .iter()
+            .filter(|d| d.severity == crate::Severity::Error)
+            .filter_map(|d| d.file.clone())
+            .collect();
+        let mut results = Vec::new();
+        for (ri, r) in project.reports.iter().enumerate() {
+            for (bi, b) in r.bindings.iter().enumerate() {
+                let parsed = crate::parse::binding(project, r, b, &b.vars, &inputs);
+                results.push((ri, bi, parsed));
+            }
+        }
+        for (ri, bi, parsed) in results {
+            for p in &parsed.errors {
+                if failed.contains(&p.file) {
+                    continue;
+                }
+                // A template that doesn't render may depend on this run's `--var`s: it makes
+                // its own report invalid (and fails when that report runs or compiles), but
+                // doesn't stop the rest of the project.
+                if p.code == crate::parse::PARSE_FAILED {
+                    let msg = crate::Diagnostic {
+                        severity: crate::Severity::Error,
+                        code: p.code,
+                        message: p.message.clone(),
+                        file: Some(p.file.clone()),
+                        line: p.line,
+                        plugin: None,
+                    };
+                    let errs = project
+                        .parse_errors
+                        .entry(project.reports[ri].name.clone())
+                        .or_default();
+                    if !errs.contains(&msg) {
+                        errs.push(msg);
+                    }
+                    continue;
+                }
+                self.diags
+                    .error(p.code, Some(p.file.clone()), p.line, p.message.clone());
+            }
+            for p in &parsed.warnings {
+                self.diags
+                    .warning(p.code, Some(p.file.clone()), p.line, p.message.clone());
+            }
+            let file = Some(project.reports[ri].file.clone());
+            if let Some(i) = &parsed.inherited {
+                used.connection(i, file.clone(), None);
+            }
+            for q in &parsed.queries {
+                if let Some(c) = &q.connection {
+                    used.connection(c, file.clone(), None);
+                }
+            }
+            for d in parsed.destinations.iter().flatten() {
+                used.destination(d, file.clone(), None);
+            }
+            project.reports[ri].bindings[bi].parsed = Some(std::sync::Arc::new(parsed));
+        }
+    }
+
     // -- sets.yml -----------------------------------------------------------------------------
 
     fn parse_sets(&mut self, files: &[Rc<YamlFile>]) -> BTreeMap<String, SetDef> {
@@ -1341,7 +2054,15 @@ impl Loader {
                         JsonMap::new()
                     }
                 };
-                out.insert(name.to_string(), SetDef { profile, vars });
+                out.insert(
+                    name.to_string(),
+                    SetDef {
+                        profile,
+                        vars,
+                        file: yf.display.clone(),
+                        line,
+                    },
+                );
             }
         }
         out
@@ -1610,6 +2331,7 @@ impl Loader {
         let mut e = QueryEntry {
             query: name.clone(),
             path: PathBuf::new(),
+            profile: None,
             tab: true,
             tab_name: None,
             anchor: None,
@@ -1626,6 +2348,16 @@ impl Loader {
                         format!("report `{report}`: unknown key `{k}` on query `{name}`"),
                     );
                 }
+            }
+            match m.get("profile") {
+                None => {}
+                Some(Value::String(p)) if !p.trim().is_empty() => e.profile = Some(p.clone()),
+                Some(_) => self.diags.error(
+                    "invalid-field",
+                    file.clone(),
+                    line,
+                    format!("report `{report}`: `profile` of `{name}` must be a connection name"),
+                ),
             }
             e.tab_name = match m.get("tab_name") {
                 None => None,
@@ -1769,7 +2501,7 @@ impl Loader {
             Some(p) => match p.value.as_str() {
                 Some(s) => {
                     let (f, l) = located("profile").unwrap();
-                    used.source(s, Some(f), l);
+                    used.connection(s, Some(f), l);
                     Some(s.to_string())
                 }
                 None => {
@@ -1799,6 +2531,15 @@ impl Loader {
         let timezone = report_timezone
             .or_else(|| layers.iter().rev().find_map(|l| l.timezone.clone()))
             .or_else(|| project.timezone.clone());
+        let profile_at = if report_profile.is_some() {
+            located("profile").map(|(file, line)| ProfileAt {
+                file,
+                line,
+                key: "`profile`".into(),
+            })
+        } else {
+            inherited_profile_at(&layers, project)
+        };
         let base_profile = report_profile
             .or(folder_profile)
             .or(project.default_profile.clone());
@@ -1875,6 +2616,7 @@ impl Loader {
 
         let base = BindingBase {
             profile: base_profile,
+            profile_at,
             vars,
             output,
         };
@@ -2002,13 +2744,19 @@ impl Loader {
             }
             let mut b = BindingBase {
                 profile: base.profile.clone(),
+                profile_at: base.profile_at.clone(),
                 vars: base.vars.clone(),
                 output: base.output.clone(),
             };
             if let Some(reg) = registry {
                 if let Some(p) = &reg.profile {
                     b.profile = Some(p.clone());
-                    used.source(p, None, None);
+                    b.profile_at = Some(ProfileAt {
+                        file: reg.file.clone(),
+                        line: reg.line,
+                        key: format!("`profile` of Set `{name}`"),
+                    });
+                    used.connection(p, None, None);
                 }
                 b.vars.extend(reg.vars.clone());
             }
@@ -2030,7 +2778,12 @@ impl Loader {
                     match p.as_str() {
                         Some(p) => {
                             b.profile = Some(p.to_string());
-                            used.source(p, file.clone(), yf.line_of("profile", line));
+                            b.profile_at = Some(ProfileAt {
+                                file: yf.display.clone(),
+                                line: yf.line_of("profile", line),
+                                key: format!("`profile` of Set `{name}`"),
+                            });
+                            used.connection(p, file.clone(), yf.line_of("profile", line));
                         }
                         None => self.diags.error(
                             "invalid-field",
@@ -2230,17 +2983,7 @@ impl Loader {
         }
         let output = self.typed_output(&base.output, &ctx, &file, &queries, used);
         if let Some(p) = &base.profile {
-            used.source(p, None, None);
-        }
-        if base.profile.is_none() {
-            self.diags.error(
-                "no-source-profile",
-                Some(file.clone()),
-                None,
-                format!(
-                    "{ctx} has no source profile: declare `profile:` (report, Set or folder `+profile`) or `default_profile` in {PROJECT_FILE}"
-                ),
-            );
+            used.connection(p, None, None);
         }
         Binding {
             set,
@@ -2249,6 +2992,8 @@ impl Loader {
             queries: std::mem::take(&mut queries),
             output,
             schedules: Vec::new(),
+            parsed: None,
+            profile_at: base.profile_at.clone(),
         }
     }
 
@@ -2626,6 +3371,7 @@ impl Loader {
         let query = QueryEntry {
             query: name.to_string(),
             path: path.to_path_buf(),
+            profile: None,
             tab: true,
             tab_name: None,
             anchor: None,
@@ -2634,11 +3380,12 @@ impl Loader {
         };
         let base = BindingBase {
             profile: profile.clone(),
+            profile_at: inherited_profile_at(&layers, project),
             vars,
             output,
         };
         if let Some(p) = &profile {
-            used.source(p, None, None);
+            used.connection(p, None, None);
         }
         let b = self.finish_binding(
             name,
@@ -3151,9 +3898,7 @@ impl Loader {
                         context: crate::render::RunContext {
                             report: report.name.clone(),
                             set: b.set.clone(),
-                            target: String::new(),
-                            profile: b.profile.clone().unwrap_or_default(),
-                            source_type: String::new(),
+                            target: project.target_name.clone(),
                             schedule: Some(name.clone()),
                             date,
                             now: chrono::Utc::now(),
@@ -3164,6 +3909,10 @@ impl Loader {
                         cli_vars: self.opts.vars.clone(),
                         runner: None,
                         connections: None,
+                        mode: crate::render::Mode::Run,
+                        connection: None,
+                        source_type: String::new(),
+                        sources: None,
                         run_query_max_rows: project.run_query_max_rows,
                         sql: project.sql.clone(),
                         lookups: project.lookups.clone(),
@@ -3260,7 +4009,7 @@ impl Loader {
 
     fn check_profiles(&mut self, project: &Project, used: &Usage) {
         let profiles = &project.profiles;
-        if used.sources.is_empty() && used.destinations.is_empty() {
+        if used.connections.is_empty() && used.destinations.is_empty() {
             return;
         }
         if !profiles.exists() {
@@ -3284,7 +4033,7 @@ impl Loader {
             return;
         }
         for (role, refs) in [
-            (Role::Source, &used.sources),
+            (Role::Connection, &used.connections),
             (Role::Destination, &used.destinations),
         ] {
             for (name, (file, line)) in refs {
@@ -3299,47 +4048,9 @@ impl Loader {
                         format!(
                             "{} profile `{name}` isn't defined under `{}:` in {}",
                             role.as_str(),
-                            role.section(),
+                            profiles.section_key(role),
                             profiles.path.display()
                         ),
-                    );
-                }
-            }
-        }
-        if let Some(t) = &self.opts.target {
-            let sources: Vec<&String> = used
-                .sources
-                .keys()
-                .filter(|p| profiles.get(Role::Source, p).is_some())
-                .collect();
-            let defining = sources
-                .iter()
-                .filter(|p| profiles.get(Role::Source, p).unwrap().targets.contains_key(t))
-                .count();
-            if !sources.is_empty() && defining == 0 {
-                self.diags.error(
-                    "unknown-target",
-                    None,
-                    None,
-                    format!(
-                        "target `{t}` isn't defined by any referenced source profile ({})",
-                        sources
-                            .iter()
-                            .map(|s| format!("`{s}`"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                );
-            } else {
-                for p in sources
-                    .iter()
-                    .filter(|p| !profiles.get(Role::Source, p).unwrap().targets.contains_key(t))
-                {
-                    self.diags.warning(
-                        "missing-target",
-                        None,
-                        None,
-                        format!("source profile `{p}` has no `{t}` target; its reports can't run with --target {t}"),
                     );
                 }
             }
@@ -3570,7 +4281,7 @@ impl Loader {
         let mut uses = Vec::new();
         let profiles = &project.profiles;
         for (role, kind, refs) in [
-            (Role::Source, PluginKind::Source, &used.sources),
+            (Role::Connection, PluginKind::Source, &used.connections),
             (Role::Destination, PluginKind::Destination, &used.destinations),
         ] {
             for name in refs.keys() {
@@ -3752,13 +4463,21 @@ impl Loader {
                 );
             }
         }
+        for (name, instead, line) in preflight::removed_names(src) {
+            self.diags.error(
+                "removed-template-name",
+                f.clone(),
+                Some(fixed_line.unwrap_or(line + line_offset)),
+                format!("`{name}` was removed in DRE 0.2: use {instead}"),
+            );
+        }
         for (r, line) in preflight::unknown_run_refs(src) {
             self.diags.error(
                 "unknown-run-attribute",
                 f.clone(),
                 Some(fixed_line.unwrap_or(line + line_offset)),
                 format!(
-                    "`{r}` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.source_type, run.schedule, run.date (a date: .prev_month, .month_start, .yyyymmdd, ...), run.now, run.scheduled_at, run.timezone, run.date_format(...)"
+                    "`{r}` isn't part of the run context; known: run.report, run.set, run.target, run.schedule, run.date (a date: .prev_month, .month_start, .yyyymmdd, ...), run.now, run.scheduled_at, run.timezone, run.date_format(...)"
                 ),
             );
         }
@@ -3857,6 +4576,7 @@ struct RawReport {
 
 struct BindingBase {
     profile: Option<String>,
+    profile_at: Option<ProfileAt>,
     vars: JsonMap<String, Json>,
     output: Mapping,
 }
@@ -3864,20 +4584,28 @@ struct BindingBase {
 /// Everything the project references, for profile and plugin checks.
 #[derive(Default)]
 struct Usage {
-    sources: BTreeMap<String, (Option<PathBuf>, Option<usize>)>,
+    connections: BTreeMap<String, (Option<PathBuf>, Option<usize>)>,
     destinations: BTreeMap<String, (Option<PathBuf>, Option<usize>)>,
     /// format → first user, for messages.
     formats: BTreeMap<String, (String, PathBuf)>,
 }
 
 impl Usage {
-    fn source(&mut self, p: &str, file: Option<PathBuf>, line: Option<usize>) {
-        let e = self.sources.entry(p.to_string()).or_insert((None, None));
+    /// A connection profile used by name. A value holding Jinja is recorded once the parse pass
+    /// has rendered it.
+    fn connection(&mut self, p: &str, file: Option<PathBuf>, line: Option<usize>) {
+        if preflight::is_templated(p) {
+            return;
+        }
+        let e = self.connections.entry(p.to_string()).or_insert((None, None));
         if e.0.is_none() {
             *e = (file, line);
         }
     }
     fn destination(&mut self, p: &str, file: Option<PathBuf>, line: Option<usize>) {
+        if preflight::is_templated(p) {
+            return;
+        }
         let e = self.destinations.entry(p.to_string()).or_insert((None, None));
         if e.0.is_none() {
             *e = (file, line);
@@ -3964,6 +4692,23 @@ pub fn merge_output(base: &mut Mapping, over: &Mapping) -> Option<String> {
         base.insert(k.clone(), v.clone());
     }
     problem
+}
+
+/// Where an inherited `profile` comes from when the report sets none: the deepest folder's
+/// `+profile`, else `default_profile`.
+fn inherited_profile_at(layers: &[&FolderCfg], project: &Project) -> Option<ProfileAt> {
+    if let Some((_, line)) = layers.iter().rev().find_map(|l| l.profile.as_ref()) {
+        return Some(ProfileAt {
+            file: PathBuf::from(PROJECT_FILE),
+            line: *line,
+            key: "`+profile`".into(),
+        });
+    }
+    project.default_profile.as_ref().map(|_| ProfileAt {
+        file: PathBuf::from(PROJECT_FILE),
+        line: project.default_profile_line,
+        key: "`default_profile`".into(),
+    })
 }
 
 fn folder_layers<'a>(folders: &'a BTreeMap<Vec<String>, FolderCfg>, folder: &[String]) -> Vec<&'a FolderCfg> {

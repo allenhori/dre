@@ -6,14 +6,12 @@ use common::TestProject;
 use serde_json::{Value, json};
 
 const PROFILES: &str = "\
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: dev.duckdb}
 destinations:
   inbox:
-    target: dev
     targets:
       dev: {type: local}
 ";
@@ -68,9 +66,9 @@ fn no_selector_lists_every_binding() {
     assert_eq!(
         rows(&r.stdout),
         [
-            vec!["daily", "-", "csv", "inbox:out/daily.csv"],
-            vec!["monthly", "client_a", "csv", "-"],
-            vec!["monthly", "client_b", "csv", "-"],
+            vec!["daily", "-", "warehouse", "csv", "inbox:out/daily.csv"],
+            vec!["monthly", "client_a", "warehouse", "csv", "-"],
+            vec!["monthly", "client_b", "warehouse", "csv", "-"],
         ]
     );
     assert!(r.stderr.is_empty(), "diagnostics only: {}", r.stderr);
@@ -83,12 +81,15 @@ fn a_selector_and_a_set_narrow_it() {
     r.ok();
     assert_eq!(
         rows(&r.stdout),
-        [vec!["daily", "-", "csv", "inbox:out/daily.csv"]]
+        [vec!["daily", "-", "warehouse", "csv", "inbox:out/daily.csv"]]
     );
 
     let r = p.dre("ls", &["monthly", "--set", "client_b"]);
     r.ok();
-    assert_eq!(rows(&r.stdout), [vec!["monthly", "client_b", "csv", "-"]]);
+    assert_eq!(
+        rows(&r.stdout),
+        [vec!["monthly", "client_b", "warehouse", "csv", "-"]]
+    );
 }
 
 #[test]
@@ -96,7 +97,10 @@ fn a_schedule_lists_exactly_what_it_runs() {
     let p = project();
     let r = p.dre("ls", &["--schedule", "close_a"]);
     r.ok();
-    assert_eq!(rows(&r.stdout), [vec!["monthly", "client_a", "csv", "-"]]);
+    assert_eq!(
+        rows(&r.stdout),
+        [vec!["monthly", "client_a", "warehouse", "csv", "-"]]
+    );
 }
 
 #[test]

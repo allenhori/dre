@@ -1,11 +1,9 @@
-sources:
+connections:
   local_dev:
-    target: dev
     targets:
       dev: {type: duckdb, path: ./dev.duckdb}
       prod: {type: duckdb, path: ./prod.duckdb}
 destinations:
   reports_gcs:
-    target: prod
     targets:
       prod: {type: gcs, bucket: reports}

@@ -39,8 +39,8 @@ The built-in `local` destination copies the file to a path, relative to the proj
 plugin and no declaration.
 
 A destination entry's keys other than `profile` and `path` are the plugin's options, and the
-plugin checks them the same way formats do, against the destination profile's output for the
-active target (`--target`). A value holding Jinja is checked once it's rendered, at delivery.
+plugin checks them the same way formats do, against the destination profile's entry for the
+run's target. A value holding Jinja is checked once it's rendered, at delivery.
 
 ### Several destinations
 
@@ -64,8 +64,9 @@ output:
 
 - Entries are delivered in order. If one fails, the rest are still attempted; the Binding then
   fails and the run exits non-zero.
-- Each entry follows `--target` on its own: an entry whose profile has no output for the active
-  target is skipped and logged, while the others are delivered.
+- Each entry follows the run's target on its own: an entry whose profile has no entry for the
+  target is skipped and logged, while the others are delivered. So a dev run delivers only where
+  a destination defines `dev`.
 - `run_results.json` lists every entry under `deliveries`, with `profile`, `type`, `status`
   (`delivered`, `skipped` or `failed`), `location` and `error`.
 - A Set can replace the whole list. Overriding only `path:` works when exactly one destination

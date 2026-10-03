@@ -59,6 +59,11 @@ pub trait Source {
     fn connection_fields(&self) -> Vec<ConnectionField> {
         Vec::new()
     }
+    /// The character the database quotes identifiers with, reported in `describe`: `"` for
+    /// most SQL databases, a backtick for Databricks and MySQL. Core doubles it inside a name.
+    fn identifier_quote(&self) -> Option<&'static str> {
+        None
+    }
     fn open(&mut self, connection: &Map<String, Value>, read_only: bool) -> Result<()>;
     /// Run one statement. `row_limit` is a hint; the SDK enforces it either way.
     fn execute(&mut self, sql: &str, row_limit: Option<u64>, out: &mut dyn ResultSink) -> Result<()>;
@@ -547,9 +552,14 @@ fn handle(h: &mut Handler<'_>, name: &str, req: Request, input: &mut Input, out:
             Handler::Destination(d) => d.connection_fields(),
             Handler::Format(_) => Vec::new(),
         };
+        let identifier_quote = match h {
+            Handler::Source(s) => s.identifier_quote().map(str::to_string),
+            _ => None,
+        };
         out.send(&Response::Describe {
             connection_fields,
             option_fields: h.option_fields(),
+            identifier_quote,
         });
         return Ok(());
     }

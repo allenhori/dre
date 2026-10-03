@@ -1,0 +1,5 @@
+exit: 1
+error[invalid-profiles]: $CASE/profiles/profiles.yml:5: profiles.yml has both `connections:` and `sources:`; `sources:` is the old name of `connections:`, so move its profiles under `connections:`
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
+Validation failed: 1 error, 0 warnings

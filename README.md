@@ -10,7 +10,8 @@
 **DRE** stands for **Declarative Reporting Engine**.
 
 DRE is SQL (plus a template) in, a correctly formatted file out. You declare reports as YAML and
-`.sql` files in a dbt-shaped project. DRE runs the SQL against your warehouse, writes the result as
+`.sql` files in a dbt-shaped project. DRE runs the SQL against your databases (each tab of a
+workbook can come from a different one, and tables can be declared as dbt-style sources), writes the result as
 csv, delimited, fixed-width, parquet or xlsx (including multi-sheet workbooks, number formats,
 formulas and totals rows, and branded Excel templates), and delivers the file wherever it needs
 to go. It runs on whatever scheduler you already have: cron, Airflow, Dagster, Databricks Jobs.
@@ -47,11 +48,11 @@ dre run                # run every report; output lands in target/run/
 ## Documentation
 
 - [Getting started](docs/getting-started.md) and [Install](docs/install.md)
-- [Concepts](docs/concepts.md), [Build and run reports](docs/building-reports.md), [Schedules](docs/schedules.md), [the orchestration recipe](docs/orchestration.md)
+- [Concepts](docs/concepts.md), [Build and run reports](docs/building-reports.md), [Connections and targets](docs/connections.md), [Sources](docs/sources.md), [Schedules](docs/schedules.md), [the orchestration recipe](docs/orchestration.md)
 - [Templates](docs/templates.md) and [Lookups](docs/lookups.md)
 - [Plugins](docs/plugins.md), [Managing plugins](docs/managing-plugins.md), [the registry and `dre.lock`](docs/registry.md), [the plugin protocol](docs/protocol.md)
 - [The target path](docs/target-path.md), [the manifest and `run_results.json`](docs/manifest.md), [schedule occurrences (`dre schedule ls`)](docs/schedule-ls.md)
-- [Updating DRE](docs/updating.md), [Environment variables](docs/environment-variables.md), [Building from source](docs/building-from-source.md)
+- [Updating DRE](docs/updating.md), [Upgrading to 0.2](docs/migrating-to-0.2.md), [Environment variables](docs/environment-variables.md), [Building from source](docs/building-from-source.md)
 - [Practices: how to set up, write and run reports well](docs/practices.md)
 - [Agent skills: DRE in your coding agent](skills/README.md)
 

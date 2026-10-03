@@ -22,4 +22,5 @@ error[invalid-schedule]: schedules.yml:14: `except` must be a list of dates in Y
 error[invalid-schedule]: schedules.yml:14: `also` must be a list of dates in YYYY-MM-DD form
 error[invalid-schedule]: schedules.yml:15: `also` needs a schedule that fires at one time of day (e.g. `0 6 * * *` or `at: "06:00"`), so the added dates fire then
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation failed: 22 errors, 0 warnings

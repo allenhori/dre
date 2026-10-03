@@ -1,6 +1,6 @@
 ---
 title: "profiles.yml reference"
-description: "Every key of profiles.yml: sources, destinations and their targets."
+description: "Every key of profiles.yml: connections, destinations and their targets."
 sidebar:
   order: 27
 ---
@@ -9,7 +9,7 @@ sidebar:
 
 <!-- Generated from docs/schemas by .github/scripts/schema_docs.py. Edit the schema, not this page. -->
 
-Connections, in `profiles.yml`: database sources and delivery destinations. Kept outside the project (`~/.dre`, `--profiles-dir` or `DRE_PROFILES_DIR`).
+Connections and destinations, in `profiles.yml`: what reports read from and where outputs go. Kept outside the project (`~/.dre`, `--profiles-dir` or `DRE_PROFILES_DIR`). Every profile lists its targets (environments); the run picks one for all of them: `--target`, `DRE_TARGET`, `target` in dre_project.yml, else `dev`.
 
 Where: `profiles.yml`.
 
@@ -23,19 +23,20 @@ For editor autocomplete and validation, add this as the first line of the file (
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `sources` | map |  | Database connections, referenced by `default_profile`, `profile:` and Sets. |
+| `connections` | map |  | Database connections, referenced by `default_profile`, `profile:` (report, query, Set, folder `+profile`) and a source's `profile`. |
+| `sources` | map |  | DRE 0.1's name for `connections:`. Still read in 0.2.x, with a warning: rename it to `connections:`. |
 | `destinations` | map |  | Delivery targets, referenced by `output.destination.profile`. |
 
-## `sources.<name>`
+## `connections.<name>`
 
-A named connection with one or more targets (environments).
+A named connection with one entry per target (environment).
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `target` (required) | string |  | The default target, one of `targets`. |
 | `targets` (required) | map |  | The environments of this profile, by name (e.g. `dev`, `prod`). |
+| `target` | string |  | Ignored since DRE 0.2 (with a warning): the run picks one target for every profile. |
 
-## `sources.<name>.targets.<name>`
+## `connections.<name>.targets.<name>`
 
 One target of a profile: a connection or delivery configuration. `type` names the plugin; every other key is a field of that plugin (see the plugins reference), and secrets belong in `{{ env_var('NAME') }}`.
 

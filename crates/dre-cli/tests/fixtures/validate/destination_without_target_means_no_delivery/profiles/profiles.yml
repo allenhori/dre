@@ -1,11 +1,9 @@
-sources:
+connections:
   local_dev:
-    target: dev
     targets:
       dev: {type: duckdb, path: ./dev.duckdb}
       prod: {type: duckdb, path: ./prod.duckdb}
 destinations:
   client_sftp:
-    target: prod
     targets:
       prod: {type: sftp, host: sftp.example.com, password: "{{ env_var('SFTP_PASSWORD') }}"}

@@ -6,6 +6,10 @@ exit: 0
     "exists": true,
     "found_by": "--profiles-dir"
   },
+  "target": {
+    "name": "dev",
+    "from": "the default"
+  },
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],
@@ -17,7 +21,13 @@ exit: 0
         "target/compiled/sales/client_a/sales_q.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "sales_q",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/sales/client_a/sales.csv",
@@ -33,7 +43,13 @@ exit: 0
         "target/compiled/sales/client_b/sales_q.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "sales_q",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/sales/client_b/sales.csv",
@@ -63,7 +79,8 @@ exit: 0
     "project": {
       "checksum": "2bce54501ee3e21acd3ecd6580dcdd1276665b3fca45d8ca0cd64d21aa5f95ee",
       "default_profile": "local_dev",
-      "name": "acme_reports"
+      "name": "acme_reports",
+      "target": "dev"
     },
     "reports": {
       "sales": {
@@ -77,6 +94,10 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/sales/sales_q.sql",
                 "query": "sales_q",
                 "tab": true
@@ -99,6 +120,10 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/sales/sales_q.sql",
                 "query": "sales_q",
                 "tab": true
@@ -114,6 +139,9 @@ exit: 0
           }
         ],
         "checksum": "2e5f08625758d79074a9a5ade845a1673ee44f616990709099b0736f978dfd2f",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/sales/sales.yml",
         "folder": [
           "sales"
@@ -178,7 +206,8 @@ exit: 0
         "vars": {}
       }
     },
-    "schema": 1,
+    "schema": 2,
+    "sources": {},
     "version": "$VERSION"
   }
 }

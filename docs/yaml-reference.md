@@ -13,12 +13,13 @@ key with its type, default and meaning. The pages are generated from the same
 
 | File | What it holds | Reference |
 |---|---|---|
-| `dre_project.yml` | The project: default profile and output, variables, week settings, folder config | [dre_project.yml](reference-project.md) |
+| `dre_project.yml` | The project: default connection, target and output, variables, week settings, folder config | [dre_project.yml](reference-project.md) |
 | `reports/**/*.yml` | A report: queries, output, destinations, Sets, templates | [Report YAML](reference-report.md) |
 | `sets.yml` | Named variants a report can run as | [sets.yml](reference-sets.md) |
 | `schedules.yml` | Named schedules your orchestrator fires | [schedules.yml](reference-schedules.md) |
 | `timings.yml` | Named timings that schedules share | [timings.yml](reference-timings.md) |
-| `profiles.yml` | Connections: sources and destinations (kept outside the project) | [profiles.yml](reference-profiles.md) |
+| `profiles.yml` | Connections and destinations, with their targets (kept outside the project) | [profiles.yml](reference-profiles.md) |
+| `sources/*.yml` (any YAML with `sources:`) | dbt-style source declarations: tables, columns, the connection they live on | [Sources](reference-sources.md) |
 | `dependencies.yml` | Plugin packages and macro packages | [dependencies.yml](reference-dependencies.md) |
 | `lookups/<name>.yml` | The config of a lookup file | [Lookup config](reference-lookups.md) |
 

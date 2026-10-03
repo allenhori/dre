@@ -1,0 +1,6 @@
+sources:
+  local_dev:
+    target: prod
+    targets:
+      dev: {type: duckdb, path: ./dev.duckdb}
+      prod: {type: duckdb, path: ./prod.duckdb}

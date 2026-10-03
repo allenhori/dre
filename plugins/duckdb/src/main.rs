@@ -89,6 +89,10 @@ impl DuckDb {
 }
 
 impl Source for DuckDb {
+    fn identifier_quote(&self) -> Option<&'static str> {
+        Some("\"")
+    }
+
     fn connection_fields(&self) -> Vec<ConnectionField> {
         vec![
             ConnectionField::new(

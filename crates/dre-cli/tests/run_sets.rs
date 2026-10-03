@@ -5,19 +5,16 @@ mod common;
 use common::{PLUGINS_YML, TestProject};
 
 const PROFILES: &str = "\
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: dev.duckdb}
       prod: {type: duckdb, path: prod.duckdb}
 destinations:
   inbox:
-    target: prod
     targets:
       prod: {type: local}
   dev_inbox:
-    target: dev
     targets:
       dev: {type: local}
       prod: {type: local}
@@ -119,7 +116,7 @@ fn set_narrows_to_one_binding() {
 }
 
 #[test]
-fn target_switches_source_and_destination_profiles() {
+fn one_target_for_the_run_switches_connections_and_destinations() {
     let p = project(&[
         (
             "reports/ops/t/t.yml",
@@ -127,20 +124,33 @@ fn target_switches_source_and_destination_profiles() {
         ),
         ("reports/ops/t/tq.sql", "select name from env\n"),
     ]);
-    // Default target: source dev, destination profile's own default (prod) delivers.
-    p.dre("run", &["t"]).ok();
-    assert_eq!(p.read("out/t.csv"), "name\r\ndev\r\n");
-    std::fs::remove_file(p.path("out/t.csv")).unwrap();
-    // --target prod reads prod data and delivers.
-    p.dre("run", &["t", "--target", "prod"]).ok();
-    assert_eq!(p.read("out/t.csv"), "name\r\nprod\r\n");
-    std::fs::remove_file(p.path("out/t.csv")).unwrap();
-    // --target dev: the destination profile has no dev target → nothing delivered.
-    p.dre("run", &["t", "--target", "dev"])
+    // Default target `dev`: dev data, and the prod-only destination is skipped.
+    p.dre("run", &["t"])
         .ok()
         .says("destination profile `inbox` has no `dev` target: not delivered, output stays in target/");
     assert!(!p.path("out/t.csv").exists());
     assert_eq!(p.read("target/run/t/default/t.csv"), "name\r\ndev\r\n");
+    let r = p.json("target/run/t/default/run_results.json");
+    assert_eq!(r["target"], "dev");
+    // --target prod reads prod data and delivers.
+    p.dre("run", &["t", "--target", "prod"]).ok();
+    assert_eq!(p.read("out/t.csv"), "name\r\nprod\r\n");
+    std::fs::remove_file(p.path("out/t.csv")).unwrap();
+    // DRE_TARGET is below --target.
+    p.dre_env("run", &["t"], &[("DRE_TARGET", "prod")]).ok();
+    assert_eq!(p.read("out/t.csv"), "name\r\nprod\r\n");
+    std::fs::remove_file(p.path("out/t.csv")).unwrap();
+    p.dre_env("run", &["t", "--target", "dev"], &[("DRE_TARGET", "prod")])
+        .ok();
+    assert!(!p.path("out/t.csv").exists());
+    // `target:` in dre_project.yml is below DRE_TARGET.
+    let project_file = p.read("dre_project.yml");
+    p.write("dre_project.yml", &format!("{project_file}target: prod\n"));
+    p.dre("run", &["t"]).ok();
+    assert_eq!(p.read("out/t.csv"), "name\r\nprod\r\n");
+    std::fs::remove_file(p.path("out/t.csv")).unwrap();
+    p.dre_env("run", &["t"], &[("DRE_TARGET", "dev")]).ok();
+    assert!(!p.path("out/t.csv").exists());
 }
 
 #[test]
@@ -283,7 +293,10 @@ fn target_warnings_only_for_what_the_run_uses() {
     let text = std::fs::read_to_string(&profiles).unwrap();
     std::fs::write(
         &profiles,
-        text.replace("destinations:", "  other:\n    target: dev\n    targets:\n      dev: {type: duckdb, path: dev.duckdb}\ndestinations:"),
+        text.replace(
+            "destinations:",
+            "  other:\n    targets:\n      dev: {type: duckdb, path: dev.duckdb}\ndestinations:",
+        ),
     )
     .unwrap();
     let r = p.dre("run", &["one", "--target", "prod"]);

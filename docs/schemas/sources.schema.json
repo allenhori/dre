@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "x-dre-schema-version": "0.1",
+  "title": "DRE sources",
+  "description": "dbt-style source declarations: the tables a project reads, with DRE's `profile:` for the connection they live on. In any project YAML file under a top-level `sources:` key (`sources/` is the conventional folder); dbt's `version: 2` is accepted beside it. Use a table in SQL with `{{ source('<source>', '<table>') }}`.",
+  "type": "object",
+  "properties": {
+    "sources": {
+      "type": "array",
+      "description": "The sources this file declares.",
+      "items": {
+        "$ref": "#/$defs/source"
+      }
+    },
+    "version": {
+      "description": "dbt's file version (`2`); accepted and ignored."
+    }
+  },
+  "required": [
+    "sources"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "source": {
+      "type": "object",
+      "description": "A source: tables in one schema of one system.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The source's name, the first argument of `source()`. Unique in the project."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the source is."
+        },
+        "database": {
+          "type": "string",
+          "description": "The database (catalog). Set: `source()` renders `database.schema.table`; unset: `schema.table`. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`."
+        },
+        "schema": {
+          "type": "string",
+          "description": "The schema; the source's name unless set. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`."
+        },
+        "profile": {
+          "type": "string",
+          "description": "DRE's addition: the connection (in `profiles.yml`) the source lives on. A query using the source runs there; it overrides the report's, Set's, folder's and project's default. Unset: the source runs wherever its query runs. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`."
+        },
+        "quoting": {
+          "$ref": "#/$defs/quoting"
+        },
+        "tags": {
+          "$ref": "#/$defs/tags"
+        },
+        "meta": {
+          "$ref": "#/$defs/meta"
+        },
+        "tables": {
+          "type": "array",
+          "description": "The source's tables.",
+          "items": {
+            "$ref": "#/$defs/table"
+          }
+        },
+        "loader": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "loaded_at_field": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "loaded_at_query": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "config": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "overrides": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "freshness": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "docs": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "table": {
+      "type": "object",
+      "description": "One table of the source.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name `source()` uses."
+        },
+        "identifier": {
+          "type": "string",
+          "description": "The real table name, when it differs from `name`. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the table holds."
+        },
+        "quoting": {
+          "$ref": "#/$defs/quoting"
+        },
+        "tags": {
+          "$ref": "#/$defs/tags"
+        },
+        "meta": {
+          "$ref": "#/$defs/meta"
+        },
+        "columns": {
+          "type": "array",
+          "description": "Declared columns, checked by `dre validate --live`.",
+          "items": {
+            "$ref": "#/$defs/column"
+          }
+        },
+        "loaded_at_field": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "loaded_at_query": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "tests": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "data_tests": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "freshness": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "external": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "config": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "docs": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "column": {
+      "type": "object",
+      "description": "A column of the table. `dre validate --live` checks that it exists and, with `data_type`, that its type matches loosely.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The column's name (compared case-insensitively)."
+        },
+        "description": {
+          "type": "string",
+          "description": "What the column holds."
+        },
+        "data_type": {
+          "type": "string",
+          "description": "The column's SQL type, e.g. `bigint`, `varchar`, `timestamp`; compared loosely with what the database returns."
+        },
+        "meta": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "tags": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "quote": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "tests": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "data_tests": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "constraints": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "config": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "docs": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        },
+        "granularity": {
+          "description": "A dbt key DRE accepts but doesn't use yet (noted by `dre validate`)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "quoting": {
+      "type": "object",
+      "description": "Which parts `source()` quotes, with the connection's identifier quote character. Unset parts inherit (table from source), else aren't quoted.",
+      "properties": {
+        "database": {
+          "type": "boolean",
+          "description": "Quote the database."
+        },
+        "schema": {
+          "type": "boolean",
+          "description": "Quote the schema."
+        },
+        "identifier": {
+          "type": "boolean",
+          "description": "Quote the table name."
+        }
+      },
+      "additionalProperties": false
+    },
+    "tags": {
+      "description": "Tags, for documentation.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "meta": {
+      "type": "object",
+      "description": "Free-form metadata, kept in the manifest.",
+      "additionalProperties": true
+    }
+  }
+}

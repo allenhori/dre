@@ -424,6 +424,10 @@ impl Postgres {
 }
 
 impl Source for Postgres {
+    fn identifier_quote(&self) -> Option<&'static str> {
+        Some("\"")
+    }
+
     fn connection_fields(&self) -> Vec<ConnectionField> {
         vec![
             ConnectionField::new("host", "server host name").default("localhost"),

@@ -1,0 +1,2 @@
+queries:
+  - {query: q_vs_source, profile: pg}

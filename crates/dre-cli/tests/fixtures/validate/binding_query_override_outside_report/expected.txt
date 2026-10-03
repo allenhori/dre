@@ -4,4 +4,5 @@ error[unknown-query]: reports/ops/daily/daily.yml:6: report `daily`, Set `client
 warning[unmanaged-report]: reports/ops/other/q8.sql: `q8` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
 warning[unmanaged-report]: reports/ops/other/q9.sql: `q9` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation failed: 2 errors, 2 warnings

@@ -6,7 +6,7 @@ use calamine::{Reader, Xlsx, open_workbook};
 use common::TestProject;
 
 const PROFILES: &str =
-    "sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {type: duckdb, path: data.duckdb}\n";
+    "connections:\n  warehouse:\n    targets:\n      dev: {type: duckdb, path: data.duckdb}\n";
 
 fn project(report: &str) -> TestProject {
     let p = TestProject::new(

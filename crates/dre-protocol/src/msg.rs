@@ -103,6 +103,11 @@ pub enum Response {
         connection_fields: Vec<ConnectionField>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         option_fields: Vec<OptionField>,
+        /// Source: the character the database quotes identifiers with (`"` for DuckDB and
+        /// Postgres, a backtick for Databricks). Core uses it to quote names a project asks to
+        /// quote (a source's `quoting:`). Every source sets it; other kinds leave it out.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        identifier_quote: Option<String>,
     },
     /// Every problem with the options, each a sentence naming the key; empty when they're fine.
     Validated {

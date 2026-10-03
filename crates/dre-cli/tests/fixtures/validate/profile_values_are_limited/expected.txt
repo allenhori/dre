@@ -1,0 +1,7 @@
+exit: 1
+error[invalid-profile-value]: dre_project.yml:2: `default_profile` `{{ connection.name }}`: `connection.*` can't be used here: this value chooses a connection or a source, so it's rendered before any connection is open
+error[invalid-profile-value]: reports/ops/a/a.yml: report `a`: `profile` of query `a2` `{{ columns('t') }}`: `columns()` can't be used here: this value chooses a connection or a source, so it's rendered before any connection is open
+error[parse-failed]: reports/ops/b/b1.sql:1: report `b`: query `b1` doesn't parse: `source('sales', 'orders')`: source `sales`: `profile` `{{ run_query('select 1')[0][0] }}`: `run_query()` can't be used here: this value chooses a connection or a source, so it's rendered before any connection is open
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
+Validation failed: 3 errors, 0 warnings

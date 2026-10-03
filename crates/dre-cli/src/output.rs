@@ -195,16 +195,27 @@ impl Printer {
         for f in &p.compiled {
             i.print(Tone::Good, "Compiled", &f.display().to_string());
         }
-        let source = format!("{} ({}), target {}", p.profile, p.source_type, p.target);
         i.print(
             if non_dev(&p.target) {
                 Tone::Warn
             } else {
                 Tone::Note
             },
-            "Source",
-            &source,
+            "Target",
+            &p.target,
         );
+        for q in &p.queries {
+            let sources = if q.sources.is_empty() {
+                String::new()
+            } else {
+                format!(", reads {}", q.sources.join(", "))
+            };
+            i.print(
+                Tone::Note,
+                "Query",
+                &format!("{} on {} ({}){sources}", q.query, q.connection, q.kind),
+            );
+        }
         i.print(
             Tone::Note,
             "Output",
