@@ -303,7 +303,7 @@ impl Inner {
 
     fn json(&self, mut v: serde_json::Value) {
         v["ts"] = json!(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true));
-        let line = dre_core::secrets::to_json_line(&v).unwrap_or_default();
+        let line = dre_core::secrets::to_json_line(&v).expect("serializing a serde_json::Value cannot fail");
         match &self.bar {
             Some(b) => b.suspend(|| print_line(&line)),
             None => print_line(&line),
