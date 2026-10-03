@@ -225,5 +225,5 @@ impl Run {
     }
 }
 
-pub const DUCK_PROFILES: &str = "sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {type: duckdb, path: data.duckdb}\n      prod: {type: duckdb, path: prod.duckdb}\n";
+pub const DUCK_PROFILES: &str = "connections:\n  warehouse:\n    targets:\n      dev: {type: duckdb, path: data.duckdb}\n      prod: {type: duckdb, path: prod.duckdb}\n";
 pub const PLUGINS_YML: &str = "plugins:\n  - duckdb\n  - csv\n";

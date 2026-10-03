@@ -1,0 +1,14 @@
+exit: 0
+warning[source-key-not-supported]: sources/shop.yml:3: dbt source keys DRE doesn't support yet are ignored: column `data_tests`, source `freshness`, source `loader`, table `loaded_at_field`
+   Binding  daily
+  Compiled  target/compiled/daily/default/orders.sql
+  Compiled  target/compiled/daily/default/accounts.sql
+  Compiled  target/compiled/daily/default/regions.sql
+    Target  dev
+     Query  orders on duck (duckdb), reads sales.orders
+     Query  accounts on pg (postgres), reads crm.accounts, crm.contacts
+     Query  regions on duck (duckdb), reads lookups.regions
+    Output  target/run/daily/default/daily.csv (csv)
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
+Validation passed: 0 errors, 1 warning

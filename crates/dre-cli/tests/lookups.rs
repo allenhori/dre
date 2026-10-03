@@ -95,7 +95,7 @@ fn a_source_that_cant_load_gets_the_lookup_inlined_with_a_warning() {
             // The fixture only understands its own commands, so the ref is rendered but unused.
             ("reports/r/q.sql", "{% set c = ref('countries') %}rows 1\n"),
         ],
-        "sources:\n  fx:\n    target: dev\n    targets:\n      dev: {type: fixture}\n",
+        "connections:\n  fx:\n    targets:\n      dev: {type: fixture}\n",
     );
     p.dre("run", &["r"])
         .ok()

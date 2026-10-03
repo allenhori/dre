@@ -1,6 +1,7 @@
 //! `dre ls`: the reports and Bindings a selection or schedule covers, read from the loaded
-//! project (the manifest's per-selection view). Offline and read-only: it writes nothing, not
-//! even the manifest.
+//! project (the manifest's per-selection view), with each Binding's connections from the parse
+//! pass; or, with `--resource-type source`, the declared sources and who reads them. Offline and
+//! read-only: it writes nothing, not even the manifest.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -26,6 +27,17 @@ pub struct LsArgs {
     /// `text` for people, `json` for tools (the manifest's shape, holding only what matched).
     #[arg(long, value_enum, default_value = "text")]
     output: LsOutput,
+    /// What to list: reports (default), or the declared sources (each table, its connection,
+    /// and the reports that read it; unused ones are flagged).
+    #[arg(long, value_enum, default_value = "report")]
+    resource_type: ResourceType,
+    /// The target (environment) whose connections to show (default: $DRE_TARGET, then `target`
+    /// in dre_project.yml, then `dev`).
+    #[arg(long)]
+    target: Option<String>,
+    /// Set a variable for `var()`, as on `dre run`.
+    #[arg(long = "var", value_name = "NAME=VALUE", value_parser = crate::parse_var)]
+    vars: Vec<(String, String)>,
     /// Project directory (default: the current directory).
     #[arg(long, default_value = ".")]
     project_dir: PathBuf,
@@ -43,12 +55,22 @@ enum LsOutput {
     Json,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ResourceType {
+    Report,
+    Source,
+}
+
 /// Diagnostics go to stderr, so stdout holds only data.
 pub fn ls(a: LsArgs) -> ExitCode {
     let opts = LoadOptions {
         profiles_dir: a.profiles_dir.clone(),
         target_path: a.target_path.clone(),
-        ..Default::default()
+        target: a.target.clone(),
+        vars: a.vars.iter().cloned().collect(),
+        date: crate::run_date(),
+        scheduled_at: crate::run_at().ok().flatten(),
+        timezone: std::env::var("DRE_TIMEZONE").ok().filter(|t| !t.is_empty()),
     };
     let (project, diags) = project::load(&a.project_dir, &opts);
     let Some(project) = project else {
@@ -58,6 +80,9 @@ pub fn ls(a: LsArgs) -> ExitCode {
         return ExitCode::FAILURE;
     };
     dre_core::secrets::set_enabled(project.mask_secrets);
+    if a.resource_type == ResourceType::Source {
+        return sources(&project, &a);
+    }
     let (reports, schedules) = match select(&project, &a) {
         Ok(found) => found,
         Err(e) => {
@@ -137,38 +162,102 @@ fn select<'a>(project: &'a Project, a: &LsArgs) -> Result<Selected<'a>, String> 
     Ok((reports, Vec::new()))
 }
 
-/// One Binding per line: report, Set, format and destinations.
-fn table(reports: &[(&Report, Vec<&Binding>)]) -> String {
-    let mut rows = vec![[
-        "REPORT".to_string(),
-        "SET".into(),
-        "FORMAT".into(),
-        "DESTINATIONS".into(),
-    ]];
-    for (r, bs) in reports {
-        for b in bs {
-            let dests: Vec<String> = b
-                .output
-                .destinations
-                .iter()
-                .map(|d| match &d.path {
-                    Some(p) => format!("{}:{p}", d.profile),
-                    None => d.profile.clone(),
-                })
-                .collect();
-            rows.push([
-                r.name.clone(),
-                b.set.clone().unwrap_or_else(|| "-".into()),
-                b.output.format.clone(),
-                if dests.is_empty() {
-                    "-".into()
-                } else {
-                    dests.join(", ")
-                },
-            ]);
+/// `--resource-type source`: one line per source table, or the manifest's `sources` (only those
+/// a `source:` selector names, when there is one).
+fn sources(project: &Project, a: &LsArgs) -> ExitCode {
+    let terms: Vec<String> = a
+        .select
+        .iter()
+        .chain(&a.selector)
+        .flat_map(|s| s.split([' ', ',', ';']).map(str::to_string).collect::<Vec<_>>())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let mut wanted: Vec<(String, Option<String>)> = Vec::new();
+    for t in &terms {
+        let Some(sel) = t.strip_prefix("source:") else {
+            eprintln!(
+                "error: with --resource-type source, select with `source:<source>` or `source:<source>.<table>`, not `{t}`"
+            );
+            return ExitCode::FAILURE;
+        };
+        let (s, tb) = match sel.split_once('.') {
+            Some((s, tb)) => (s.to_string(), Some(tb.to_string())),
+            None => (sel.to_string(), None),
+        };
+        match project.sources.get(&s) {
+            None => {
+                eprintln!("error: no source `{s}`");
+                return ExitCode::FAILURE;
+            }
+            Some(def) if tb.as_ref().is_some_and(|t| def.table(t).is_none()) => {
+                eprintln!("error: source `{s}` has no table `{}`", tb.unwrap());
+                return ExitCode::FAILURE;
+            }
+            _ => wanted.push((s, tb)),
         }
     }
-    let widths: Vec<usize> = (0..4)
+    let picked = |s: &str, t: &str| {
+        wanted.is_empty()
+            || wanted
+                .iter()
+                .any(|(ws, wt)| ws == s && wt.as_deref().is_none_or(|wt| wt == t))
+    };
+    let doc = dre_core::manifest::build(project, &Default::default());
+    let mut all = doc["sources"].as_object().cloned().unwrap_or_default();
+    for (name, src) in all.iter_mut() {
+        if let Some(tables) = src["tables"].as_object_mut() {
+            tables.retain(|t, _| picked(name, t));
+        }
+    }
+    all.retain(|_, src| src["tables"].as_object().is_some_and(|t| !t.is_empty()));
+    match a.output {
+        LsOutput::Json => {
+            let doc = serde_json::json!({"sources": all});
+            print!("{}", dre_core::manifest::render(&doc));
+        }
+        LsOutput::Text => {
+            let mut rows = vec![[
+                "SOURCE".to_string(),
+                "CONNECTION".into(),
+                "RELATION".into(),
+                "USED BY".into(),
+            ]];
+            for (name, src) in &all {
+                let conn = src["profile"].as_str().unwrap_or("(the query's)").to_string();
+                let prefix: Vec<&str> = [src["database"].as_str(), src["schema"].as_str()]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                for (t, table) in src["tables"].as_object().into_iter().flatten() {
+                    let used: Vec<&str> = table["used_by"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|u| u.as_str())
+                        .collect();
+                    let mut rel = prefix.clone();
+                    rel.push(table["identifier"].as_str().unwrap_or(t));
+                    rows.push([
+                        format!("{name}.{t}"),
+                        conn.clone(),
+                        rel.join("."),
+                        if used.is_empty() {
+                            "(unused)".into()
+                        } else {
+                            used.join(", ")
+                        },
+                    ]);
+                }
+            }
+            print!("{}", dre_core::secrets::mask(&columns(rows)));
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Rows of cells, left-aligned in columns.
+fn columns<const N: usize>(rows: Vec<[String; N]>) -> String {
+    let widths: Vec<usize> = (0..N)
         .map(|i| rows.iter().map(|r| r[i].chars().count()).max().unwrap_or(0))
         .collect();
     let mut out = String::new();
@@ -182,4 +271,47 @@ fn table(reports: &[(&Report, Vec<&Binding>)]) -> String {
         out.push('\n');
     }
     out
+}
+
+/// One Binding per line: report, Set, the connections its queries run on, format and
+/// destinations.
+fn table(reports: &[(&Report, Vec<&Binding>)]) -> String {
+    let mut rows = vec![[
+        "REPORT".to_string(),
+        "SET".into(),
+        "CONNECTIONS".into(),
+        "FORMAT".into(),
+        "DESTINATIONS".into(),
+    ]];
+    for (r, bs) in reports {
+        for b in bs {
+            let conns = b
+                .parsed
+                .as_ref()
+                .map(|p| p.connections().join(", "))
+                .filter(|c| !c.is_empty())
+                .unwrap_or_else(|| "-".into());
+            let dests: Vec<String> = b
+                .output
+                .destinations
+                .iter()
+                .map(|d| match &d.path {
+                    Some(p) => format!("{}:{p}", d.profile),
+                    None => d.profile.clone(),
+                })
+                .collect();
+            rows.push([
+                r.name.clone(),
+                b.set.clone().unwrap_or_else(|| "-".into()),
+                conns,
+                b.output.format.clone(),
+                if dests.is_empty() {
+                    "-".into()
+                } else {
+                    dests.join(", ")
+                },
+            ]);
+        }
+    }
+    columns(rows)
 }

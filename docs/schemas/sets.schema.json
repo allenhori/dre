@@ -14,7 +14,7 @@
       "properties": {
         "profile": {
           "type": "string",
-          "description": "The source profile a Binding with this Set runs against."
+          "description": "The connection a Binding with this Set runs on. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`."
         },
         "vars": {
           "type": "object",

@@ -7,13 +7,11 @@ use calamine::{Data, Reader, Xlsx, open_workbook};
 use common::TestProject;
 
 const PROFILES: &str = "\
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: data.duckdb}
   fixture:
-    target: dev
     targets:
       dev: {type: fixture}
       broken:
@@ -22,7 +20,6 @@ sources:
         fail: 'fixture rejected token {{ env_var(\"DRE_SECRET_FIXTURE_TOKEN\") }} at login'
 destinations:
   inbox:
-    target: dev
     targets:
       dev: {type: local}
 ";

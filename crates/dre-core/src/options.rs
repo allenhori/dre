@@ -34,11 +34,11 @@ struct Use {
 type Blocks = BTreeMap<String, (Map<String, Value>, Vec<Use>)>;
 
 /// Ask each format and destination plugin to check every config block the project gives it,
-/// found by kind and name alone: core knows nothing of any plugin's options. `target` picks each
-/// destination profile's output, as `--target` does for a run. A declared plugin that can't be
-/// found is an error, or a warning with `offline` (`dre validate --no-auto-install`, which
-/// doesn't install plugins).
-pub fn check(project: &Project, target: Option<&str>, offline: bool, diags: &mut Diagnostics) {
+/// found by kind and name alone: core knows nothing of any plugin's options. Each destination
+/// profile's output is the run's target's. A declared plugin that can't be found is an error, or
+/// a warning with `offline` (`dre validate --no-auto-install`, which doesn't install plugins).
+pub fn check(project: &Project, offline: bool, diags: &mut Diagnostics) {
+    let target = project.target_name.as_str();
     // (kind, plugin) -> distinct option blocks -> where each is used.
     let mut blocks: BTreeMap<(PluginKind, String), Blocks> = BTreeMap::new();
     let mut add = |kind, name: &str, options: &Map<String, Value>, u: Use| {
@@ -71,17 +71,23 @@ pub fn check(project: &Project, target: Option<&str>, offline: bool, diags: &mut
                 profile: profile.map(str::to_string),
             };
             add(PluginKind::Format, &b.output.format, &b.output.options, at(None));
-            for d in &b.output.destinations {
-                let kind = if project.profiles.is_builtin_local(&d.profile) {
+            for (i, d) in b.output.destinations.iter().enumerate() {
+                // The profile as the parse pass rendered it (a Jinja `profile:`).
+                let rendered = b
+                    .parsed
+                    .as_ref()
+                    .and_then(|p| p.destinations.get(i).cloned().flatten());
+                let profile = rendered.as_deref().unwrap_or(&d.profile);
+                let kind = if project.profiles.is_builtin_local(profile) {
                     LOCAL_TYPE
                 } else {
-                    match project.profiles.target(Role::Destination, &d.profile, target) {
-                        Some((_, t)) => t.kind.as_str(),
+                    match project.profiles.target(Role::Destination, profile, target) {
+                        Some(t) => t.kind.as_str(),
                         // A missing profile or target is reported elsewhere.
                         None => continue,
                     }
                 };
-                add(PluginKind::Destination, kind, &d.options, at(Some(&d.profile)));
+                add(PluginKind::Destination, kind, &d.options, at(Some(profile)));
             }
         }
     }

@@ -6,6 +6,10 @@ exit: 0
     "exists": true,
     "found_by": "--profiles-dir"
   },
+  "target": {
+    "name": "dev",
+    "from": "the default"
+  },
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],
@@ -19,7 +23,23 @@ exit: 0
         "target/compiled/monthly/client_a/q3.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "q1",
+          "connection": "local_dev",
+          "type": "duckdb"
+        },
+        {
+          "query": "q2",
+          "connection": "local_dev",
+          "type": "duckdb"
+        },
+        {
+          "query": "q3",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/monthly/client_a/monthly.csv",
@@ -34,7 +54,18 @@ exit: 0
         "target/compiled/monthly/client_b/q2.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "q1",
+          "connection": "local_dev",
+          "type": "duckdb"
+        },
+        {
+          "query": "q2",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/monthly/client_b/monthly.csv",
@@ -49,7 +80,18 @@ exit: 0
         "target/compiled/monthly/client_c_pilot/q2.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "q1",
+          "connection": "local_dev",
+          "type": "duckdb"
+        },
+        {
+          "query": "q2",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/monthly/client_c_pilot/monthly.csv",
@@ -77,7 +119,8 @@ exit: 0
     "project": {
       "checksum": "3738c86ea2f541e6e16982ba47a56d36c91a1617745d210a6c89f2f06900630f",
       "default_profile": "local_dev",
-      "name": "acme_reports"
+      "name": "acme_reports",
+      "target": "dev"
     },
     "reports": {
       "monthly": {
@@ -91,16 +134,28 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/monthly/q1.sql",
                 "query": "q1",
                 "tab": true
               },
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/monthly/q2.sql",
                 "query": "q2",
                 "tab": true
               },
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/monthly/q3.sql",
                 "query": "q3",
                 "tab": true
@@ -122,12 +177,20 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/monthly/q1.sql",
                 "query": "q1",
                 "tab": true,
                 "tab_name": "Client B Summary"
               },
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/monthly/q2.sql",
                 "query": "q2",
                 "tab": true
@@ -149,11 +212,19 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/monthly/q1.sql",
                 "query": "q1",
                 "tab": true
               },
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/monthly/q2.sql",
                 "query": "q2",
                 "tab": true
@@ -169,6 +240,9 @@ exit: 0
         ],
         "checksum": "7be04dd03347ebebf812be06f3d64b0f4ea19d61cab3d5fa6dae1f1a90649c3b",
         "default_set": "client_a",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/finance/monthly/monthly.yml",
         "folder": [
           "finance",
@@ -198,7 +272,8 @@ exit: 0
       }
     },
     "schedules": {},
-    "schema": 1,
+    "schema": 2,
+    "sources": {},
     "version": "$VERSION"
   }
 }

@@ -6,6 +6,10 @@ exit: 0
     "exists": true,
     "found_by": "--profiles-dir"
   },
+  "target": {
+    "name": "dev",
+    "from": "the default"
+  },
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],
@@ -19,7 +23,23 @@ exit: 0
         "target/compiled/daily/default/multi.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "setup",
+          "connection": "local_dev",
+          "type": "duckdb"
+        },
+        {
+          "query": "summary",
+          "connection": "local_dev",
+          "type": "duckdb"
+        },
+        {
+          "query": "multi",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/daily/default/daily.csv",
@@ -47,7 +67,8 @@ exit: 0
     "project": {
       "checksum": "c0bb111ae2422a80a4e6ae4a0cd385c004763ad4dbb65ba5b2be2092b2c3b8de",
       "default_profile": "local_dev",
-      "name": "acme_reports"
+      "name": "acme_reports",
+      "target": "dev"
     },
     "reports": {
       "daily": {
@@ -61,11 +82,19 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/ops/daily/setup.sql",
                 "query": "setup",
                 "tab": false
               },
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/ops/daily/summary.sql",
                 "query": "summary",
                 "tab": true,
@@ -73,6 +102,10 @@ exit: 0
               },
               {
                 "anchor": "B3",
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/ops/daily/multi.sql",
                 "header": false,
                 "query": "multi",
@@ -86,6 +119,9 @@ exit: 0
           }
         ],
         "checksum": "230bb99a8abd4425a2b8b1dfd7369f678109d7c9f663c556d02ece08b908d68f",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/ops/daily/daily.yml",
         "folder": [
           "ops",
@@ -119,7 +155,8 @@ exit: 0
       }
     },
     "schedules": {},
-    "schema": 1,
+    "schema": 2,
+    "sources": {},
     "version": "$VERSION"
   }
 }

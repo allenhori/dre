@@ -10,4 +10,5 @@ error[invalid-timezone]: timings.yml:5: timing `bad_zone`: `timezone`: `Mars/Oly
 error[invalid-timing]: timings.yml:6: timing name `7_days` must be letters, digits and `_`, not starting with a digit
 warning[schedule-needs-anchor]: timings.yml:7: timing `no_anchor`: `every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; this becomes an error in DRE 0.2.0
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation failed: 8 errors, 2 warnings

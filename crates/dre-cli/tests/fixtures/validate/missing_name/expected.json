@@ -2,6 +2,7 @@ exit: 1
 {
   "ok": false,
   "profiles": null,
+  "target": null,
   "errors": 1,
   "warnings": 0,
   "diagnostics": [

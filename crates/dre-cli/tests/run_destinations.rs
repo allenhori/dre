@@ -8,12 +8,12 @@ use serde_json::{Value, json};
 /// `rec` records deliveries in `<tmp>/rec`; `broken` always fails; `mail` has only a prod target.
 fn profiles(rec: &str) -> String {
     format!(
-        "sources:\n  warehouse:\n    target: dev\n    targets:\n      dev: {{type: duckdb, path: data.duckdb}}\n\
+        "connections:\n  warehouse:\n    targets:\n      dev: {{type: duckdb, path: data.duckdb}}\n\
          destinations:\n\
-         \x20 inbox:\n    target: dev\n    targets:\n      dev: {{type: local}}\n\
-         \x20 rec:\n    target: dev\n    targets:\n      dev: {{type: fixture, dir: \"{rec}\"}}\n\
-         \x20 broken:\n    target: dev\n    targets:\n      dev: {{type: fixture, dir: \"{rec}\", fail: true}}\n\
-         \x20 mail:\n    target: prod\n    targets:\n      prod: {{type: fixture, dir: \"{rec}\"}}\n"
+         \x20 inbox:\n    targets:\n      dev: {{type: local}}\n\
+         \x20 rec:\n    targets:\n      dev: {{type: fixture, dir: \"{rec}\"}}\n\
+         \x20 broken:\n    targets:\n      dev: {{type: fixture, dir: \"{rec}\", fail: true}}\n\
+         \x20 mail:\n    targets:\n      prod: {{type: fixture, dir: \"{rec}\"}}\n"
     )
 }
 
@@ -256,7 +256,9 @@ fn a_plugin_without_options_refuses_them() {
         &[Q],
     );
     let mut profiles = std::fs::read_to_string(p.dir.path().join("profiles/profiles.yml")).unwrap();
-    profiles.push_str("  box:\n    target: dev\n    targets:\n      dev: {type: sftp, host: 127.0.0.1, port: 1, username: u, password: x}\n");
+    profiles.push_str(
+        "  box:\n    targets:\n      dev: {type: sftp, host: 127.0.0.1, port: 1, username: u, password: x}\n",
+    );
     std::fs::write(p.dir.path().join("profiles/profiles.yml"), profiles).unwrap();
     p.write("dependencies.yml", "plugins: [duckdb, csv, fixture, sftp]\n");
     p.dre("run", &["daily"])

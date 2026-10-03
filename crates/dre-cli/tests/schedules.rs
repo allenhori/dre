@@ -55,9 +55,8 @@ fn project(extra: &[(&str, &str)]) -> TestProject {
         ("reports/ops/other/o.sql", "select 1 as n\n"),
     ];
     files.extend_from_slice(extra);
-    let profiles = format!(
-        "{DUCK_PROFILES}destinations:\n  local_fs:\n    target: dev\n    targets:\n      dev: {{type: local}}\n"
-    );
+    let profiles =
+        format!("{DUCK_PROFILES}destinations:\n  local_fs:\n    targets:\n      dev: {{type: local}}\n");
     let p = TestProject::new(&files, &profiles);
     p.duckdb("data.duckdb", "select 1;");
     p

@@ -2,4 +2,5 @@ exit: 0
 warning[schedule-timezone-mismatch]: schedules.yml:4: schedule `ldn_daily` fires in Australia/Sydney but report `ldn` renders in Europe/London, so its run date is Europe/London's date at the firing time; set `timezone:` on the schedule to fire and render in one timezone
 Compiled 2 Bindings into target/compiled/
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation passed: 0 errors, 1 warning

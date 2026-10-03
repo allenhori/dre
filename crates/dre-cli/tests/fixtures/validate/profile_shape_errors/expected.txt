@@ -1,8 +1,8 @@
 exit: 1
-error[invalid-profile]: $CASE/profiles/profiles.yml:6: source profile `no_targets` needs a `target` and a map of named `targets`
-error[invalid-profile]: $CASE/profiles/profiles.yml:9: source profile `bad_target` has target `staging`, which isn't one of its targets (`prod`)
-error[invalid-profile]: $CASE/profiles/profiles.yml:15: target `prod` of source profile `no_type` has no `type`
-error[invalid-profile]: $CASE/profiles/profiles.yml:16: source profile `old_shape` needs a `target` and a map of named `targets` (`outputs:` is now `targets:`)
-error[invalid-profiles]: $CASE/profiles/profiles.yml:20: unknown profiles.yml section `connections`; profiles go under `sources:` or `destinations:`
+error[invalid-profile]: $CASE/profiles/profiles.yml:5: connection profile `no_targets` needs a map of named `targets`
+error[invalid-profile]: $CASE/profiles/profiles.yml:9: target `prod` of connection profile `no_type` has no `type`
+error[invalid-profile]: $CASE/profiles/profiles.yml:10: connection profile `old_shape` needs a map of named `targets` (`outputs:` is now `targets:`)
+error[invalid-profiles]: $CASE/profiles/profiles.yml:13: unknown profiles.yml section `wat`; profiles go under `connections:` or `destinations:`
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-Validation failed: 5 errors, 0 warnings
+    Target  dev (from the default)
+Validation failed: 4 errors, 0 warnings

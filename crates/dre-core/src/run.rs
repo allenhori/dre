@@ -1,7 +1,8 @@
 //! The run path: turn a resolved project into delivered files.
 //!
-//! Per Binding: render → split → (unmanaged check) → execute on one session → format into
-//! `target/run/` → schema-drift check → deliver → snapshot → `run_results.json`.
+//! Per Binding: parse pass → render → split → (unmanaged check) → execute, each query on its
+//! connection's session (one per connection, opened on first use, in strict YAML order) →
+//! format into `target/run/` → schema-drift check → deliver → snapshot → `run_results.json`.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -23,10 +24,11 @@ use serde_json::{Map as JsonMap, Value as Json, json};
 
 use crate::dates::Calendar;
 use crate::lookups::Table;
+use crate::parse::ParsedBinding;
 use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Profiles, Role};
 use crate::project::{Binding, PluginKind, Project, QueryEntry, Report};
 use crate::render::{
-    Column, Connection, Connections, QueryRows, QueryRunner, RenderError, Renderer, RendererConfig,
+    Column, Connection, Connections, Mode, QueryRows, QueryRunner, RenderError, Renderer, RendererConfig,
     RunContext,
 };
 use crate::selector;
@@ -38,7 +40,9 @@ pub struct RunOptions {
     pub selector: Option<String>,
     /// `--set <name>` or `--set all`.
     pub set: Option<String>,
+    /// `--target` as given; the run's target is [`Project::target_name`].
     pub target: Option<String>,
+    /// `--profile`: the inherited connection, for every Binding.
     pub profile: Option<String>,
     pub vars: BTreeMap<String, String>,
     pub output_name: Option<String>,
@@ -163,8 +167,10 @@ pub struct BindingPlan {
     pub set: Option<String>,
     /// Rendered SQL files, relative to the project.
     pub compiled: Vec<PathBuf>,
-    pub profile: String,
-    pub source_type: String,
+    /// The inherited connection, if any.
+    pub profile: Option<String>,
+    /// Each query's connection, its type and the sources it reads.
+    pub queries: Vec<PlannedQuery>,
     pub target: String,
     pub format: String,
     /// The file written under `target/run/` (a single-table format writes one per result set
@@ -172,6 +178,16 @@ pub struct BindingPlan {
     pub output: PathBuf,
     pub destinations: Vec<PlannedDestination>,
     pub schedules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PlannedQuery {
+    pub query: String,
+    pub connection: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -420,6 +436,7 @@ fn ad_hoc(project: &Project, report: &Report, name: &str) -> Binding {
 /// The tab one query produced: its last statement's result set, spooled to disk.
 struct Produced {
     query: String,
+    connection: String,
     schema: SchemaRef,
     rows: u64,
     spool: PathBuf,
@@ -431,6 +448,8 @@ struct Produced {
 
 struct Statement {
     query: String,
+    /// The connection it runs on.
+    connection: String,
     file: PathBuf,
     line: usize,
     text: String,
@@ -460,9 +479,14 @@ struct BindingRun<'a> {
     compiled_dir: PathBuf,
     run_dir: PathBuf,
     schema_dir: PathBuf,
+    /// The run's target (environment).
     target: String,
-    /// The source plugin type, once the profile resolves.
-    source_type: String,
+    /// The parse pass for this run's inputs.
+    parsed: ParsedBinding,
+    /// The Binding's connections and their sessions.
+    pool: Option<Arc<Pool>>,
+    /// One renderer per connection (`None`: the inherited one, for paths and template values).
+    renderers: BTreeMap<Option<String>, Arc<Renderer>>,
     started: Instant,
     started_at: chrono::DateTime<chrono::Utc>,
     produced: Vec<Produced>,
@@ -523,24 +547,13 @@ impl<'a> BindingRun<'a> {
             .and_then(|n| project.schedules.iter().find(|e| &e.name == n));
         let schedule_vars = schedule.map(|e| e.vars.clone());
         // Names were checked when the project and the command line were read.
-        let tz = opts
-            .timezone
-            .as_ref()
-            .or(schedule.and_then(|e| e.timezone.as_ref()))
-            .or(report.timezone.as_ref())
-            .and_then(|t| crate::dates::parse_tz(t).ok())
-            .unwrap_or(chrono_tz::Tz::UTC);
-        let calendar = Calendar {
-            tz,
-            week_start: project.week_start,
-            numbering: project.week_numbering,
-        };
-        let date = opts
-            .date
-            .or(opts
-                .scheduled_at
-                .map(|t| t.with_timezone(&calendar.tz).date_naive()))
-            .unwrap_or_else(|| calendar.today());
+        let calendar: Calendar = crate::parse::calendar(
+            project,
+            report,
+            opts.timezone.as_deref(),
+            opts.schedule.as_deref(),
+        );
+        let date = crate::parse::run_date(&calendar, opts.date, opts.scheduled_at);
         // Binding vars, then the schedule's, then `--var` on top.
         let mut vars = b.vars.clone();
         vars.extend(schedule_vars.clone().unwrap_or_default());
@@ -568,8 +581,10 @@ impl<'a> BindingRun<'a> {
             compiled_dir: t.join("compiled").join(&rel),
             run_dir: t.join("run").join(&rel),
             schema_dir: t.join("schema").join(&rel),
-            target: String::new(),
-            source_type: String::new(),
+            target: project.target_name.clone(),
+            parsed: ParsedBinding::default(),
+            pool: None,
+            renderers: BTreeMap::new(),
             started: Instant::now(),
             started_at: chrono::Utc::now(),
             produced: Vec::new(),
@@ -582,16 +597,96 @@ impl<'a> BindingRun<'a> {
         }
     }
 
-    /// What `target` and `profile()` read for this Binding.
-    fn connections(&self, source: Option<&str>) -> Arc<dyn Connections> {
+    /// What `connection`, `destination` and `profile()` read for this Binding.
+    fn connections(&self) -> Arc<ProfileConnections> {
         Arc::new(ProfileConnections {
             profiles: self.project.profiles.clone(),
-            source: source.map(str::to_string),
-            target: self.opts.target.clone(),
+            target: self.target.clone(),
             root: self.project.root.clone(),
             plugins: self.project.plugins.clone(),
             log: self.ui.plugin_log(),
         })
+    }
+
+    /// The renderer for SQL on `connection` (`None`: the inherited connection, for output paths
+    /// and template values), made on first use.
+    fn renderer(&mut self, connection: Option<&str>) -> Result<Arc<Renderer>, Fail> {
+        let key = connection.map(str::to_string);
+        if let Some(r) = self.renderers.get(&key) {
+            return Ok(r.clone());
+        }
+        let pool = self.pool.clone().expect("the pool is made before rendering");
+        // Outside query SQL, `connection.*` and `run_query()` mean the inherited connection.
+        let name = key.clone().or_else(|| self.parsed.inherited.clone());
+        let source_type = match (&key, &name) {
+            (Some(n), _) => pool.kind(n)?,
+            // The inherited connection's type matters only if something uses it.
+            (None, Some(n)) => pool.kind(n).unwrap_or_default(),
+            (None, None) => String::new(),
+        };
+        let inputs = self.inputs();
+        let limited = Arc::new(crate::render::Limited::new(
+            crate::parse::run_context(self.project, self.report, self.b, &inputs, self.started_at),
+            self.vars.clone(),
+            self.opts.vars.clone(),
+        ));
+        let r = Renderer::new(RendererConfig {
+            root: &self.project.root,
+            macros: &self.project.macros,
+            context: RunContext {
+                report: self.report.name.clone(),
+                set: self.b.set.clone(),
+                target: self.target.clone(),
+                schedule: self.opts.schedule.clone(),
+                date: self.date,
+                now: self.opts.scheduled_at.unwrap_or(self.started_at),
+                scheduled_at: self.opts.scheduled_at,
+                calendar: self.calendar,
+            },
+            vars: self.vars.clone(),
+            cli_vars: self.opts.vars.clone(),
+            runner: Some(Arc::new(PoolRunner {
+                pool: pool.clone(),
+                default: name.clone(),
+                log: self.ui.sql_log(),
+            })),
+            connections: Some(pool.connections.clone()),
+            mode: Mode::Run,
+            connection: name,
+            source_type,
+            sources: crate::parse::resolver(self.project, limited),
+            run_query_max_rows: self.project.run_query_max_rows,
+            sql: self.project.sql.clone(),
+            lookups: self.project.lookups.clone(),
+            lookup_inline_max_rows: self.project.lookup_inline_max_rows,
+            packages: self.project.packages.clone(),
+            project_name: self.project.name.clone(),
+            dispatch: self.project.dispatch.clone(),
+        })
+        .map_err(|e| e.to_string())?;
+        let r = Arc::new(r);
+        self.renderers.insert(key, r.clone());
+        Ok(r)
+    }
+
+    /// The parse pass's inputs for this run.
+    fn inputs(&self) -> crate::parse::Inputs {
+        crate::parse::Inputs {
+            target: self.target.clone(),
+            cli_vars: self.opts.vars.clone(),
+            date: self.opts.date,
+            scheduled_at: self.opts.scheduled_at,
+            timezone: self.opts.timezone.clone(),
+            schedule: self.opts.schedule.clone(),
+        }
+    }
+
+    /// Each query's connection, from the parse pass.
+    fn connection_of(&self, query: &str) -> Result<String, Fail> {
+        self.parsed
+            .query(query)
+            .and_then(|q| q.connection.clone())
+            .ok_or_else(|| format!("query `{query}` has no connection"))
     }
 
     fn outcome(&self, status: Status, error: Option<String>) -> BindingOutcome {
@@ -633,38 +728,29 @@ impl<'a> BindingRun<'a> {
     }
 
     fn run_inner(&mut self) -> Result<(), Fail> {
-        let profile_name = self
-            .b
-            .profile
-            .clone()
-            .ok_or("no source profile resolves for this Binding")?;
-        let profiles = &self.project.profiles;
-        let profile = profiles
-            .get(Role::Source, &profile_name)
-            .ok_or_else(|| format!("source profile `{profile_name}` isn't in profiles.yml"))?;
-        let target = self.opts.target.clone().unwrap_or_else(|| profile.target.clone());
-        let (_, output) = profiles
-            .target(Role::Source, &profile_name, Some(&target))
-            .ok_or_else(|| {
-                format!(
-                    "source profile `{profile_name}` has no `{target}` target (it has: {})",
-                    profile.targets.keys().cloned().collect::<Vec<_>>().join(", ")
-                )
-            })?;
-        self.target = target.clone();
-        self.source_type = output.kind.clone();
-        // Found and opened only when something needs the database, so compiling a report whose
-        // templates don't query it works without the plugin or credentials.
-        let source_path = find_plugin(self.project, PluginKind::Source, &output.kind).map_err(String::from);
-        let connection = render_connection(output);
-
-        let session = Arc::new(Mutex::new(Session::new(
-            source_path,
-            connection,
+        // The parse pass with this run's inputs: each query's connection and sources.
+        self.parsed = crate::parse::binding(self.project, self.report, self.b, &self.vars, &self.inputs());
+        if !self.parsed.errors.is_empty() {
+            let msgs: Vec<String> = self
+                .parsed
+                .errors
+                .iter()
+                .map(|p| match p.line {
+                    Some(l) => format!("{}:{l}: {}", p.file.display(), p.message),
+                    None => format!("{}: {}", p.file.display(), p.message),
+                })
+                .collect();
+            return Err(msgs.join("\n    "));
+        }
+        // Sessions are opened only when something needs the database, so compiling a report
+        // whose templates don't query it works without the plugin or credentials.
+        let pool = Arc::new(Pool::new(
+            self.connections(),
             self.project.root.clone(),
             self.ui.plugin_log(),
             !self.report.managed,
-        )));
+        ));
+        self.pool = Some(pool.clone());
 
         if !self.report.managed {
             self.ui.warn(&format!(
@@ -675,35 +761,12 @@ impl<'a> BindingRun<'a> {
         }
 
         // 1. Render.
-        let renderer = Renderer::new(RendererConfig {
-            root: &self.project.root,
-            macros: &self.project.macros,
-            context: RunContext {
-                report: self.report.name.clone(),
-                set: self.b.set.clone(),
-                target: target.clone(),
-                profile: profile_name.clone(),
-                source_type: output.kind.clone(),
-                schedule: self.opts.schedule.clone(),
-                date: self.date,
-                now: self.opts.scheduled_at.unwrap_or(self.started_at),
-                scheduled_at: self.opts.scheduled_at,
-                calendar: self.calendar,
-            },
-            vars: self.vars.clone(),
-            cli_vars: self.opts.vars.clone(),
-            runner: Some(Arc::new(SessionRunner(session.clone(), self.ui.sql_log()))),
-            connections: Some(self.connections(Some(&profile_name))),
-            run_query_max_rows: self.project.run_query_max_rows,
-            sql: self.project.sql.clone(),
-            lookups: self.project.lookups.clone(),
-            lookup_inline_max_rows: self.project.lookup_inline_max_rows,
-            packages: self.project.packages.clone(),
-            project_name: self.project.name.clone(),
-            dispatch: self.project.dispatch.clone(),
-        })
-        .map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&self.compiled_dir).map_err(|e| e.to_string())?;
+        // How many queries run on each connection: one session holds them all.
+        let mut per_connection: BTreeMap<String, usize> = BTreeMap::new();
+        for q in &self.b.queries {
+            *per_connection.entry(self.connection_of(&q.query)?).or_default() += 1;
+        }
         // A real run of a managed report renders each query just before running it, so a
         // template can look at what earlier queries made (`columns()` of a temp table).
         // Compiling, checking and unmanaged reports render everything first.
@@ -712,35 +775,48 @@ impl<'a> BindingRun<'a> {
         // Reported after the unmanaged-report check, which matters more.
         let mut two_tabs: Option<String> = None;
         if interleave {
-            self.dests = self.render_destinations(&renderer)?;
-            if self.b.queries.len() > 1 {
-                self.check_sessions(&session, self.b.queries.len(), &output.kind)?;
+            self.dests = self.render_destinations()?;
+            let mut checked: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            for (c, n) in &per_connection {
+                if *n > 1 {
+                    self.check_sessions(&pool, c, *n)?;
+                    checked.insert(c.clone());
+                }
             }
             std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
             let mut i = 0;
-            for q in &self.b.queries {
-                let sts = self.render_query(&renderer, q, &mut two_tabs)?;
+            let queries = self.b.queries.clone();
+            for q in &queries {
+                let conn = self.connection_of(&q.query)?;
+                let renderer = self.renderer(Some(&conn))?;
+                let sts = self.render_query(&renderer, q, &conn, &mut two_tabs)?;
                 for w in renderer.take_warnings() {
                     self.ui.warn(&w);
                 }
                 if let Some(e) = two_tabs.take() {
                     return Err(e);
                 }
-                if i == 0 && sts.len() > 1 {
-                    self.check_sessions(&session, sts.len(), &output.kind)?;
+                if sts.len() > 1 && checked.insert(conn.clone()) {
+                    self.check_sessions(&pool, &conn, sts.len())?;
                 }
+                let session = pool.session(&conn)?;
                 for st in &sts {
                     self.execute_statement(&session, i, st)?;
                     i += 1;
                 }
             }
         } else {
-            for q in &self.b.queries {
-                statements.extend(self.render_query(&renderer, q, &mut two_tabs)?);
+            let queries = self.b.queries.clone();
+            for q in &queries {
+                let conn = self.connection_of(&q.query)?;
+                let renderer = self.renderer(Some(&conn))?;
+                statements.extend(self.render_query(&renderer, q, &conn, &mut two_tabs)?);
             }
-            self.dests = self.render_destinations(&renderer)?;
-            for w in renderer.take_warnings() {
-                self.ui.warn(&w);
+            self.dests = self.render_destinations()?;
+            for r in self.renderers.values() {
+                for w in r.take_warnings() {
+                    self.ui.warn(&w);
+                }
             }
 
             // 3. Unmanaged: every rendered statement must only read (or create temp objects).
@@ -754,38 +830,45 @@ impl<'a> BindingRun<'a> {
                         masked_sql_summary(&bad.text, 60, bad.sensitive)
                     ));
                 }
-                let creates_temp = statements.iter().any(|s| s.kind == StatementKind::TempCreate)
-                    || session.lock().unwrap().loaded;
-                session.lock().unwrap().want_read_only(!creates_temp);
+                for conn in per_connection.keys() {
+                    let session = pool.session(conn)?;
+                    let creates_temp = statements
+                        .iter()
+                        .any(|s| &s.connection == conn && s.kind == StatementKind::TempCreate)
+                        || session.lock().unwrap().loaded;
+                    session.lock().unwrap().want_read_only(!creates_temp);
+                }
             }
             if let Some(e) = two_tabs {
                 return Err(e);
             }
 
             if self.opts.dry_run {
-                let plan = self.plan(&profile_name, &output.kind);
+                let plan = self.plan();
                 self.ui.compiled(&plan);
                 return Ok(());
             }
 
-            // The one-session guarantee.
-            if statements.len() > 1 {
-                self.check_sessions(&session, statements.len(), &output.kind)?;
+            // The one-session-per-connection guarantee.
+            for conn in per_connection.keys() {
+                let n = statements.iter().filter(|s| &s.connection == conn).count();
+                if n > 1 {
+                    self.check_sessions(&pool, conn, n)?;
+                }
             }
 
             if self.opts.live_check {
-                return self.live_check(&session, &statements, &output.kind);
+                return self.live_check(&statements);
             }
 
-            // 4. Execute in order on one session.
+            // 4. Execute in YAML order, each on its connection's session.
             std::fs::create_dir_all(self.run_dir.join(".spool")).map_err(|e| e.to_string())?;
             for (i, st) in statements.iter().enumerate() {
+                let session = pool.session(&st.connection)?;
                 self.execute_statement(&session, i, st)?;
             }
         }
-        if let Ok(mut s) = session.lock() {
-            s.close();
-        }
+        pool.close_all();
 
         self.name_result_sets()?;
 
@@ -842,14 +925,34 @@ impl<'a> BindingRun<'a> {
         &mut self,
         renderer: &Renderer,
         q: &QueryEntry,
+        connection: &str,
         two_tabs: &mut Option<String>,
     ) -> Result<Vec<Statement>, Fail> {
         let mut out = Vec::new();
         let src = std::fs::read_to_string(self.project.root.join(&q.path))
             .map_err(|e| format!("{}: {e}", q.path.display()))?;
+        let _ = renderer.take_sources();
         let sql = renderer
             .render(&q.path, &src)
             .map_err(|e: RenderError| e.to_string())?;
+        // The manifest's `depends_on` and the query's connection come from the parse pass, so
+        // a `source()` it couldn't see would make both wrong.
+        let known = self
+            .parsed
+            .query(&q.query)
+            .map(|p| p.sources.clone())
+            .unwrap_or_default();
+        if let Some((s, t)) = renderer
+            .take_sources()
+            .into_iter()
+            .find(|(s, t)| !known.contains(&format!("{s}.{t}")))
+        {
+            return Err(format!(
+                "{}: `source('{s}', '{t}')` was reached while rendering `{}`, but the parse pass didn't find it. The parse pass renders without data (`run_query()` returns no rows, `connection.*` nothing), so it can't see a `source()` that depends on them; call it where it's reached either way",
+                q.path.display(),
+                q.query
+            ));
+        }
         let sensitive = crate::secrets::contains_secret(&sql);
         std::fs::write(
             self.compiled_dir.join(format!("{}.sql", q.query)),
@@ -883,6 +986,7 @@ impl<'a> BindingRun<'a> {
             }
             out.push(Statement {
                 query: q.query.clone(),
+                connection: connection.to_string(),
                 file: q.path.clone(),
                 line,
                 kind,
@@ -894,12 +998,14 @@ impl<'a> BindingRun<'a> {
         Ok(out)
     }
 
-    /// Fail unless the source can hold one session across `n` statements.
-    fn check_sessions(&self, session: &Arc<Mutex<Session>>, n: usize, kind: &str) -> Result<(), Fail> {
+    /// Fail unless `connection`'s plugin can hold one session across `n` statements.
+    fn check_sessions(&self, pool: &Pool, connection: &str, n: usize) -> Result<(), Fail> {
+        let session = pool.session(connection)?;
         let mut s = session.lock().unwrap();
         if !s.get()?.has(CAP_SESSIONS) {
+            let kind = pool.kind(connection).unwrap_or_default();
             return Err(format!(
-                "this Binding runs {n} statements, but the `{kind}` source plugin can't hold one session across them; nothing was run"
+                "this Binding runs {n} statements on connection `{connection}`, but the `{kind}` source plugin can't hold one session across them; nothing was run"
             ));
         }
         Ok(())
@@ -980,6 +1086,7 @@ impl<'a> BindingRun<'a> {
             w.finish().map_err(|e| e.to_string())?;
             self.produced.push(Produced {
                 query: st.query.clone(),
+                connection: st.connection.clone(),
                 schema,
                 rows,
                 spool: spool_path,
@@ -992,12 +1099,25 @@ impl<'a> BindingRun<'a> {
         Ok(())
     }
 
-    fn render_destinations(&self, renderer: &Renderer) -> Result<Vec<RenderedDest>, Fail> {
-        self.b
-            .output
-            .destinations
-            .iter()
-            .map(|d| {
+    /// Each destination's rendered `profile`, `path` and options; `destination.*` is that
+    /// destination while its values render.
+    fn render_destinations(&mut self) -> Result<Vec<RenderedDest>, Fail> {
+        if self.b.output.destinations.is_empty() {
+            return Ok(Vec::new());
+        }
+        let renderer = self.renderer(None)?;
+        let connections = self.pool.as_ref().expect("pool").connections.clone();
+        let mut out = Vec::new();
+        for (i, d) in self.b.output.destinations.iter().enumerate() {
+            let profile = self
+                .parsed
+                .destinations
+                .get(i)
+                .cloned()
+                .flatten()
+                .ok_or_else(|| format!("destination `{}` has no profile", d.profile))?;
+            renderer.set_destination(connections.profile(&profile, Some("destination")).ok());
+            let rendered = (|| {
                 let path = match &d.path {
                     Some(p) => Some(
                         renderer
@@ -1008,17 +1128,20 @@ impl<'a> BindingRun<'a> {
                 };
                 let mut options = JsonMap::new();
                 for (k, v) in &d.options {
-                    let v = render_json(renderer, &self.report.file, v)
-                        .map_err(|e| format!("destination `{}` option `{k}`: {e}", d.profile))?;
+                    let v = render_json(&renderer, &self.report.file, v)
+                        .map_err(|e| format!("destination `{profile}` option `{k}`: {e}"))?;
                     options.insert(k.clone(), v);
                 }
-                Ok(RenderedDest {
-                    profile: d.profile.clone(),
+                Ok::<_, Fail>(RenderedDest {
+                    profile: profile.clone(),
                     path,
                     options,
                 })
-            })
-            .collect()
+            })();
+            renderer.set_destination(None);
+            out.push(rendered?);
+        }
+        Ok(out)
     }
 
     /// Tab names: `tab_name`, else the query's basename.
@@ -1048,7 +1171,7 @@ impl<'a> BindingRun<'a> {
     }
 
     /// What a real run of this Binding would use and produce, for `dre compile` and `validate`.
-    fn plan(&mut self, profile: &str, source_type: &str) -> BindingPlan {
+    fn plan(&mut self) -> BindingPlan {
         let file = self.file_names();
         let compiled = self
             .b
@@ -1075,12 +1198,27 @@ impl<'a> BindingRun<'a> {
                 }
             })
             .collect();
+        let pool = self.pool.clone().expect("pool");
+        let queries = self
+            .parsed
+            .queries
+            .iter()
+            .map(|q| {
+                let connection = q.connection.clone().unwrap_or_default();
+                PlannedQuery {
+                    query: q.query.clone(),
+                    kind: pool.kind(&connection).unwrap_or_default(),
+                    connection,
+                    sources: q.sources.clone(),
+                }
+            })
+            .collect();
         BindingPlan {
             report: self.report.name.clone(),
             set: self.b.set.clone(),
             compiled,
-            profile: profile.to_string(),
-            source_type: source_type.to_string(),
+            profile: self.parsed.inherited.clone(),
+            queries,
             target: self.target.clone(),
             format: self.b.output.format.clone(),
             output: rel(&self.project.root, &self.run_dir.join(file)),
@@ -1223,40 +1361,13 @@ impl<'a> BindingRun<'a> {
         Ok(())
     }
 
-    fn template_payload(&self, t: &crate::project::Template) -> Result<Json, Fail> {
+    fn template_payload(&mut self, t: &crate::project::Template) -> Result<Json, Fail> {
         let root = &self.project.root;
         let file = [root.join(&t.file), root.join("templates").join(&t.file)]
             .into_iter()
             .find(|p| p.is_file())
             .ok_or_else(|| format!("template file `{}` doesn't exist", t.file))?;
-        let renderer = Renderer::new(RendererConfig {
-            root,
-            macros: &self.project.macros,
-            context: RunContext {
-                report: self.report.name.clone(),
-                set: self.b.set.clone(),
-                target: self.target.clone(),
-                profile: self.b.profile.clone().unwrap_or_default(),
-                source_type: self.source_type.clone(),
-                schedule: self.opts.schedule.clone(),
-                date: self.date,
-                now: self.opts.scheduled_at.unwrap_or(self.started_at),
-                scheduled_at: self.opts.scheduled_at,
-                calendar: self.calendar,
-            },
-            vars: self.vars.clone(),
-            cli_vars: self.opts.vars.clone(),
-            runner: None,
-            connections: Some(self.connections(self.b.profile.as_deref())),
-            run_query_max_rows: self.project.run_query_max_rows,
-            sql: self.project.sql.clone(),
-            lookups: self.project.lookups.clone(),
-            lookup_inline_max_rows: self.project.lookup_inline_max_rows,
-            packages: self.project.packages.clone(),
-            project_name: self.project.name.clone(),
-            dispatch: self.project.dispatch.clone(),
-        })
-        .map_err(|e| e.to_string())?;
+        let renderer = self.renderer(None)?;
         let mut values = JsonMap::new();
         for b in &t.bindings {
             if let (Some(cell), Some(v)) = (&b.cell, &b.value) {
@@ -1296,10 +1407,7 @@ impl<'a> BindingRun<'a> {
                 .map(|(_, o)| o.kind.clone())
                 .or_else(|| {
                     let p = self.project.profiles.get(Role::Destination, &d.profile)?;
-                    p.targets
-                        .get(&p.target)
-                        .or(p.targets.values().next())
-                        .map(|o| o.kind.clone())
+                    p.targets.values().next().map(|o| o.kind.clone())
                 });
             let (status, location, error) = match self.deliver_one(d) {
                 Ok(Some(loc)) => ("delivered", Some(loc), None),
@@ -1336,22 +1444,23 @@ impl<'a> BindingRun<'a> {
         }
     }
 
-    /// The destination profile's settings for the active target.
+    /// The destination profile's settings for the run's target.
     fn dest_output(&self, profile: &str) -> Option<(String, &ProfileTarget)> {
         if self.project.profiles.is_builtin_local(profile) {
             return Some((self.target.clone(), &BUILTIN_LOCAL));
         }
-        let dtarget = self.dest_target(profile)?;
         self.project
             .profiles
-            .target(Role::Destination, profile, Some(&dtarget))
-            .map(|(_, o)| (dtarget, o))
+            .target(Role::Destination, profile, &self.target)
+            .map(|o| (self.target.clone(), o))
     }
 
-    /// The target a destination profile delivers for: `--target`, else the profile's own.
+    /// The target a destination profile delivers for: the run's, when the profile exists.
     fn dest_target(&self, profile: &str) -> Option<String> {
-        let p = self.project.profiles.get(Role::Destination, profile)?;
-        Some(self.opts.target.clone().unwrap_or_else(|| p.target.clone()))
+        self.project
+            .profiles
+            .get(Role::Destination, profile)
+            .map(|_| self.target.clone())
     }
 
     fn skip_note(&self, profile: &str) -> String {
@@ -1543,8 +1652,9 @@ impl<'a> BindingRun<'a> {
             "set": self.b.set,
             "binding": self.b.dir_name(),
             "managed": self.report.managed,
-            "profile": self.b.profile,
-            "target": if self.target.is_empty() { Json::Null } else { json!(self.target) },
+            "profile": self.parsed.inherited,
+            "connections": self.parsed.connections(),
+            "target": self.target,
             "schedule": self.opts.schedule,
             "schedule_vars": self.schedule_vars,
             "vars": self.rendered_vars,
@@ -1561,6 +1671,7 @@ impl<'a> BindingRun<'a> {
             "result_sets": self.produced.iter().map(|p| json!({
                 "name": p.name,
                 "query": p.query,
+                "connection": p.connection,
                 "rows": p.rows,
                 "columns": p.schema.fields().iter().map(|f| f.name().clone()).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
@@ -1577,24 +1688,29 @@ impl<'a> BindingRun<'a> {
         )
     }
 
-    /// `dre validate --live`: execute temp creates, `check` everything else.
-    fn live_check(
-        &mut self,
-        session: &Arc<Mutex<Session>>,
-        statements: &[Statement],
-        kind: &str,
-    ) -> Result<(), Fail> {
-        let mut s = session.lock().unwrap();
-        if !s.get()?.has(dre_protocol::CAP_CHECK) {
-            self.ui.warn(&format!(
-                "  not checkable: the `{kind}` source plugin can't check statements without running them"
-            ));
-            return Ok(());
-        }
+    /// `dre validate --live`: execute temp creates, `check` everything else, each on its
+    /// connection; then check declared source columns against the database.
+    fn live_check(&mut self, statements: &[Statement]) -> Result<(), Fail> {
+        let pool = self.pool.clone().expect("pool");
         let mut failures = Vec::new();
-        let mut unexecuted_setup: Option<(PathBuf, usize)> = None;
+        let mut unexecuted_setup: BTreeMap<String, (PathBuf, usize)> = BTreeMap::new();
+        let mut uncheckable: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let sql_log = self.ui.sql_log();
         for st in statements {
+            if uncheckable.contains(&st.connection) {
+                continue;
+            }
+            let session = pool.session(&st.connection)?;
+            let mut s = session.lock().unwrap();
+            if !s.get()?.has(dre_protocol::CAP_CHECK) {
+                let kind = pool.kind(&st.connection).unwrap_or_default();
+                self.ui.warn(&format!(
+                    "  not checkable: the `{kind}` source plugin (connection `{}`) can't check statements without running them",
+                    st.connection
+                ));
+                uncheckable.insert(st.connection.clone());
+                continue;
+            }
             let verb = if st.kind == StatementKind::TempCreate {
                 ""
             } else {
@@ -1623,32 +1739,114 @@ impl<'a> BindingRun<'a> {
                 let (process, _log_scope) = s.statement(st.sensitive)?;
                 process.check(&st.text)
             };
-            match result {
-                Ok(()) => {}
-                Err(e) => {
-                    let mut msg = format!(
-                        "{}:{}: {}",
-                        st.file.display(),
-                        st.line,
-                        masked_source_error(&e, st.sensitive)
-                    );
-                    if let Some((f, l)) = &unexecuted_setup {
-                        msg.push_str(&format!(
-                            " (may be a false positive: the setup statement at {}:{l} wasn't executed during the check)",
-                            f.display()
-                        ));
-                    }
-                    failures.push(msg);
+            if let Err(e) = result {
+                let mut msg = format!(
+                    "{}:{}: {}",
+                    st.file.display(),
+                    st.line,
+                    masked_source_error(&e, st.sensitive)
+                );
+                if let Some((f, l)) = unexecuted_setup.get(&st.connection) {
+                    msg.push_str(&format!(
+                        " (may be a false positive: the setup statement at {}:{l} wasn't executed during the check)",
+                        f.display()
+                    ));
                 }
+                failures.push(msg);
             }
             if st.kind == StatementKind::Other {
-                unexecuted_setup = Some((st.file.clone(), st.line));
+                unexecuted_setup.insert(st.connection.clone(), (st.file.clone(), st.line));
             }
         }
+        self.check_source_columns(&pool, &mut failures);
         if failures.is_empty() {
             Ok(())
         } else {
             Err(failures.join("\n    "))
+        }
+    }
+
+    /// Declared source `columns` against the real table, once per source table, connection and
+    /// target in this process: each must exist, and match its `data_type` (loosely) where given.
+    fn check_source_columns(&mut self, pool: &Arc<Pool>, failures: &mut Vec<String>) {
+        /// `(project, source.table, connection, target)`.
+        type Checked = std::collections::BTreeSet<(PathBuf, String, String, String)>;
+        static CHECKED: std::sync::LazyLock<Mutex<Checked>> = std::sync::LazyLock::new(Mutex::default);
+        for q in self.parsed.queries.clone() {
+            let Some(conn) = q.connection.clone() else {
+                continue;
+            };
+            for key in &q.sources {
+                let Some(r) = self.parsed.sources.get(key).cloned() else {
+                    continue;
+                };
+                let Some(declared) = self
+                    .project
+                    .sources
+                    .get(&r.source)
+                    .and_then(|s| s.table(&r.table))
+                    .map(|t| t.columns.clone())
+                    .filter(|c| !c.is_empty())
+                else {
+                    continue;
+                };
+                let id = (
+                    self.project.root.clone(),
+                    key.clone(),
+                    conn.clone(),
+                    self.target.clone(),
+                );
+                if !CHECKED.lock().unwrap().insert(id) {
+                    continue;
+                }
+                let quote = if r.quoting.any() {
+                    let kind = pool.kind(&conn).unwrap_or_default();
+                    match pool.connections.identifier_quote(&kind) {
+                        Ok(q) => q,
+                        Err(e) => {
+                            failures.push(format!("source `{key}`: can't quote its name: {e}"));
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let rel = r.relation(quote.as_deref());
+                let runner = PoolRunner {
+                    pool: pool.clone(),
+                    default: Some(conn.clone()),
+                    log: self.ui.sql_log(),
+                };
+                let actual = match runner.columns(&format!("select * from {rel} where 1=0"), None) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        failures.push(format!("source `{key}` ({rel} on connection `{conn}`): {e}"));
+                        continue;
+                    }
+                };
+                for c in &declared {
+                    let Some(a) = actual.iter().find(|a| a.name.eq_ignore_ascii_case(&c.name)) else {
+                        failures.push(format!(
+                            "source `{key}`: declared column `{}` isn't in {rel} on connection `{conn}` (it has: {})",
+                            c.name,
+                            actual.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ")
+                        ));
+                        continue;
+                    };
+                    let Some(dt) = &c.data_type else { continue };
+                    match crate::coltypes::matches(dt, &a.data_type) {
+                        Some(true) => {}
+                        Some(false) => failures.push(format!(
+                            "source `{key}`: column `{}` is declared `{dt}`, but {rel} on connection `{conn}` returns {}",
+                            c.name, a.data_type
+                        )),
+                        None => self.ui.warn(&format!(
+                            "  source `{key}`: column `{}`'s `data_type: {dt}` isn't a type DRE can compare, so only its presence was checked",
+                            c.name
+                        )),
+                    }
+                }
+            }
         }
     }
 }
@@ -1752,11 +1950,103 @@ impl Drop for OpaqueLogScope {
     }
 }
 
-struct SessionRunner(Arc<Mutex<Session>>, LogSink);
+/// The Binding's connections: each one's session, opened when a query first needs it and held
+/// until the report ends.
+struct Pool {
+    connections: Arc<ProfileConnections>,
+    cwd: PathBuf,
+    log: LogSink,
+    unmanaged: bool,
+    sessions: Mutex<BTreeMap<String, Arc<Mutex<Session>>>>,
+}
 
-impl QueryRunner for SessionRunner {
-    fn run_query(&self, sql: &str, max_rows: u64) -> Result<QueryRows, String> {
-        let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
+impl Pool {
+    fn new(connections: Arc<ProfileConnections>, cwd: PathBuf, log: LogSink, unmanaged: bool) -> Pool {
+        Pool {
+            connections,
+            cwd,
+            log,
+            unmanaged,
+            sessions: Mutex::default(),
+        }
+    }
+
+    /// A connection's settings for the run's target.
+    fn target(&self, name: &str) -> Result<ProfileTarget, String> {
+        let profiles = &self.connections.profiles;
+        let target = &self.connections.target;
+        let p = profiles.get(Role::Connection, name).ok_or_else(|| {
+            format!(
+                "connection `{name}` isn't under `{}:` in {}",
+                profiles.section_key(Role::Connection),
+                profiles.path.display()
+            )
+        })?;
+        p.targets.get(target).cloned().ok_or_else(|| {
+            format!(
+                "connection `{name}` has no `{target}` target (it has: {})",
+                p.targets.keys().cloned().collect::<Vec<_>>().join(", ")
+            )
+        })
+    }
+
+    /// A connection's plugin type.
+    fn kind(&self, name: &str) -> Result<String, String> {
+        Ok(self.target(name)?.kind)
+    }
+
+    fn session(&self, name: &str) -> Result<Arc<Mutex<Session>>, String> {
+        if let Some(s) = self.sessions.lock().unwrap().get(name) {
+            return Ok(s.clone());
+        }
+        let output = self.target(name)?;
+        let id = crate::project::PluginId::new(PluginKind::Source, output.kind.clone());
+        let path = crate::plugins::locate_in(&self.connections.root, &self.connections.plugins, &id)
+            .map_err(String::from);
+        let session = Arc::new(Mutex::new(Session::new(
+            path,
+            render_connection(&output),
+            self.cwd.clone(),
+            self.log.clone(),
+            self.unmanaged,
+        )));
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(name.to_string(), session.clone());
+        Ok(session)
+    }
+
+    fn close_all(&self) {
+        for s in self.sessions.lock().unwrap().values() {
+            if let Ok(mut s) = s.lock() {
+                s.close();
+            }
+        }
+    }
+}
+
+/// `run_query()`, `columns()` and lookups for one renderer: on the named connection's session,
+/// else on the renderer's own (`default`).
+struct PoolRunner {
+    pool: Arc<Pool>,
+    default: Option<String>,
+    log: LogSink,
+}
+
+impl PoolRunner {
+    fn session(&self, profile: Option<&str>) -> Result<Arc<Mutex<Session>>, String> {
+        let name = profile.or(self.default.as_deref()).ok_or(
+            "no connection here: pass `profile=`, or give the report a `profile:` (this isn't a query's SQL)",
+        )?;
+        self.pool.session(name)
+    }
+}
+
+impl QueryRunner for PoolRunner {
+    fn run_query(&self, sql: &str, max_rows: u64, profile: Option<&str>) -> Result<QueryRows, String> {
+        let session = self.session(profile)?;
+        let mut s = session.lock().map_err(|_| "session lock poisoned".to_string())?;
         let sensitive = crate::secrets::contains_secret(sql);
         // An unmanaged report may only read, and run_query() runs before the file's own
         // statements are checked, so it gets the same rule up front.
@@ -1770,7 +2060,7 @@ impl QueryRunner for SessionRunner {
                 masked_sql_summary(&bad.text, 60, sensitive)
             ));
         }
-        (self.1)("run_query()", &protected_sql(sql, sensitive));
+        (self.log)("run_query()", &protected_sql(sql, sensitive));
         let (p, _log_scope) = s.statement(sensitive)?;
         let mut out = QueryRows::default();
         let mut too_many = false;
@@ -1800,10 +2090,11 @@ impl QueryRunner for SessionRunner {
         Ok(out)
     }
 
-    fn columns(&self, sql: &str) -> Result<Vec<Column>, String> {
-        let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
+    fn columns(&self, sql: &str, profile: Option<&str>) -> Result<Vec<Column>, String> {
+        let session = self.session(profile)?;
+        let mut s = session.lock().map_err(|_| "session lock poisoned".to_string())?;
         let sensitive = crate::secrets::contains_secret(sql);
-        (self.1)("columns()", &protected_sql(sql, sensitive));
+        (self.log)("columns()", &protected_sql(sql, sensitive));
         let (p, _log_scope) = s.statement(sensitive)?;
         let mut schema: Option<SchemaRef> = None;
         let exec = p
@@ -1827,7 +2118,8 @@ impl QueryRunner for SessionRunner {
     }
 
     fn load(&self, name: &str, table: &Table) -> Result<Option<(String, Option<String>)>, String> {
-        let mut s = self.0.lock().map_err(|_| "session lock poisoned".to_string())?;
+        let session = self.session(None)?;
+        let mut s = session.lock().map_err(|_| "session lock poisoned".to_string())?;
         // A temp table is allowed even in an unmanaged report; it needs a writable session.
         s.want_read_only(false);
         if !s.get()?.has(CAP_LOAD) {
@@ -1835,7 +2127,7 @@ impl QueryRunner for SessionRunner {
         }
         let batch = table.to_batch()?;
         let schema = batch.schema();
-        (self.1)(
+        (self.log)(
             &format!("lookup `{name}`"),
             &format!(
                 "-- {} rows loaded through the plugin's `load` request",
@@ -1909,29 +2201,31 @@ pub fn find_plugin(
     crate::plugins::locate(project, &crate::project::PluginId::new(kind, name))
 }
 
-/// `target` and `profile()` from `profiles.yml`. A field is secret when the plugin's `describe`
-/// says so; when the plugin can't be asked, when its name looks like one; and always when its
-/// value comes from a `DRE_SECRET_*` variable.
+/// `connection`, `destination` and `profile()` from `profiles.yml`, for the run's target. A
+/// field is secret when the plugin's `describe` says so; when the plugin can't be asked, when its
+/// name looks like one; and always when its value comes from a `DRE_SECRET_*` variable.
 struct ProfileConnections {
     profiles: Profiles,
-    /// The Binding's source profile.
-    source: Option<String>,
-    /// `--target`.
-    target: Option<String>,
+    /// The run's target.
+    target: String,
     root: PathBuf,
     plugins: Vec<crate::project::PluginRequirement>,
     log: LogSink,
 }
 
-/// Secret field names by `(project, role, type)`, `None` when `describe` couldn't be asked:
-/// each plugin is asked once per process, not once per Binding.
-static DESCRIBED: std::sync::LazyLock<Mutex<BTreeMap<DescribeKey, SecretFields>>> =
+/// What `describe` said, by `(project, role, type)`, `None` when it couldn't be asked: each
+/// plugin is asked once per process, not once per Binding.
+static DESCRIBED: std::sync::LazyLock<Mutex<BTreeMap<DescribeKey, Option<Described>>>> =
     std::sync::LazyLock::new(Mutex::default);
 
 /// `(project root, role, plugin type)`.
 type DescribeKey = (PathBuf, Role, String);
 
-type SecretFields = Option<Vec<String>>;
+#[derive(Clone)]
+struct Described {
+    secrets: Vec<String>,
+    identifier_quote: Option<String>,
+}
 
 const SECRET_NAME_WORDS: &[&str] = &["password", "secret", "token", "key", "credential"];
 
@@ -1939,19 +2233,18 @@ impl ProfileConnections {
     fn view(&self, role: Role, name: &str) -> Result<Connection, String> {
         let (target, out): (String, ProfileTarget) = match self.profiles.get(role, name) {
             Some(p) => {
-                let t = self
-                    .target
-                    .as_ref()
-                    .filter(|t| p.targets.contains_key(t.as_str()))
-                    .unwrap_or(&p.target);
-                let o = p
-                    .targets
-                    .get(t)
-                    .ok_or_else(|| format!("profile `{name}` has no `{t}` target"))?;
+                let t = &self.target;
+                let o = p.targets.get(t).ok_or_else(|| {
+                    format!(
+                        "{} `{name}` has no `{t}` target (it has: {})",
+                        role.as_str(),
+                        p.targets.keys().cloned().collect::<Vec<_>>().join(", ")
+                    )
+                })?;
                 (t.clone(), o.clone())
             }
             None if role == Role::Destination && self.profiles.is_builtin_local(name) => {
-                ("default".into(), BUILTIN_LOCAL.clone())
+                (self.target.clone(), BUILTIN_LOCAL.clone())
             }
             None => {
                 return Err(format!(
@@ -1968,7 +2261,7 @@ impl ProfileConnections {
             .map(|(k, _)| k.clone())
             .collect();
         match self.described(role, &out.kind) {
-            Some(named) => secrets.extend(named),
+            Some(d) => secrets.extend(d.secrets),
             None => secrets.extend(
                 out.fields
                     .keys()
@@ -1989,26 +2282,38 @@ impl ProfileConnections {
         })
     }
 
-    /// The fields the plugin marks secret, asked once per plugin type.
-    fn described(&self, role: Role, kind: &str) -> Option<Vec<String>> {
+    /// The plugin's `describe` reply, asked once per plugin type.
+    fn described(&self, role: Role, kind: &str) -> Option<Described> {
         let key = (self.root.clone(), role, kind.to_string());
         if let Some(v) = DESCRIBED.lock().unwrap().get(&key) {
             return v.clone();
         }
         let plugin_kind = match role {
-            Role::Source => PluginKind::Source,
+            Role::Connection => PluginKind::Source,
             Role::Destination => PluginKind::Destination,
         };
         let asked = (|| {
             if kind == LOCAL_TYPE {
-                return Some(Vec::new());
+                return Some(Described {
+                    secrets: Vec::new(),
+                    identifier_quote: None,
+                });
             }
             let id = crate::project::PluginId::new(plugin_kind, kind);
             let plugin = crate::plugins::locate_in(&self.root, &self.plugins, &id).ok()?;
             let mut p = plugin.start(self.log.clone(), Some(&self.root)).ok()?;
-            let fields = p.describe().ok();
+            let d = p.description().ok();
             let _ = p.close();
-            Some(fields?.into_iter().filter(|f| f.secret).map(|f| f.name).collect())
+            let d = d?;
+            Some(Described {
+                secrets: d
+                    .connection_fields
+                    .into_iter()
+                    .filter(|f| f.secret)
+                    .map(|f| f.name)
+                    .collect(),
+                identifier_quote: d.identifier_quote,
+            })
         })();
         DESCRIBED.lock().unwrap().insert(key, asked.clone());
         asked
@@ -2016,33 +2321,34 @@ impl ProfileConnections {
 }
 
 impl Connections for ProfileConnections {
-    fn source(&self) -> Result<Connection, String> {
-        let name = self
-            .source
-            .as_deref()
-            .ok_or("no source profile resolves for this Binding")?;
-        self.view(Role::Source, name)
-    }
-
     fn profile(&self, name: &str, role: Option<&str>) -> Result<Connection, String> {
         let role = match role {
-            Some("source") => Role::Source,
+            Some("connection") => Role::Connection,
             Some(_) => Role::Destination,
             None => {
-                let s = self.profiles.get(Role::Source, name).is_some();
+                let c = self.profiles.get(Role::Connection, name).is_some();
                 let d = self.profiles.get(Role::Destination, name).is_some();
-                match (s, d) {
+                match (c, d) {
                     (true, true) => {
                         return Err(format!(
-                            "`{name}` is both a source and a destination profile; say which with `profile('{name}', role='source')` or `role='destination'`"
+                            "`{name}` is both a connection and a destination profile; say which with `profile('{name}', role='connection')` or `role='destination'`"
                         ));
                     }
-                    (true, false) => Role::Source,
+                    (true, false) => Role::Connection,
                     _ => Role::Destination,
                 }
             }
         };
         self.view(role, name)
+    }
+
+    fn identifier_quote(&self, kind: &str) -> Result<Option<String>, String> {
+        match self.described(Role::Connection, kind) {
+            Some(d) => Ok(d.identifier_quote),
+            None => Err(format!(
+                "the `{kind}` source plugin couldn't be asked for its identifier quote character"
+            )),
+        }
     }
 }
 

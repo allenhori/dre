@@ -1,0 +1,5 @@
+queries:
+  - {query: setup, tab: false}
+  - {query: pg_tab, profile: pg}
+  - {query: setup_pg, tab: false, profile: pg}
+  - duck_tab

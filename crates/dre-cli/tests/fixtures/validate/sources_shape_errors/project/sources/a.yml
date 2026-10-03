@@ -1,0 +1,14 @@
+sources:
+  - name: sales
+    tables: [{name: orders}]
+  - name: crm
+    colour: blue
+    quoting: {column: true}
+    tables:
+      - name: accounts
+        materialized: table
+      - name: accounts
+      - name: contacts
+        columns:
+          - name: id
+            data_typ: int

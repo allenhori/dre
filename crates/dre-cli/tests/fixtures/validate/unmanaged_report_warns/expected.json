@@ -6,6 +6,10 @@ exit: 1
     "exists": true,
     "found_by": "--profiles-dir"
   },
+  "target": {
+    "name": "dev",
+    "from": "the default"
+  },
   "errors": 1,
   "warnings": 3,
   "diagnostics": [
@@ -46,7 +50,13 @@ exit: 1
         "target/compiled/quick_look/default/quick_look.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "quick_look",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/quick_look/default/quick_look.csv",
@@ -60,7 +70,13 @@ exit: 1
         "target/compiled/temp_then_select/default/temp_then_select.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "temp_then_select",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/temp_then_select/default/temp_then_select.csv",
@@ -88,7 +104,8 @@ exit: 1
     "project": {
       "checksum": "69dd82f8a1c39e54c656e8036959643e1cc9e27e76c7ba51b39ced8c748a1d0e",
       "default_profile": "local_dev",
-      "name": "acme_reports"
+      "name": "acme_reports",
+      "target": "dev"
     },
     "reports": {
       "quick_look": {
@@ -102,6 +119,10 @@ exit: 1
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/scratch/quick_look.sql",
                 "query": "quick_look",
                 "tab": true
@@ -113,6 +134,9 @@ exit: 1
           }
         ],
         "checksum": "964b1958b7e163e32bc94a68b07fac2b43b141b18bbcc6980e90e4953b52ccf7",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/scratch/quick_look.sql",
         "folder": [
           "scratch"
@@ -140,6 +164,10 @@ exit: 1
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/scratch/temp_then_select.sql",
                 "query": "temp_then_select",
                 "tab": true
@@ -151,6 +179,9 @@ exit: 1
           }
         ],
         "checksum": "fcfee10458cc0d411b0e9c2df6ee040650b48ed084b9805a9f0ad2227999288e",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/scratch/temp_then_select.sql",
         "folder": [
           "scratch"
@@ -178,6 +209,10 @@ exit: 1
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/scratch/templated.sql",
                 "query": "templated",
                 "tab": true
@@ -189,6 +224,9 @@ exit: 1
           }
         ],
         "checksum": "57092b3c9772d37b18ec27908025135b523a8e91e1f0abe91a482358ecfa0efb",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/scratch/templated.sql",
         "folder": [
           "scratch"
@@ -207,7 +245,8 @@ exit: 1
       }
     },
     "schedules": {},
-    "schema": 1,
+    "schema": 2,
+    "sources": {},
     "version": "$VERSION"
   }
 }

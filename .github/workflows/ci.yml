@@ -172,6 +172,8 @@ jobs:
       - run: >
           cargo nextest run --no-fail-fast -p dre-plugin-postgres -p dre-plugin-object_store
           -p dre-plugin-sftp -p dre-plugin-ftp -p dre-plugin-email
+      # A report whose tabs come from DuckDB and Postgres on separate sessions.
+      - run: cargo nextest run --no-fail-fast -p dre-cli --test run_connections
 
   test:
     strategy:

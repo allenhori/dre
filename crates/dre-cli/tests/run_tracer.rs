@@ -77,7 +77,7 @@ fn profile_local_needs_no_profiles_entry() {
 fn a_local_destination_copies_the_file_creating_directories() {
     let p = project(
         "queries: [summary]\noutput:\n  destination: {profile: local_fs, path: out/nested/daily-report.csv}\n",
-        "destinations:\n  local_fs:\n    target: dev\n    targets:\n      dev: {type: local}\n",
+        "destinations:\n  local_fs:\n    targets:\n      dev: {type: local}\n",
     );
     p.dre("run", &["daily"]).ok();
     let delivered = p.read("out/nested/daily-report.csv");

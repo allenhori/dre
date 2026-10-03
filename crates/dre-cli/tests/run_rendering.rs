@@ -4,8 +4,7 @@ mod common;
 
 use common::{DUCK_PROFILES, PLUGINS_YML, TestProject};
 
-const LOCAL_FS: &str =
-    "destinations:\n  local_fs:\n    target: dev\n    targets:\n      dev: {type: local}\n";
+const LOCAL_FS: &str = "destinations:\n  local_fs:\n    targets:\n      dev: {type: local}\n";
 
 fn project(files: &[(&str, &str)]) -> TestProject {
     let mut all = vec![
@@ -31,7 +30,7 @@ fn sql_and_output_paths_share_one_context() {
         ),
         (
             "reports/finance/monthly/q.sql",
-            "select '{{ run.report }}' as report, '{{ run.target }}' as target, '{{ run.profile }}' as profile,\n\
+            "select '{{ run.report }}' as report, '{{ run.target }}' as target, '{{ connection.name }}' as profile,\n\
              '{{ run.date }}' as iso, '{{ run.date.ddmmyyyy }}' as dmy, '{{ run.date_format('%Y-W%V') }}' as week\n",
         ),
     ]);

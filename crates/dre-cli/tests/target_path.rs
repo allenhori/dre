@@ -9,14 +9,12 @@ use std::path::{Path, PathBuf};
 use common::TestProject;
 
 const PROFILES: &str = "\
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: data.duckdb}
 destinations:
   inbox:
-    target: dev
     targets:
       dev: {type: local}
 ";

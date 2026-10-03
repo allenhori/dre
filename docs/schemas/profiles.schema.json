@@ -2,15 +2,23 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "x-dre-schema-version": "0.1",
   "title": "DRE profiles",
-  "description": "Connections, in `profiles.yml`: database sources and delivery destinations. Kept outside the project (`~/.dre`, `--profiles-dir` or `DRE_PROFILES_DIR`).",
+  "description": "Connections and destinations, in `profiles.yml`: what reports read from and where outputs go. Kept outside the project (`~/.dre`, `--profiles-dir` or `DRE_PROFILES_DIR`). Every profile lists its targets (environments); the run picks one for all of them: `--target`, `DRE_TARGET`, `target` in dre_project.yml, else `dev`.",
   "type": "object",
   "properties": {
-    "sources": {
+    "connections": {
       "type": "object",
-      "description": "Database connections, referenced by `default_profile`, `profile:` and Sets.",
+      "description": "Database connections, referenced by `default_profile`, `profile:` (report, query, Set, folder `+profile`) and a source's `profile`.",
       "additionalProperties": {
         "$ref": "#/$defs/profile"
       }
+    },
+    "sources": {
+      "type": "object",
+      "description": "DRE 0.1's name for `connections:`. Still read in 0.2.x, with a warning: rename it to `connections:`.",
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
+      },
+      "deprecated": true
     },
     "destinations": {
       "type": "object",
@@ -24,12 +32,8 @@
   "$defs": {
     "profile": {
       "type": "object",
-      "description": "A named connection with one or more targets (environments).",
+      "description": "A named connection with one entry per target (environment).",
       "properties": {
-        "target": {
-          "type": "string",
-          "description": "The default target, one of `targets`."
-        },
         "targets": {
           "type": "object",
           "description": "The environments of this profile, by name (e.g. `dev`, `prod`).",
@@ -37,10 +41,14 @@
             "$ref": "#/$defs/target"
           },
           "minProperties": 1
+        },
+        "target": {
+          "type": "string",
+          "description": "Ignored since DRE 0.2 (with a warning): the run picks one target for every profile.",
+          "deprecated": true
         }
       },
       "required": [
-        "target",
         "targets"
       ],
       "additionalProperties": false
@@ -59,5 +67,11 @@
       ],
       "additionalProperties": true
     }
+  },
+  "not": {
+    "required": [
+      "connections",
+      "sources"
+    ]
   }
 }

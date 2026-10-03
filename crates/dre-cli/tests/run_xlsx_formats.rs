@@ -6,9 +6,8 @@ mod common;
 use common::TestProject;
 
 const PROFILES: &str = "\
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: data.duckdb}
 ";

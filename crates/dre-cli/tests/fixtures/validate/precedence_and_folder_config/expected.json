@@ -6,6 +6,10 @@ exit: 0
     "exists": true,
     "found_by": "--profiles-dir"
   },
+  "target": {
+    "name": "dev",
+    "from": "the default"
+  },
   "errors": 0,
   "warnings": 1,
   "diagnostics": [
@@ -25,7 +29,13 @@ exit: 0
         "target/compiled/bare/default/bare.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "bare",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/bare/default/bare.csv",
@@ -39,7 +49,13 @@ exit: 0
         "target/compiled/filing/client_a/filing_q.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "filing_q",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "xlsx",
       "output": "target/run/filing/client_a/filing.xlsx",
@@ -53,7 +69,13 @@ exit: 0
         "target/compiled/ledger/default/ledger_q.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "ledger_q",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/ledger/default/ledger.csv",
@@ -88,7 +110,8 @@ exit: 0
     "project": {
       "checksum": "6ec8fdedd7eb1db3756c41d8278fa7e0e4cbae4b2bf8eb9e41668fcb819276ca",
       "default_profile": "local_dev",
-      "name": "acme_reports"
+      "name": "acme_reports",
+      "target": "dev"
     },
     "reports": {
       "bare": {
@@ -104,6 +127,10 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/ops/bare.sql",
                 "query": "bare",
                 "tab": true
@@ -119,6 +146,9 @@ exit: 0
           }
         ],
         "checksum": "a0392ead938d32970cb61275ff094cbcd5cab0fbd0c502b04d92a30ef7002ac4",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/ops/bare.sql",
         "folder": [
           "ops"
@@ -146,6 +176,10 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/regulatory/filing/filing_q.sql",
                 "query": "filing_q",
                 "tab": true
@@ -162,6 +196,9 @@ exit: 0
           }
         ],
         "checksum": "ced5cbe84b0364b0a24470ef076b3be5a138047bce35a9b5267ab6e3525657d4",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/finance/regulatory/filing/filing.yml",
         "folder": [
           "finance",
@@ -196,6 +233,10 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/finance/ledger/ledger_q.sql",
                 "query": "ledger_q",
                 "tab": true
@@ -211,6 +252,9 @@ exit: 0
           }
         ],
         "checksum": "02aa89a69ad4e129d1429d0b98ac5529d374c826cbb43de5c10374a6c4359c9c",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/finance/ledger/ledger.yml",
         "folder": [
           "finance",
@@ -232,7 +276,8 @@ exit: 0
       }
     },
     "schedules": {},
-    "schema": 1,
+    "schema": 2,
+    "sources": {},
     "version": "$VERSION"
   }
 }

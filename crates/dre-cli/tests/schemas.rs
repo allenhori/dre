@@ -9,7 +9,7 @@ use dre_core::project::{self, LoadOptions};
 use dre_core::yaml::YamlFile;
 use serde_json::Value;
 
-const FILES: [&str; 8] = [
+const FILES: [&str; 9] = [
     "project",
     "report",
     "sets",
@@ -18,6 +18,7 @@ const FILES: [&str; 8] = [
     "profiles",
     "dependencies",
     "lookup",
+    "sources",
 ];
 
 fn schemas_dir() -> PathBuf {
@@ -123,7 +124,26 @@ fn the_schemas_have_the_keys_the_parser_has() {
     same(
         "report",
         props(&report),
-        plus(minus(REPORT_KEYS, &["schedule"]), PLUGIN_KEYS),
+        plus(
+            plus(minus(REPORT_KEYS, &["schedule"]), PLUGIN_KEYS),
+            &[SOURCES_KEY],
+        ),
+    );
+    let sources = raw("sources");
+    same(
+        "source",
+        props(&sources["$defs"]["source"]),
+        plus(minus(SOURCE_KEYS, &[]), DBT_SOURCE_KEYS),
+    );
+    same(
+        "source table",
+        props(&sources["$defs"]["table"]),
+        plus(minus(SOURCE_TABLE_KEYS, &[]), DBT_SOURCE_TABLE_KEYS),
+    );
+    same(
+        "source column",
+        props(&sources["$defs"]["column"]),
+        plus(minus(SOURCE_COLUMN_KEYS, &[]), DBT_SOURCE_COLUMN_KEYS),
     );
     same(
         "query entry",
@@ -181,7 +201,7 @@ fn the_schemas_have_the_keys_the_parser_has() {
     same(
         "profiles.yml",
         props(&raw("profiles")),
-        set(&["sources", "destinations"]),
+        set(&["connections", "sources", "destinations"]),
     );
     same(
         "profile",
@@ -319,6 +339,15 @@ fn kind_of(root: &Path, path: &Path, value: &Value) -> Option<&'static str> {
     }
     match value {
         Value::Array(_) => Some("schedules"),
+        Value::Object(m)
+            if m.contains_key("sources") && !m.contains_key("queries") && !m.contains_key("name") =>
+        {
+            if rel_s == "dre_project.yml" {
+                Some("project")
+            } else {
+                Some("sources")
+            }
+        }
         Value::Object(m) if m.is_empty() => None,
         Value::Object(m) => {
             let reportish = m.contains_key("queries") || m.contains_key("name");
@@ -398,7 +427,7 @@ fn every_project_the_parser_accepts_validates_against_the_schemas() {
 
 #[test]
 fn the_schemas_reject_what_is_wrong() {
-    let cases: [(&str, &str); 10] = [
+    let cases: [(&str, &str); 13] = [
         ("project", r#"{"name": "p", "colour": "blue"}"#),
         ("project", r#"{"run_query_max_rows": 0, "name": "p"}"#),
         ("project", r#"{"week_start": "friday", "name": "p"}"#),
@@ -417,6 +446,12 @@ fn the_schemas_reject_what_is_wrong() {
             r#"{"month_start": {"cron": "0 6 1 * *", "colour": "blue"}}"#,
         ),
         ("timings", r#"{"month start": {"cron": "0 6 1 * *"}}"#),
+        ("profiles", r#"{"connections": {}, "sources": {}}"#),
+        ("sources", r#"{"sources": [{"name": "s", "colour": "blue"}]}"#),
+        (
+            "sources",
+            r#"{"sources": [{"name": "s", "tables": [{"name": "t", "quoting": {"column": true}}]}]}"#,
+        ),
         (
             "dependencies",
             r#"{"packages": [{"git": "https://example.com/p.git"}]}"#,

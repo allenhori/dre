@@ -1,0 +1,9 @@
+connections:
+  duck:
+    targets:
+      dev: {type: duckdb, path: ./dev.duckdb}
+      prod: {type: duckdb, path: ./prod.duckdb}
+  pg:
+    targets:
+      dev: {type: postgres, host: localhost, user: dre, database: dev}
+      prod: {type: postgres, host: db.example.com, user: dre, database: prod}

@@ -1,4 +1,5 @@
 exit: 1
 error[unknown-default-set]: reports/ops/daily/daily.yml:2: report `daily`: `default_set` `client_b` isn't one of the report's `sets:`
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation failed: 1 error, 0 warnings

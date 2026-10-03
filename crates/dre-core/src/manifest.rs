@@ -1,7 +1,12 @@
 //! The project manifest, `<target>/manifest.json`: everything a project declares, as the engine
 //! resolves it, for orchestrators, CI and other tools. It's a deliberate projection of the loaded
 //! [`Project`], not a dump: built offline (no connection, no profiles, no plugins), the same bytes
-//! for the same project on every OS, and free of secrets and machine-specific values.
+//! for the same project and the same inputs on every OS, and free of secrets and
+//! machine-specific values.
+//!
+//! Like dbt's, it's resolved for the run's inputs: Jinja in `profile:` values and source fields
+//! is rendered with the run's target, vars, environment variables and `run.*`, and each query's
+//! sources and connection come from the parse pass. Two targets can give two manifests.
 //!
 //! The format is a public, versioned contract (`docs/manifest.md`, `docs/manifest.schema.json`):
 //! adding optional fields keeps [`SCHEMA`]; removing, renaming or re-typing a field, or changing
@@ -19,7 +24,7 @@ use crate::lookups::LOOKUPS_DIR;
 use crate::project::{Binding, MACROS_DIR, PluginSource, Project, QueryEntry, REPORTS_DIR, Report};
 
 /// The manifest format's version.
-pub const SCHEMA: u64 = 1;
+pub const SCHEMA: u64 = 2;
 /// The manifest's file name in the target folder.
 pub const FILE: &str = "manifest.json";
 
@@ -95,6 +100,7 @@ fn document(
         .collect();
     let mut proj = JsonMap::new();
     proj.insert("name".into(), json!(project.name));
+    proj.insert("target".into(), json!(project.target_name));
     insert_some(&mut proj, "default_profile", project.default_profile.as_ref());
     insert_some(&mut proj, "timezone", project.timezone.as_ref());
     proj.insert("checksum".into(), json!(project_checksum(project)));
@@ -104,6 +110,7 @@ fn document(
         "project": proj,
         "reports": reports,
         "schedules": schedules,
+        "sources": sources(project),
         "plugins": plugins,
     });
     sorted(doc)
@@ -120,8 +127,18 @@ fn report(project: &Project, r: &Report, bindings: &[&Binding], errors: Option<&
     insert_some(&mut m, "default_set", r.default_set.as_ref());
     m.insert(
         "queries".into(),
-        json!(r.queries.iter().map(query).collect::<Vec<_>>()),
+        json!(r.queries.iter().map(|q| query(q, None)).collect::<Vec<_>>()),
     );
+    // Every source any Binding reads, as `depends_on` says it in dbt.
+    let mut used: Vec<String> = Vec::new();
+    for p in r.bindings.iter().filter_map(|b| b.parsed.as_ref()) {
+        for k in p.source_keys() {
+            if !used.iter().any(|u| u == k) {
+                used.push(k.to_string());
+            }
+        }
+    }
+    m.insert("depends_on".into(), json!({"sources": used}));
     m.insert("checksum".into(), json!(report_checksum(project, r)));
     let errors = errors.cloned().unwrap_or_default();
     m.insert("valid".into(), json!(errors.is_empty()));
@@ -135,10 +152,16 @@ fn report(project: &Project, r: &Report, bindings: &[&Binding], errors: Option<&
     Json::Object(m)
 }
 
-fn query(q: &QueryEntry) -> Json {
+/// A query entry; with the parse pass's result (`parsed`), also its connection and sources.
+fn query(q: &QueryEntry, parsed: Option<&crate::parse::ParsedQuery>) -> Json {
     let mut m = JsonMap::new();
     m.insert("query".into(), json!(q.query));
     m.insert("file".into(), json!(slash(&q.path)));
+    insert_some(&mut m, "profile", q.profile.as_ref());
+    if let Some(p) = parsed {
+        m.insert("connection".into(), json!(p.connection));
+        m.insert("depends_on".into(), json!({"sources": p.sources}));
+    }
     m.insert("tab".into(), json!(q.tab));
     insert_some(&mut m, "tab_name", q.tab_name.as_ref());
     insert_some(&mut m, "anchor", q.anchor.as_ref());
@@ -153,6 +176,7 @@ fn query(q: &QueryEntry) -> Json {
 }
 
 fn binding(b: &Binding) -> Json {
+    let parsed = b.parsed.as_deref();
     let mut output = JsonMap::new();
     output.insert("format".into(), json!(b.output.format));
     output.insert("options".into(), Json::Object(b.output.options.clone()));
@@ -164,25 +188,122 @@ fn binding(b: &Binding) -> Json {
         .output
         .destinations
         .iter()
-        .map(|d| {
+        .enumerate()
+        .map(|(i, d)| {
             let mut m = JsonMap::new();
-            m.insert("profile".into(), json!(d.profile));
+            let rendered = parsed.and_then(|p| p.destinations.get(i).cloned().flatten());
+            m.insert(
+                "profile".into(),
+                json!(rendered.unwrap_or_else(|| d.profile.clone())),
+            );
             insert_some(&mut m, "path", d.path.as_ref());
             Json::Object(m)
         })
         .collect();
     let mut m = JsonMap::new();
     m.insert("set".into(), json!(b.set));
-    m.insert("profile".into(), json!(b.profile));
+    m.insert(
+        "profile".into(),
+        json!(parsed.map_or(b.profile.clone(), |p| p.inherited.clone())),
+    );
     m.insert("vars".into(), Json::Object(b.vars.clone()));
     m.insert(
         "queries".into(),
-        json!(b.queries.iter().map(query).collect::<Vec<_>>()),
+        json!(
+            b.queries
+                .iter()
+                .map(|q| query(q, parsed.and_then(|p| p.query(&q.query))))
+                .collect::<Vec<_>>()
+        ),
     );
     m.insert("output".into(), Json::Object(output));
     m.insert("destinations".into(), json!(destinations));
     m.insert("schedules".into(), json!(b.schedules));
     Json::Object(m)
+}
+
+/// Every declared source, with its fields rendered for the run's inputs (project vars, `--var`,
+/// the target and `run.*` with no report). A field that doesn't render is left as written, with
+/// the problem under `errors`.
+fn sources(project: &Project) -> Json {
+    if project.sources.is_empty() {
+        return json!({});
+    }
+    let context = crate::render::RunContext {
+        report: String::new(),
+        set: None,
+        target: project.target_name.clone(),
+        schedule: None,
+        date: chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
+        now: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
+        scheduled_at: None,
+        calendar: crate::dates::Calendar::default(),
+    };
+    let limited = crate::render::Limited::new(context, project.vars.clone(), BTreeMap::new());
+    let mut used: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for r in &project.reports {
+        for p in r.bindings.iter().filter_map(|b| b.parsed.as_ref()) {
+            for k in p.source_keys() {
+                used.entry(k.to_string()).or_default().insert(r.name.clone());
+            }
+        }
+    }
+    let mut out = JsonMap::new();
+    for (name, s) in &project.sources {
+        let mut errors: Vec<String> = Vec::new();
+        let mut render = |key: &str, v: &str| match limited.render(&format!("`{key}`"), v) {
+            Ok(r) => r,
+            Err(e) => {
+                errors.push(e);
+                v.to_string()
+            }
+        };
+        let mut m = JsonMap::new();
+        m.insert("name".into(), json!(name));
+        m.insert("file".into(), json!(slash(&s.file)));
+        if let Some(p) = &s.profile {
+            m.insert("profile".into(), json!(render("profile", p)));
+        }
+        if let Some(d) = &s.database {
+            m.insert("database".into(), json!(render("database", d)));
+        }
+        m.insert(
+            "schema".into(),
+            json!(render("schema", s.schema.as_deref().unwrap_or(name))),
+        );
+        insert_some(&mut m, "description", s.description.as_ref());
+        m.insert("tags".into(), json!(s.tags));
+        m.insert("meta".into(), Json::Object(s.meta.clone()));
+        let tables: JsonMap<String, Json> = s
+            .tables
+            .iter()
+            .map(|t| {
+                let key = format!("{name}.{}", t.name);
+                let mut tm = JsonMap::new();
+                tm.insert("name".into(), json!(t.name));
+                tm.insert(
+                    "identifier".into(),
+                    json!(render("identifier", t.identifier.as_deref().unwrap_or(&t.name))),
+                );
+                tm.insert("quoting".into(), json!(t.quoting.over(&s.quoting)));
+                insert_some(&mut tm, "description", t.description.as_ref());
+                tm.insert("tags".into(), json!(t.tags));
+                tm.insert("meta".into(), Json::Object(t.meta.clone()));
+                tm.insert("columns".into(), json!(t.columns));
+                tm.insert(
+                    "used_by".into(),
+                    json!(used.get(&key).cloned().unwrap_or_default()),
+                );
+                (t.name.clone(), Json::Object(tm))
+            })
+            .collect();
+        m.insert("tables".into(), Json::Object(tables));
+        if !errors.is_empty() {
+            m.insert("errors".into(), json!(errors));
+        }
+        out.insert(name.clone(), Json::Object(m));
+    }
+    Json::Object(out)
 }
 
 fn schedule(project: &Project, name: &str) -> Json {
@@ -315,7 +436,7 @@ fn project_checksum(project: &Project) -> String {
         })
         .collect();
     let files: BTreeSet<String> = project
-        .sources
+        .files
         .iter()
         .map(|p| slash(p))
         .filter(|p| !owned.contains(p))

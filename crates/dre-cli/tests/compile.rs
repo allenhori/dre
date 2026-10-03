@@ -5,15 +5,13 @@ mod common;
 use common::{PLUGINS_YML, TestProject};
 
 const PROFILES: &str = "\
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: dev.duckdb}
       prod: {type: duckdb, path: prod.duckdb}
 destinations:
   inbox:
-    target: dev
     targets:
       dev: {type: local}
       prod: {type: local}
@@ -109,7 +107,8 @@ fn validate_compiles_and_with_select_shows_where_output_goes() {
     v.ok()
         .says("Binding  daily")
         .says("Compiled  target/compiled/daily/default/summary.sql")
-        .says("Source  warehouse (duckdb), target dev")
+        .says("Target  dev")
+        .says("Query  summary on warehouse (duckdb)")
         .says("Output  target/run/daily/default/daily-20260125.csv (csv)")
         .says("Delivers  inbox (local), target dev → out/daily-20260125.csv")
         .says("Schedules  daily_run");
@@ -118,7 +117,8 @@ fn validate_compiles_and_with_select_shows_where_output_goes() {
     // Against prod, the same summary says so.
     p.dre("validate", &["-s", "daily", "--target", "prod"])
         .ok()
-        .says("Source  warehouse (duckdb), target prod")
+        .says("Target  prod")
+        .says("Query  summary on warehouse (duckdb)")
         .says("Delivers  inbox (local), target prod → out/daily-20260125.csv");
 
     // A report that doesn't render fails validation.

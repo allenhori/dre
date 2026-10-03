@@ -1,7 +1,8 @@
 exit: 1
-error[unknown-profile]: dre_project.yml:2: source profile `local_dve` isn't defined under `sources:` in $CASE/profiles/profiles.yml
+error[unknown-profile]: dre_project.yml:2: connection profile `local_dve` isn't defined under `connections:` in $CASE/profiles/profiles.yml
 error[unknown-profile]: reports/ops/daily/daily.yml: destination profile `missing_dest` isn't defined under `destinations:` in $CASE/profiles/profiles.yml
-error[unknown-profile]: reports/ops/daily/daily.yml:2: source profile `missing_source` isn't defined under `sources:` in $CASE/profiles/profiles.yml
+error[unknown-profile]: reports/ops/daily/daily.yml:2: connection profile `missing_source` isn't defined under `connections:` in $CASE/profiles/profiles.yml
 warning[unmanaged-report]: reports/ops/unmanaged_one.sql: `unmanaged_one` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (from the default)
 Validation failed: 3 errors, 1 warning

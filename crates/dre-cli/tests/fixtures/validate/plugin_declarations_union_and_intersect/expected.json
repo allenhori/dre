@@ -6,6 +6,10 @@ exit: 0
     "exists": true,
     "found_by": "--profiles-dir"
   },
+  "target": {
+    "name": "dev",
+    "from": "the default"
+  },
   "errors": 0,
   "warnings": 0,
   "diagnostics": [],
@@ -17,7 +21,13 @@ exit: 0
         "target/compiled/daily/default/summary.sql"
       ],
       "profile": "local_dev",
-      "source_type": "duckdb",
+      "queries": [
+        {
+          "query": "summary",
+          "connection": "local_dev",
+          "type": "duckdb"
+        }
+      ],
       "target": "dev",
       "format": "csv",
       "output": "target/run/daily/default/daily.csv",
@@ -52,7 +62,8 @@ exit: 0
     "project": {
       "checksum": "527820ad3e7bd91eac355ddfbdeb2681bc9965132a734f6cd119d65a2012d876",
       "default_profile": "local_dev",
-      "name": "acme_reports"
+      "name": "acme_reports",
+      "target": "dev"
     },
     "reports": {
       "daily": {
@@ -66,6 +77,10 @@ exit: 0
             "profile": "local_dev",
             "queries": [
               {
+                "connection": "local_dev",
+                "depends_on": {
+                  "sources": []
+                },
                 "file": "reports/ops/daily/summary.sql",
                 "query": "summary",
                 "tab": true
@@ -77,6 +92,9 @@ exit: 0
           }
         ],
         "checksum": "32c9aeb70056c0b839c162f7f6ae49904bbbf509b95be367453731ee4441fa14",
+        "depends_on": {
+          "sources": []
+        },
         "file": "reports/ops/daily/daily.yml",
         "folder": [
           "ops",
@@ -96,7 +114,8 @@ exit: 0
       }
     },
     "schedules": {},
-    "schema": 1,
+    "schema": 2,
+    "sources": {},
     "version": "$VERSION"
   }
 }

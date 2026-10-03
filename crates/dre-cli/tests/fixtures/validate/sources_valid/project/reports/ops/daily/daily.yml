@@ -1,0 +1,4 @@
+queries:
+  - orders
+  - {query: accounts, profile: pg}
+  - regions

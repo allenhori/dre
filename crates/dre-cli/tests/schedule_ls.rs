@@ -20,9 +20,8 @@ const SCHEDULES: &str = "\
 ";
 
 fn project() -> TestProject {
-    let profiles = format!(
-        "{DUCK_PROFILES}destinations:\n  local_fs:\n    target: dev\n    targets:\n      dev: {{type: local}}\n"
-    );
+    let profiles =
+        format!("{DUCK_PROFILES}destinations:\n  local_fs:\n    targets:\n      dev: {{type: local}}\n");
     let p = TestProject::new(
         &[
             (

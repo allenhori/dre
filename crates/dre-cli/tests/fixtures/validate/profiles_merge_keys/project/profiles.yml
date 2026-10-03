@@ -1,6 +1,5 @@
-sources:
+connections:
   local_dev:
-    target: dev
     targets:
       dev: &duck
         type: duckdb

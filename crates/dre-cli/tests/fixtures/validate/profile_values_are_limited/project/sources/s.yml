@@ -1,0 +1,4 @@
+sources:
+  - name: sales
+    profile: "{{ run_query('select 1')[0][0] }}"
+    tables: [{name: orders}]

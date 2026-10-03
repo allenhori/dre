@@ -7,18 +7,15 @@ use common::TestProject;
 use serde_json::{Value, json};
 
 const PROFILES: &str = "\
-sources:
+connections:
   warehouse:
-    target: dev
     targets:
       dev: {type: duckdb, path: dev.duckdb}
 destinations:
   inbox:
-    target: dev
     targets:
       dev: {type: local}
   archive:
-    target: dev
     targets:
       dev: {type: local}
 ";
@@ -86,7 +83,8 @@ fn compile_writes_the_whole_project() {
     let p = project();
     p.dre("compile", &["-s", "daily"]).ok();
     let m = manifest(&p);
-    assert_eq!(m["schema"], 1);
+    assert_eq!(m["schema"], 2);
+    assert_eq!(m["project"]["target"], "dev");
     assert!(m["version"].is_string());
     assert_eq!(m["project"]["name"], "acme_reports");
     assert_eq!(m["project"]["default_profile"], "warehouse");
