@@ -287,6 +287,12 @@ fn main() -> ExitCode {
         printer.error(&format!("{from}: {e}"));
         return ExitCode::from(2);
     }
+    if project_args.is_some()
+        && let Err(e) = run_at()
+    {
+        printer.error(&e);
+        return ExitCode::from(2);
+    }
     match cli.command {
         Command::Validate(a) => validate(a, &printer),
         Command::Run(a) => run(a, printer),
@@ -429,6 +435,7 @@ fn compile_for_validate(
         target: p.target.clone(),
         vars: p.vars.iter().cloned().collect(),
         date: run_date(),
+        scheduled_at: run_at().ok().flatten(),
         timezone: p.timezone(),
         dry_run: true,
         ..Default::default()
@@ -499,6 +506,7 @@ fn compile(a: CompileArgs, mut printer: output::Printer) -> ExitCode {
         target: a.project.target.clone(),
         vars: a.project.vars.iter().cloned().collect(),
         date: run_date(),
+        scheduled_at: run_at().ok().flatten(),
         timezone: a.project.timezone(),
         dry_run: true,
         interactive: {
@@ -534,6 +542,7 @@ fn validate_live(
         target: p.target.clone(),
         vars: p.vars.iter().cloned().collect(),
         date: run_date(),
+        scheduled_at: run_at().ok().flatten(),
         timezone: p.timezone(),
         live_check: true,
         ..Default::default()
@@ -723,6 +732,19 @@ fn run_date() -> Option<chrono::NaiveDate> {
         .and_then(|d| chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok())
 }
 
+/// `DRE_RUN_AT`: the instant a scheduled run was scheduled for (RFC 3339). Checked before any
+/// project command starts, so callers can treat an error as unset.
+fn run_at() -> Result<Option<chrono::DateTime<chrono::Utc>>, String> {
+    match std::env::var("DRE_RUN_AT") {
+        Ok(v) if !v.is_empty() => chrono::DateTime::parse_from_rfc3339(&v)
+            .map(|t| Some(t.with_timezone(&chrono::Utc)))
+            .map_err(|_| {
+                format!("DRE_RUN_AT: `{v}` isn't an RFC 3339 date-time (e.g. 2026-09-01T06:00:00Z)")
+            }),
+        _ => Ok(None),
+    }
+}
+
 fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     use std::io::IsTerminal;
     if !a.project.no_auto_install && !plugins::sync_packages(&a.project.project_dir, &printer) {
@@ -756,6 +778,7 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         accept_schema_change: a.accept_schema_change,
         interactive: std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
         date: run_date(),
+        scheduled_at: run_at().ok().flatten(),
         timezone: a.project.timezone(),
         live_check: false,
         schedule: a.schedule,
@@ -768,7 +791,10 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
         return ExitCode::from(2);
     }
     // Each Binding records its own date, in its own timezone; this line only logs the request.
-    let date = opts.date.unwrap_or_else(|| chrono::Utc::now().date_naive());
+    let date = opts
+        .date
+        .or(opts.scheduled_at.map(|t| t.date_naive()))
+        .unwrap_or_else(|| chrono::Utc::now().date_naive());
     let mut params = opts.params(date);
     params["profiles"] = serde_json::json!(project.profiles.path);
     params["target_path"] = serde_json::json!(project.target_dir);

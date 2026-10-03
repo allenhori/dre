@@ -109,7 +109,8 @@ works on a fresh CI runner with no credentials.
 - **`schedules`**, by name: the report or selector and Set it targets, the schedule as declared
   (`cron`, `every`, `rrule`, ...), its vars and timezone, and the Bindings it runs, resolved the way
   `dre run --schedule <name>` resolves them. An orchestrator makes one task per schedule, each
-  running `dre run --schedule <name>` with `DRE_RUN_DATE` set to the scheduled date.
+  running `dre run --schedule <name>` with `DRE_RUN_AT` set to the scheduled instant (`dre schedule ls` lists them, with the exact
+  command).
 - **`plugins`**: the declared packages, each with its version requirement and source
   (`registry`, `github` or `local`, plus a `location` unless it's DRE's own registry).
 

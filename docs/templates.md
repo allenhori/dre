@@ -127,8 +127,8 @@ Lookups (`ref('countries')`) are inlined in a form every engine reads the same w
 
 ## Dates and times
 
-`run.date` is a date, not a string. It's `DRE_RUN_DATE` when set, else today in the run's
-timezone. Everything below is worked out when the template renders, so the compiled SQL holds
+`run.date` is a date, not a string. It's `DRE_RUN_DATE` when set, else the date of `DRE_RUN_AT`
+in the run's timezone when that's set, else today in the run's timezone. Everything below is worked out when the template renders, so the compiled SQL holds
 plain literals, and a rerun with the same `DRE_RUN_DATE` renders the same SQL.
 
 ```sql
@@ -198,8 +198,15 @@ A datetime is an instant, shown in a timezone. It renders as `YYYY-MM-DD HH:MM:S
 | Formats | `iso` (with offset: `2026-08-01T00:00:00+10:00`), `unix`, `unix_ms`, `format('%H:%M')` |
 | Moving | `add(days=, weeks=, months=, years=, hours=, minutes=, seconds=)` |
 
-`run.now` is the instant the run started. Unlike `run.date` it isn't reproducible, and
-`DRE_RUN_DATE` doesn't change it.
+`run.now` is the instant the run started, unless `DRE_RUN_AT` pins it to the instant the run was
+scheduled for. Without `DRE_RUN_AT` it isn't reproducible, and `DRE_RUN_DATE` doesn't change it.
+
+`run.scheduled_at` is that `DRE_RUN_AT` instant, shown in the run's timezone, and `none` when
+`DRE_RUN_AT` isn't set. It tells two firings on the same day apart:
+
+```yaml
+path: "out/intraday-{{ run.scheduled_at.format('%Y%m%d-%H%M') if run.scheduled_at else run.date.yyyymmdd }}.csv"
+```
 
 A day's first instant depends on the zone: with `timezone: Australia/Sydney`,
 `run.date.start.utc` is 13:00 or 14:00 the previous day, and `run.date.unix` is Sydney's

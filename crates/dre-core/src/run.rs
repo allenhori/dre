@@ -48,8 +48,11 @@ pub struct RunOptions {
     pub accept_schema_change: bool,
     /// Whether a person is at a terminal to answer prompts.
     pub interactive: bool,
-    /// `run.date`.
+    /// `run.date` (`DRE_RUN_DATE`).
     pub date: Option<NaiveDate>,
+    /// The instant this run was scheduled for (`DRE_RUN_AT`): `run.now` and `run.scheduled_at`,
+    /// and `run.date` in the run's timezone unless `date` is set.
+    pub scheduled_at: Option<chrono::DateTime<chrono::Utc>>,
     /// `validate --live`: check statements instead of executing them.
     pub live_check: bool,
     /// `--schedule <name>`: run exactly the Bindings that schedule targets, with its vars.
@@ -71,6 +74,7 @@ impl RunOptions {
             "profile": self.profile,
             "vars": self.vars,
             "run_date": date.to_string(),
+            "scheduled_at": self.scheduled_at.map(rfc3339),
             "timezone": self.timezone,
             "output_name": self.output_name,
             "output_path": self.output_path,
@@ -445,7 +449,12 @@ impl<'a> BindingRun<'a> {
             week_start: project.week_start,
             numbering: project.week_numbering,
         };
-        let date = opts.date.unwrap_or_else(|| calendar.today());
+        let date = opts
+            .date
+            .or(opts
+                .scheduled_at
+                .map(|t| t.with_timezone(&calendar.tz).date_naive()))
+            .unwrap_or_else(|| calendar.today());
         // Binding vars, then the schedule's, then `--var` on top.
         let mut vars = b.vars.clone();
         vars.extend(schedule_vars.clone().unwrap_or_default());
@@ -590,7 +599,8 @@ impl<'a> BindingRun<'a> {
                 source_type: output.kind.clone(),
                 schedule: self.opts.schedule.clone(),
                 date: self.date,
-                now: self.started_at,
+                now: self.opts.scheduled_at.unwrap_or(self.started_at),
+                scheduled_at: self.opts.scheduled_at,
                 calendar: self.calendar,
             },
             vars: self.vars.clone(),
@@ -1128,7 +1138,8 @@ impl<'a> BindingRun<'a> {
                 source_type: self.source_type.clone(),
                 schedule: self.opts.schedule.clone(),
                 date: self.date,
-                now: self.started_at,
+                now: self.opts.scheduled_at.unwrap_or(self.started_at),
+                scheduled_at: self.opts.scheduled_at,
                 calendar: self.calendar,
             },
             vars: self.vars.clone(),
@@ -1450,6 +1461,7 @@ impl<'a> BindingRun<'a> {
             "schedule_vars": self.schedule_vars,
             "vars": self.rendered_vars,
             "run_date": self.date.to_string(),
+            "scheduled_at": self.opts.scheduled_at.map(rfc3339),
             "timezone": self.calendar.tz.name(),
             "params": self.opts.params(self.date),
             "status": status,
@@ -1927,6 +1939,11 @@ fn split_ext(name: &str) -> (&str, &str) {
 
 fn rel(root: &Path, p: &Path) -> PathBuf {
     crate::slash(p.strip_prefix(root).unwrap_or(p))
+}
+
+/// An instant as DRE records it: RFC 3339 in UTC, to the second.
+pub fn rfc3339(t: chrono::DateTime<chrono::Utc>) -> String {
+    t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 /// How a generated file is recorded in `run_results.json`: relative to the project root when

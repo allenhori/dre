@@ -2895,6 +2895,7 @@ impl Loader {
                             schedule: Some(name.clone()),
                             date,
                             now: chrono::Utc::now(),
+                            scheduled_at: None,
                             calendar: crate::dates::Calendar::default(),
                         },
                         vars,
@@ -3463,7 +3464,7 @@ impl Loader {
                 f.clone(),
                 Some(fixed_line.unwrap_or(line + line_offset)),
                 format!(
-                    "`{r}` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.source_type, run.schedule, run.date (a date: .prev_month, .month_start, .yyyymmdd, ...), run.now, run.timezone, run.date_format(...)"
+                    "`{r}` isn't part of the run context; known: run.report, run.set, run.target, run.profile, run.source_type, run.schedule, run.date (a date: .prev_month, .month_start, .yyyymmdd, ...), run.now, run.scheduled_at, run.timezone, run.date_format(...)"
                 ),
             );
         }

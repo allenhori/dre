@@ -32,8 +32,10 @@ pub struct RunContext {
     /// The schedule's name under `dre run --schedule`, else `None`.
     pub schedule: Option<String>,
     pub date: NaiveDate,
-    /// When the run started: `run.now`.
+    /// When the run started, or the instant it was scheduled for: `run.now`.
     pub now: chrono::DateTime<Utc>,
+    /// `DRE_RUN_AT`: `run.scheduled_at`.
+    pub scheduled_at: Option<chrono::DateTime<Utc>>,
     /// The run's timezone and week settings.
     pub calendar: Calendar,
 }
@@ -683,6 +685,10 @@ impl Object for Run {
             "schedule" => c.schedule.clone().map(Value::from).unwrap_or(Value::from(())),
             "date" => Date::value(c.date, c.calendar),
             "now" => DateTime::now(c.now, c.calendar),
+            "scheduled_at" => c
+                .scheduled_at
+                .map(|t| DateTime::now(t, c.calendar))
+                .unwrap_or(Value::from(())),
             "timezone" => Value::from(c.calendar.tz.name()),
             _ => return None,
         })
@@ -934,6 +940,7 @@ mod tests {
                 schedule: None,
                 date: NaiveDate::from_ymd_opt(2026, 1, 25).unwrap(),
                 now: Utc::now(),
+                scheduled_at: None,
                 calendar: Calendar::default(),
             },
             vars: vars.as_object().cloned().unwrap_or_default(),
@@ -1267,6 +1274,7 @@ mod tests {
                 schedule: None,
                 date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
                 now: Utc::now(),
+                scheduled_at: None,
                 calendar: Calendar::default(),
             },
             vars: JsonMap::new(),
