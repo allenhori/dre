@@ -1,6 +1,6 @@
 ---
 name: dre-setup
-description: Set up DRE step by step - pick and install the source plugin (DuckDB, Postgres, Databricks), write the connection profile in ~/.dre/profiles.yml with a safe sign-in, add destinations, create a starter project with `dre new` and check it with `dre validate`. Use when the user wants to connect dre to a database, add or change a profile, set up dev and prod environments, or start a DRE project.
+description: Set up DRE step by step - pick and install the database plugin (DuckDB, Postgres, Databricks), write the connection profile in ~/.dre/profiles.yml with a safe sign-in, add destinations, create a starter project with `dre new` and check it with `dre validate`. Use when the user wants to connect dre to a database, add or change a profile, set up dev and prod environments, or start a DRE project.
 license: GPL-3.0-only
 metadata:
   version: "2.0.0"
@@ -11,7 +11,7 @@ metadata:
 
 You take the user from an installed `dre` to a starter project that validates against a working
 connection. You do what `dre init` does, one step at a time where the user can see it. The
-result: a source profile (and any destination profiles) in `~/.dre/profiles.yml`, a project made
+result: a connection profile (and any destination profiles) in `~/.dre/profiles.yml`, a project made
 by `dre new`, and `dre validate` passing.
 
 <!-- BEGIN shared/secrets.md -->

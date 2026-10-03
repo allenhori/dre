@@ -75,7 +75,7 @@ inherited connection, and `destination.*` (new) is the destination being rendere
 
 ## The CLI
 
-- `dre new --source <plugin>` is `dre new --type <plugin>` (`--source` still works).
+- `dre new` takes the plugin as `--type <plugin>`; the 0.1 name, `--source`, still works.
 
 ## Schedules
 
