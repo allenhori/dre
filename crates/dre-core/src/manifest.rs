@@ -223,23 +223,37 @@ fn binding(b: &Binding) -> Json {
 }
 
 /// Every declared source, with its fields rendered for the run's inputs (project vars, `--var`,
-/// the target and `run.*` with no report). A field that doesn't render is left as written, with
+/// the target, and `run.*` with no report: the run date, but a fixed `run.now` unless
+/// `DRE_RUN_AT` sets it, so the bytes don't change by the second). A field that doesn't render is left as written, with
 /// the problem under `errors`.
 fn sources(project: &Project) -> Json {
     if project.sources.is_empty() {
         return json!({});
     }
+    let inputs = &project.inputs;
+    let calendar = crate::dates::Calendar {
+        tz: inputs
+            .timezone
+            .as_deref()
+            .or(project.timezone.as_deref())
+            .and_then(|t| crate::dates::parse_tz(t).ok())
+            .unwrap_or(chrono_tz::Tz::UTC),
+        week_start: project.week_start,
+        numbering: project.week_numbering,
+    };
     let context = crate::render::RunContext {
         report: String::new(),
         set: None,
         target: project.target_name.clone(),
         schedule: None,
-        date: chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
-        now: chrono::DateTime::<chrono::Utc>::UNIX_EPOCH,
-        scheduled_at: None,
-        calendar: crate::dates::Calendar::default(),
+        date: crate::parse::run_date(&calendar, inputs.date, inputs.scheduled_at),
+        now: inputs
+            .scheduled_at
+            .unwrap_or(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH),
+        scheduled_at: inputs.scheduled_at,
+        calendar,
     };
-    let limited = crate::render::Limited::new(context, project.vars.clone(), BTreeMap::new());
+    let limited = crate::render::Limited::new(context, project.vars.clone(), inputs.cli_vars.clone());
     let mut used: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for r in &project.reports {
         for p in r.bindings.iter().filter_map(|b| b.parsed.as_ref()) {

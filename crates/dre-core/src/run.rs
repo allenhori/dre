@@ -29,7 +29,6 @@ use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Profiles, Role};
 use crate::project::{Binding, PluginKind, Project, QueryEntry, Report};
 use crate::render::{
     Column, Connection, Connections, Mode, QueryRows, QueryRunner, RenderError, Renderer, RendererConfig,
-    RunContext,
 };
 use crate::selector;
 use crate::sqlsplit::{self, StatementKind};
@@ -332,6 +331,7 @@ fn schedule_bindings<'a>(
             let mut b = (*b).clone();
             if let Some(p) = &opts.profile {
                 b.profile = Some(p.clone());
+                b.profile_at = Some(profile_flag_at());
             }
             (*r, b)
         })
@@ -414,6 +414,7 @@ pub fn choose_bindings(
     if let Some(p) = &opts.profile {
         for b in &mut out {
             b.profile = Some(p.clone());
+            b.profile_at = Some(profile_flag_at());
         }
     }
     Ok(out)
@@ -427,10 +428,24 @@ fn ad_hoc(project: &Project, report: &Report, name: &str) -> Binding {
     if let Some(reg) = project.sets.get(name) {
         if let Some(p) = &reg.profile {
             b.profile = Some(p.clone());
+            b.profile_at = Some(crate::project::ProfileAt {
+                file: reg.file.clone(),
+                line: reg.line,
+                key: format!("`profile` of Set `{name}`"),
+            });
         }
         b.vars.extend(reg.vars.clone());
     }
     b
+}
+
+/// `--profile` as the source of a Binding's inherited connection, for messages.
+fn profile_flag_at() -> crate::project::ProfileAt {
+    crate::project::ProfileAt {
+        file: PathBuf::from("--profile"),
+        line: None,
+        key: "`--profile`".into(),
+    }
 }
 
 /// The tab one query produced: its last statement's result set, spooled to disk.
@@ -624,25 +639,17 @@ impl<'a> BindingRun<'a> {
             (None, Some(n)) => pool.kind(n).unwrap_or_default(),
             (None, None) => String::new(),
         };
-        let inputs = self.inputs();
+        let context =
+            crate::parse::run_context(self.project, self.report, self.b, &self.inputs(), self.started_at);
         let limited = Arc::new(crate::render::Limited::new(
-            crate::parse::run_context(self.project, self.report, self.b, &inputs, self.started_at),
+            context.clone(),
             self.vars.clone(),
             self.opts.vars.clone(),
         ));
         let r = Renderer::new(RendererConfig {
             root: &self.project.root,
             macros: &self.project.macros,
-            context: RunContext {
-                report: self.report.name.clone(),
-                set: self.b.set.clone(),
-                target: self.target.clone(),
-                schedule: self.opts.schedule.clone(),
-                date: self.date,
-                now: self.opts.scheduled_at.unwrap_or(self.started_at),
-                scheduled_at: self.opts.scheduled_at,
-                calendar: self.calendar,
-            },
+            context,
             vars: self.vars.clone(),
             cli_vars: self.opts.vars.clone(),
             runner: Some(Arc::new(PoolRunner {
@@ -678,6 +685,7 @@ impl<'a> BindingRun<'a> {
             scheduled_at: self.opts.scheduled_at,
             timezone: self.opts.timezone.clone(),
             schedule: self.opts.schedule.clone(),
+            started_at: Some(self.started_at),
         }
     }
 

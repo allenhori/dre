@@ -36,6 +36,8 @@ pub struct Inputs {
     pub timezone: Option<String>,
     /// `--schedule`.
     pub schedule: Option<String>,
+    /// When the run started (`run.now` without `DRE_RUN_AT`); `None`: now.
+    pub started_at: Option<DateTime<Utc>>,
 }
 
 /// A problem found by the parse pass, at a file and line.
@@ -225,7 +227,13 @@ pub fn binding(
         Some(s) => format!("report `{}`, Set `{s}`", report.name),
         None => format!("report `{}`", report.name),
     };
-    let context = run_context(project, report, b, inputs, Utc::now());
+    let context = run_context(
+        project,
+        report,
+        b,
+        inputs,
+        inputs.started_at.unwrap_or_else(Utc::now),
+    );
     let limited = Arc::new(Limited::new(
         context.clone(),
         vars.clone(),
@@ -241,33 +249,45 @@ pub fn binding(
                 message: msg,
             })
         };
-    let render_profile = |out: &mut ParsedBinding, what: &str, raw: &str, file: &PathBuf| -> Option<String> {
-        match limited.render(what, raw) {
-            Ok(v) if !v.is_empty() => Some(v),
-            Ok(_) => {
-                out.errors.push(Problem {
-                    code: "invalid-profile-value",
-                    file: file.clone(),
-                    line: None,
-                    message: format!("{ctx_name}: {what} `{raw}` renders empty"),
-                });
-                None
-            }
-            Err(e) => {
-                out.errors.push(Problem {
-                    code: "invalid-profile-value",
-                    file: file.clone(),
-                    line: None,
-                    message: format!("{ctx_name}: {e}"),
-                });
-                None
-            }
-        }
+    // `ctx` is `None` for a value written once for many Bindings (an inherited profile): the same
+    // message at its own file and line is then reported once.
+    let render_profile = |out: &mut ParsedBinding,
+                          what: &str,
+                          raw: &str,
+                          at: (&PathBuf, Option<usize>),
+                          ctx: Option<&str>|
+     -> Option<String> {
+        let message = match limited.render(what, raw) {
+            Ok(v) if !v.is_empty() => return Some(v),
+            Ok(_) => format!("{what} `{raw}` renders empty"),
+            Err(e) => e,
+        };
+        out.errors.push(Problem {
+            code: "invalid-profile-value",
+            file: at.0.clone(),
+            line: at.1,
+            message: match ctx {
+                Some(c) => format!("{c}: {message}"),
+                None => message,
+            },
+        });
+        None
     };
-    out.inherited = b
-        .profile
-        .as_deref()
-        .and_then(|raw| render_profile(&mut out, "`profile`", raw, &report.file));
+    let inherited_at = b.profile_at.clone().unwrap_or(crate::project::ProfileAt {
+        file: report.file.clone(),
+        line: None,
+        key: "`profile`".into(),
+    });
+    if let Some(raw) = &b.profile {
+        out.inherited = render_profile(
+            &mut out,
+            &inherited_at.key,
+            raw,
+            (&inherited_at.file, inherited_at.line),
+            None,
+        );
+    }
+    let inherited_failed = b.profile.is_some() && out.inherited.is_none();
     let sources = resolver(project, limited.clone());
     let renderer = Renderer::new(RendererConfig {
         root: &project.root,
@@ -307,13 +327,16 @@ pub fn binding(
             query: q.query.clone(),
             ..Default::default()
         };
+        let mut failed = inherited_failed;
         if let Some(raw) = &q.profile {
             pq.profile = render_profile(
                 &mut out,
                 &format!("`profile` of query `{}`", q.query),
                 raw,
-                &report.file,
+                (&report.file, None),
+                Some(&ctx_name),
             );
+            failed |= pq.profile.is_none();
         }
         let Some(r) = &renderer else {
             out.queries.push(pq);
@@ -381,12 +404,9 @@ pub fn binding(
             }
             None => out.inherited.clone(),
         };
-        if pq.connection.is_none()
-            && !out
-                .errors
-                .iter()
-                .any(|e| e.file == q.path || e.file == report.file)
-        {
+        // A profile that didn't render, or a conflict, is already the reason.
+        let conflicted = out.errors.iter().any(|e| e.file == q.path);
+        if pq.connection.is_none() && !failed && !conflicted {
             error(
                 &mut out,
                 "no-connection",
@@ -401,7 +421,13 @@ pub fn binding(
         out.queries.push(pq);
     }
     for d in &b.output.destinations {
-        let p = render_profile(&mut out, "destination `profile`", &d.profile, &report.file);
+        let p = render_profile(
+            &mut out,
+            "destination `profile`",
+            &d.profile,
+            (&report.file, None),
+            Some(&ctx_name),
+        );
         out.destinations.push(p);
     }
     setup_warnings(report, b, &mut out);

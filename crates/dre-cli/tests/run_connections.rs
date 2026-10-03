@@ -404,6 +404,10 @@ fn the_manifest_follows_the_inputs_and_needs_no_profiles() {
         dev["reports"]["o"]["depends_on"]["sources"],
         serde_json::json!(["shop.orders"])
     );
+    // --var reaches the sources section too, as it does the run.
+    let with_var: serde_json::Value = serde_json::from_str(&ls(&["--var", "crm_connection=duck_a"])).unwrap();
+    assert_eq!(dev["sources"]["crm"]["profile"], "duck_b");
+    assert_eq!(with_var["sources"]["crm"]["profile"], "duck_a");
 
     std::fs::write(&profiles, saved).unwrap();
     // A query whose parse pass fails marks its report invalid, and the rest is still listed.
@@ -532,4 +536,36 @@ fn duckdb_and_postgres_tabs_in_one_workbook() {
         .failed()
         .says("column `id` is declared `date`, but public.spec011_items on connection `pg` returns Int32")
         .says("declared column `gone` isn't in public.spec011_items");
+}
+
+#[test]
+fn quoting_uses_each_engines_quote_character() {
+    common::test_plugins(&["dre-plugin-postgres"]);
+    let p = project(&[
+        ("dependencies.yml", "plugins: [duckdb, postgres, csv, xlsx]\n"),
+        (
+            "sources/pg.yml",
+            "sources:\n  - name: pgq\n    profile: pg\n    schema: 'My \"Schema'\n    quoting: {schema: true, identifier: true}\n    tables:\n      - name: Orders\n",
+        ),
+        ("reports/ops/q/q.yml", "queries: [pq]\n"),
+        (
+            "reports/ops/q/pq.sql",
+            "select * from {{ source('pgq', 'Orders') }}",
+        ),
+    ]);
+    // Compiling asks the plugin for its quote character; nothing connects.
+    std::fs::write(
+        p.dir.path().join("profiles/profiles.yml"),
+        PROFILES.replacen(
+            "connections:\n",
+            "connections:\n  pg:\n    targets:\n      dev: {type: postgres, host: localhost, port: 1, user: x, database: x}\n",
+            1,
+        ),
+    )
+    .unwrap();
+    p.dre("compile", &["q"]).ok();
+    assert_eq!(
+        p.read("target/compiled/q/default/pq.sql"),
+        "select * from \"My \"\"Schema\".\"Orders\""
+    );
 }

@@ -154,6 +154,9 @@ pub struct Project {
     pub target_from: crate::profiles::TargetSource,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_profile: Option<String>,
+    /// Its line in dre_project.yml, for messages.
+    #[serde(skip)]
+    pub default_profile_line: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_set: Option<String>,
     pub vars: JsonMap<String, Json>,
@@ -210,6 +213,9 @@ pub struct Project {
     /// `lookups/`.
     #[serde(skip)]
     pub files: Vec<PathBuf>,
+    /// What the load's parse pass rendered with: the target, `--var`, the run date and timezone.
+    #[serde(skip)]
+    pub inputs: crate::parse::Inputs,
     /// Declared sources (dbt's `sources:`), by name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub sources: BTreeMap<String, SourceDef>,
@@ -307,6 +313,18 @@ pub struct Binding {
     /// the project is loaded, and for an ad hoc Binding.
     #[serde(skip)]
     pub parsed: Option<std::sync::Arc<crate::parse::ParsedBinding>>,
+    /// Where the inherited `profile` is written, for messages about its value.
+    #[serde(skip)]
+    pub profile_at: Option<ProfileAt>,
+}
+
+/// Where a `profile:` value is written: its file, line and key, as messages name it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileAt {
+    pub file: PathBuf,
+    pub line: Option<usize>,
+    /// E.g. "`default_profile`", "`+profile` of folder `finance`".
+    pub key: String,
 }
 
 impl Binding {
@@ -375,6 +393,11 @@ pub struct SetDef {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     pub vars: JsonMap<String, Json>,
+    /// Where it's declared, for messages.
+    #[serde(skip)]
+    pub file: PathBuf,
+    #[serde(skip)]
+    pub line: Option<usize>,
 }
 
 /// A dbt-style source: tables in one schema of one system.
@@ -1040,6 +1063,7 @@ impl Loader {
             target_source: self.target.source,
             target_name,
             target_from,
+            default_profile_line: yf.line_of("default_profile", None),
             default_profile,
             default_set,
             vars,
@@ -1068,6 +1092,7 @@ impl Loader {
                 .collect(),
             folders: Vec::new(),
             files: Vec::new(),
+            inputs: crate::parse::Inputs::default(),
             sources: BTreeMap::new(),
             profiles: Profiles::default(),
         })
@@ -1612,17 +1637,23 @@ impl Loader {
         match m.get("tables") {
             None | Some(Value::Null) => {}
             Some(Value::Sequence(ts)) => {
+                // Duplicates by name, whether or not each entry is otherwise valid.
+                let mut names = BTreeSet::new();
+                for n in ts.iter().filter_map(|t| t.get("name").and_then(Value::as_str)) {
+                    if !names.insert(n) {
+                        self.diags.error(
+                            "duplicate-source-table",
+                            file.clone(),
+                            yf.line_containing(&format!("name: {n}")).or(line),
+                            format!("{ctx} declares table `{n}` twice"),
+                        );
+                        ok = false;
+                    }
+                }
                 for t in ts {
-                    if let Some(t) = self.source_table(yf, name, t, line, unsupported) {
-                        if tables.iter().any(|x: &SourceTableDef| x.name == t.name) {
-                            self.diags.error(
-                                "duplicate-source-table",
-                                file.clone(),
-                                yf.line_containing(&format!("name: {}", t.name)).or(line),
-                                format!("{ctx} declares table `{}` twice", t.name),
-                            );
-                            continue;
-                        }
+                    if let Some(t) = self.source_table(yf, name, t, line, unsupported)
+                        && !tables.iter().any(|x: &SourceTableDef| x.name == t.name)
+                    {
                         tables.push(t);
                     }
                 }
@@ -1911,7 +1942,9 @@ impl Loader {
             scheduled_at: self.opts.scheduled_at,
             timezone: self.opts.timezone.clone(),
             schedule: None,
+            started_at: None,
         };
+        project.inputs = inputs.clone();
         let failed: BTreeSet<PathBuf> = self
             .diags
             .iter()
@@ -1994,7 +2027,15 @@ impl Loader {
                         JsonMap::new()
                     }
                 };
-                out.insert(name.to_string(), SetDef { profile, vars });
+                out.insert(
+                    name.to_string(),
+                    SetDef {
+                        profile,
+                        vars,
+                        file: yf.display.clone(),
+                        line,
+                    },
+                );
             }
         }
         out
@@ -2463,6 +2504,15 @@ impl Loader {
         let timezone = report_timezone
             .or_else(|| layers.iter().rev().find_map(|l| l.timezone.clone()))
             .or_else(|| project.timezone.clone());
+        let profile_at = if report_profile.is_some() {
+            located("profile").map(|(file, line)| ProfileAt {
+                file,
+                line,
+                key: "`profile`".into(),
+            })
+        } else {
+            inherited_profile_at(&layers, project)
+        };
         let base_profile = report_profile
             .or(folder_profile)
             .or(project.default_profile.clone());
@@ -2539,6 +2589,7 @@ impl Loader {
 
         let base = BindingBase {
             profile: base_profile,
+            profile_at,
             vars,
             output,
         };
@@ -2666,12 +2717,18 @@ impl Loader {
             }
             let mut b = BindingBase {
                 profile: base.profile.clone(),
+                profile_at: base.profile_at.clone(),
                 vars: base.vars.clone(),
                 output: base.output.clone(),
             };
             if let Some(reg) = registry {
                 if let Some(p) = &reg.profile {
                     b.profile = Some(p.clone());
+                    b.profile_at = Some(ProfileAt {
+                        file: reg.file.clone(),
+                        line: reg.line,
+                        key: format!("`profile` of Set `{name}`"),
+                    });
                     used.connection(p, None, None);
                 }
                 b.vars.extend(reg.vars.clone());
@@ -2694,6 +2751,11 @@ impl Loader {
                     match p.as_str() {
                         Some(p) => {
                             b.profile = Some(p.to_string());
+                            b.profile_at = Some(ProfileAt {
+                                file: yf.display.clone(),
+                                line: yf.line_of("profile", line),
+                                key: format!("`profile` of Set `{name}`"),
+                            });
                             used.connection(p, file.clone(), yf.line_of("profile", line));
                         }
                         None => self.diags.error(
@@ -2904,6 +2966,7 @@ impl Loader {
             output,
             schedules: Vec::new(),
             parsed: None,
+            profile_at: base.profile_at.clone(),
         }
     }
 
@@ -3290,6 +3353,7 @@ impl Loader {
         };
         let base = BindingBase {
             profile: profile.clone(),
+            profile_at: inherited_profile_at(&layers, project),
             vars,
             output,
         };
@@ -4485,6 +4549,7 @@ struct RawReport {
 
 struct BindingBase {
     profile: Option<String>,
+    profile_at: Option<ProfileAt>,
     vars: JsonMap<String, Json>,
     output: Mapping,
 }
@@ -4600,6 +4665,23 @@ pub fn merge_output(base: &mut Mapping, over: &Mapping) -> Option<String> {
         base.insert(k.clone(), v.clone());
     }
     problem
+}
+
+/// Where an inherited `profile` comes from when the report sets none: the deepest folder's
+/// `+profile`, else `default_profile`.
+fn inherited_profile_at(layers: &[&FolderCfg], project: &Project) -> Option<ProfileAt> {
+    if let Some((_, line)) = layers.iter().rev().find_map(|l| l.profile.as_ref()) {
+        return Some(ProfileAt {
+            file: PathBuf::from(PROJECT_FILE),
+            line: *line,
+            key: "`+profile`".into(),
+        });
+    }
+    project.default_profile.as_ref().map(|_| ProfileAt {
+        file: PathBuf::from(PROJECT_FILE),
+        line: project.default_profile_line,
+        key: "`default_profile`".into(),
+    })
 }
 
 fn folder_layers<'a>(folders: &'a BTreeMap<Vec<String>, FolderCfg>, folder: &[String]) -> Vec<&'a FolderCfg> {
