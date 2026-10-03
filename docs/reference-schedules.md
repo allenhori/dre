@@ -16,7 +16,7 @@ Where: `schedules.yml`.
 For editor autocomplete and validation, add this as the first line of the file ([editor setup](editor-setup.md)):
 
 ```yaml
-# yaml-language-server: $schema=https://getdre.com/schemas/v0.1/schedules.schema.json
+# yaml-language-server: $schema=https://getdre.com/schemas/v0.2/schedules.schema.json
 ```
 
 The file is a list; each entry has these keys.

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "x-dre-schema-version": "0.1",
+  "x-dre-schema-version": "0.2",
   "title": "DRE Sets",
   "description": "Set names mapped to their definitions.",
   "type": "object",

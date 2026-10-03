@@ -16,7 +16,7 @@ Where: any project YAML file with a top-level `sources:` key, e.g. `sources/<nam
 For editor autocomplete and validation, add this as the first line of the file ([editor setup](editor-setup.md)):
 
 ```yaml
-# yaml-language-server: $schema=https://getdre.com/schemas/v0.1/sources.schema.json
+# yaml-language-server: $schema=https://getdre.com/schemas/v0.2/sources.schema.json
 ```
 
 ## Keys

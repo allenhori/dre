@@ -3,8 +3,8 @@ name: dre
 description: Guide for DRE, the Declarative Reporting Engine (SQL in, formatted report files out, delivered by email, Slack, S3, SFTP and more). Use when the user mentions dre or DRE and wants help without saying exactly what with, e.g. "help me with dre", "get started with DRE", "what can dre do". Works out what's installed and hands off to dre-install, dre-setup, dre-report, dre-run or dre-upgrade.
 license: GPL-3.0-only
 metadata:
-  version: "1.1.0"
-  dre: ">=0.1.0, <0.2.0"
+  version: "2.0.0"
+  dre: ">=0.2.0, <0.3.0"
 ---
 
 # DRE guide

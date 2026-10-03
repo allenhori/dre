@@ -189,9 +189,9 @@ An [iCalendar recurrence rule](https://datatracker.ietf.org/doc/html/rfc5545#sec
 | `BYSETPOS` | Pick from each period's set: `BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1` is the last weekday. |
 | `WKST` | The first day of the week, for `INTERVAL` with weeks (default `MO`). |
 
-Rejected: `FREQ=SECONDLY`, `FREQ=MINUTELY` and `BYSECOND`; a minute is the finest grain. (On
-0.1.x they're warnings, and `dre schedule ls` lists the schedule under problems.) A part that
-doesn't fit its frequency, such as `BYMONTHDAY` with `FREQ=WEEKLY`, also shows up as a problem.
+Rejected: `FREQ=SECONDLY`, `FREQ=MINUTELY` and `BYSECOND`; a minute is the finest grain. They're
+errors (warnings on 0.1.x). A part that doesn't fit its frequency, such as `BYMONTHDAY` with
+`FREQ=WEEKLY`, shows up as a problem in `dre schedule ls`.
 
 ### every
 
@@ -208,8 +208,7 @@ doesn't fit its frequency, such as `BYMONTHDAY` with `FREQ=WEEKLY`, also shows u
 - With no time given, a schedule fires at 00:00 in its timezone, and `dre validate` warns.
 - Cron schedules take neither: the expression sets the days and the time.
 
-On 0.1.x, a missing `starting` is a warning and `dre schedule ls` lists the schedule under problems
-without occurrences; from 0.2.0 it's an error. `dre run --schedule` runs it either way.
+A missing `starting` is an error (a warning on 0.1.x).
 
 ### Worked examples
 

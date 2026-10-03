@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "x-dre-schema-version": "0.1",
+  "x-dre-schema-version": "0.2",
   "title": "DRE sources",
   "description": "dbt-style source declarations: the tables a project reads, with DRE's `profile:` for the connection they live on. In any project YAML file under a top-level `sources:` key (`sources/` is the conventional folder); dbt's `version: 2` is accepted beside it. Use a table in SQL with `{{ source('<source>', '<table>') }}`.",
   "type": "object",

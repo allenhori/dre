@@ -16,7 +16,7 @@ Where: `timings.yml`.
 For editor autocomplete and validation, add this as the first line of the file ([editor setup](editor-setup.md)):
 
 ```yaml
-# yaml-language-server: $schema=https://getdre.com/schemas/v0.1/timings.schema.json
+# yaml-language-server: $schema=https://getdre.com/schemas/v0.2/timings.schema.json
 ```
 
 The file maps names to entries; each entry has these keys.

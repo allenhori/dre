@@ -357,13 +357,12 @@ pub fn time_of_day(timing: &JsonMap<String, Json>) -> Option<NaiveTime> {
 /// depend on when you look (no anchor), or one finer than a minute. `dre schedule ls` lists such
 /// a schedule under `problems`, without occurrences. Each is `(code, message)`.
 pub fn strictness(timing: &JsonMap<String, Json>) -> Vec<(&'static str, String)> {
-    const LATER: &str = "this becomes an error in DRE 0.2.0";
     let mut out = Vec::new();
     let anchored = timing.contains_key("starting");
     if timing.contains_key("every") && !anchored {
         out.push((
             "schedule-needs-anchor",
-            format!("`every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look; {LATER}"),
+            "`every` needs `starting` (its first date): it counts from it, so its occurrences would depend on when you look".to_string(),
         ));
     }
     let Some(parts) = timing
@@ -377,13 +376,13 @@ pub fn strictness(timing: &JsonMap<String, Json>) -> Vec<(&'static str, String)>
     if matches!(freq, "SECONDLY" | "MINUTELY") {
         out.push((
             "schedule-too-frequent",
-            format!("`FREQ={freq}` is finer than DRE schedules go: use `FREQ=HOURLY` with `BYMINUTE`, or a cron expression; {LATER}"),
+            format!("`FREQ={freq}` is finer than DRE schedules go: use `FREQ=HOURLY` with `BYMINUTE`, or a cron expression"),
         ));
     }
     if part(&parts, "BYSECOND").is_some() {
         out.push((
             "schedule-seconds",
-            format!("`BYSECOND` isn't supported: schedules fire on whole minutes; {LATER}"),
+            "`BYSECOND` isn't supported: schedules fire on whole minutes".to_string(),
         ));
     }
     if !anchored {
@@ -406,7 +405,7 @@ pub fn strictness(timing: &JsonMap<String, Json>) -> Vec<(&'static str, String)>
         if let Some(why) = why {
             out.push((
                 "schedule-needs-anchor",
-                format!("this rule needs `starting` (its first date): {why}, so its occurrences would depend on when you look; {LATER}"),
+                format!("this rule needs `starting` (its first date): {why}, so its occurrences would depend on when you look"),
             ));
         }
     }

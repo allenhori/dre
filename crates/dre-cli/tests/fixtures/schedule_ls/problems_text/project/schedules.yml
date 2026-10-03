@@ -1,2 +1,2 @@
 - {name: good, report: filing, cron: "0 6 * * *"}
-- {name: every_no_start, report: filing, every: {days: 5}, at: "06:00"}
+- {name: not_expandable, report: filing, rrule: "FREQ=WEEKLY;BYMONTHDAY=1", at: "06:00"}

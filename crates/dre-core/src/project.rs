@@ -3544,7 +3544,7 @@ impl Loader {
                 if shape.is_empty() {
                     for (code, msg) in schedule::strictness(&block) {
                         self.diags
-                            .warning(code, file.clone(), line, format!("timing `{name}`: {msg}"));
+                            .error(code, file.clone(), line, format!("timing `{name}`: {msg}"));
                     }
                     if let Some(msg) = schedule::no_time(&block) {
                         self.diags.warning(
@@ -3726,7 +3726,7 @@ impl Loader {
                     let block = yaml_map_to_json(&sched);
                     for (code, msg) in schedule::strictness(&block) {
                         self.diags
-                            .warning(code, file.clone(), line, format!("schedule `{name}`: {msg}"));
+                            .error(code, file.clone(), line, format!("schedule `{name}`: {msg}"));
                     }
                     if let Some(msg) = schedule::no_time(&block) {
                         self.diags.warning(

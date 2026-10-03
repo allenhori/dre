@@ -5,7 +5,7 @@ members = ["crates/*", "plugins/*", "tests/duckdb-seed"]
 default-members = ["crates/*", "plugins/*"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0-only"
 repository = "https://github.com/get-dre/dre"
@@ -14,7 +14,7 @@ publish = false
 [workspace.dependencies]
 # DRE's own crates, published to crates.io. dre-core's version is DRE's (above; bump both
 # together, release_plan.py checks it). dre-protocol has its own version.
-dre-core = { path = "crates/dre-core", version = "=0.1.2" }
+dre-core = { path = "crates/dre-core", version = "=0.2.0" }
 dre-protocol = { path = "crates/dre-protocol", version = "0.2.0" }
 anyhow = "1"
 thiserror = "2"

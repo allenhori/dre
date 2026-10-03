@@ -3,8 +3,8 @@ name: dre-setup
 description: Set up DRE step by step - pick and install the source plugin (DuckDB, Postgres, Databricks), write the connection profile in ~/.dre/profiles.yml with a safe sign-in, add destinations, create a starter project with `dre new` and check it with `dre validate`. Use when the user wants to connect dre to a database, add or change a profile, set up dev and prod environments, or start a DRE project.
 license: GPL-3.0-only
 metadata:
-  version: "1.1.0"
-  dre: ">=0.1.0, <0.2.0"
+  version: "2.0.0"
+  dre: ">=0.2.0, <0.3.0"
 ---
 
 # Set up a DRE connection and project
@@ -197,8 +197,8 @@ sign-in.
 ### Step 8: the starter project
 
 Ask for the folder name (recommend `my_reports`), confirm, and run
-`dre new <folder> --source <package> --profile <profile>`, e.g.
-`dre new my_reports --source postgres --profile warehouse`. It writes `dre_project.yml`,
+`dre new <folder> --type <package> --profile <profile>`, e.g.
+`dre new my_reports --type postgres --profile warehouse`. It writes `dre_project.yml`,
 `dependencies.yml` (the source's package and `csv`), a `hello` example report, and a
 `.gitignore`. Add each destination's package under `plugins:` in `dependencies.yml`.
 

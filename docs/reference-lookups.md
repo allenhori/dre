@@ -16,7 +16,7 @@ Where: `lookups/<name>.yml`, next to the lookup's data file.
 For editor autocomplete and validation, add this as the first line of the file ([editor setup](editor-setup.md)):
 
 ```yaml
-# yaml-language-server: $schema=https://getdre.com/schemas/v0.1/lookup.schema.json
+# yaml-language-server: $schema=https://getdre.com/schemas/v0.2/lookup.schema.json
 ```
 
 ## Keys
