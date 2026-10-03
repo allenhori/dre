@@ -1,9 +1,9 @@
 ---
 name: dre-run
-description: Validate, compile, run and preview DRE reports, check the output files, and deliver them - confirming before production runs or real deliveries - and explain errors when a run fails. Use when the user wants to run, test, preview or deliver a dre report, or asks why a dre run, validate or delivery failed.
+description: Validate, compile, run and preview DRE reports, check the output files, and deliver them - confirming before production runs or real deliveries - and explain errors when a run fails. Also previews when schedules fire, reruns a scheduled firing exactly, and wires DRE into an orchestrator (cron, Airflow, Databricks Jobs). Use when the user wants to run, test, preview or deliver a dre report, see upcoming scheduled runs, rerun a firing, set up an orchestrator, or asks why a dre run, validate or delivery failed.
 license: GPL-3.0-only
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   dre: ">=0.1.0, <0.2.0"
 ---
 
@@ -163,8 +163,33 @@ detail (`deliveries` with `status` and `location`), and `logs/dre.log` the full 
 statement. Report what was delivered where, and what failed.
 
 End with what ran and what's next: fixing a failure, or scheduling (`dre run --schedule <name>`
-from the user's orchestrator, with `DRE_RUN_DATE` for the logical date, RUN-3; a lasting
-`--target-path` on ephemeral runners, RUN-4).
+from the user's orchestrator, with `DRE_RUN_AT` for the instant it was scheduled for, RUN-3; a
+lasting `--target-path` on ephemeral runners, RUN-4).
+
+## Schedules and orchestrators
+
+These need dre 0.1.2 or later; if `dre --version` is older, say so and offer `dre-upgrade`.
+
+- **When does it run?** `dre schedule ls` lists the next firings of every schedule (5 each);
+  `-s <report>` keeps the schedules that run a report, `--schedule <name>` one schedule, and
+  `--from`/`--to` pick a window (a date or an RFC 3339 time; `--from` may be in the past). Read
+  the times out in each schedule's timezone; a schedule under `problems` can't be expanded, and
+  the message says why (`dre-report` fixes it).
+- **Rerun a firing exactly** (RUN-3): take its instant from `dre schedule ls --schedule <name>
+  --from <day> --output json` (`fires_at`), then run `DRE_RUN_AT=<fires_at> dre run --schedule
+  <name>`. `run.now`, `run.date` and `run.scheduled_at` render as they would have on time.
+  Delivery rules still apply (RUN-2): a rerun delivers again.
+- **Run one report or Set of a schedule:** `dre run --schedule <name> -s <report> --set <set>`
+  keeps the schedule's vars and timezone.
+- **Wire an orchestrator:** the occurrences JSON (`dre schedule ls --output json`) carries each
+  firing's `argv` and `env`, with stable `key`s and hashes. Point to the orchestration recipe
+  (https://getdre.com/docs/orchestration/): a Postgres table loaded after every merge, a weekly
+  refresh and a minimal executor, plus cron, Airflow and Databricks Jobs examples. Adapt it to
+  their setup; don't invent a scheduler.
+- **CI and job snippets follow the secret rules:** the database URL and DRE's credentials come
+  from the CI's or job's secret store (`${{ secrets.DRE_SCHEDULER_DB }}`, a Databricks secret
+  scope) or environment, never written into a file or a workflow (SEC-1, SEC-3). The occurrences
+  never contain a target, profile or credentials; the deployment adds `--target prod`.
 
 ## If this fails
 
