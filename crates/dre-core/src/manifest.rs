@@ -478,6 +478,14 @@ pub fn report_errors(project: &Project, diags: &Diagnostics) -> ReportErrors {
             .filter(|d| d.severity == Severity::Error)
             .filter(|d| d.file.as_ref().is_some_and(|f| files.contains(&slash(f))))
             .map(|d| d.to_string())
+            .chain(
+                project
+                    .parse_errors
+                    .get(&r.name)
+                    .into_iter()
+                    .flatten()
+                    .map(|d| d.to_string()),
+            )
             .collect();
         if !msgs.is_empty() {
             out.insert(r.name.clone(), msgs);

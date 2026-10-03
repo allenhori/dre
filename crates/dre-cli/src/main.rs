@@ -332,6 +332,10 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
     }
     let selector = selection(&a.select, &a.selector);
     let (project, mut diags) = project::load(&a.project.project_dir, &a.project.load_options());
+    // validate checks every report, so templates that don't render are its errors too.
+    for d in project.iter().flat_map(|p| p.parse_errors.values().flatten()) {
+        diags.push(d.clone());
+    }
     let report_errors = project
         .as_ref()
         .map(|p| dre_core::manifest::report_errors(p, &diags))

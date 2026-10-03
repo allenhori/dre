@@ -22,6 +22,9 @@ use crate::dates::Calendar;
 use crate::project::{Binding, Project, Report};
 use crate::render::{Limited, Mode, Renderer, RendererConfig, ResolvedSource, RunContext, SourceResolver};
 
+/// The code of a template the parse pass couldn't render.
+pub const PARSE_FAILED: &str = "parse-failed";
+
 /// What the parse pass renders `run.*`, `var()` and `target.name` with: the run's inputs.
 #[derive(Debug, Clone, Default)]
 pub struct Inputs {
@@ -314,7 +317,7 @@ pub fn binding(
         Err(e) => {
             error(
                 &mut out,
-                "parse-failed",
+                PARSE_FAILED,
                 e.file.clone(),
                 e.line,
                 format!("{ctx_name}: {}", e.message),
@@ -347,7 +350,7 @@ pub fn binding(
             Err(e) => {
                 error(
                     &mut out,
-                    "parse-failed",
+                    PARSE_FAILED,
                     q.path.clone(),
                     None,
                     format!("can't read it: {e}"),
@@ -360,7 +363,7 @@ pub fn binding(
         if let Err(e) = r.render(&q.path, &src) {
             error(
                 &mut out,
-                "parse-failed",
+                PARSE_FAILED,
                 e.file.clone(),
                 e.line,
                 format!("{ctx_name}: query `{}` doesn't parse: {}", q.query, e.message),

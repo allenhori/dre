@@ -213,6 +213,10 @@ pub struct Project {
     /// `lookups/`.
     #[serde(skip)]
     pub files: Vec<PathBuf>,
+    /// Templates the load's parse pass couldn't render, by report: they make the report invalid
+    /// in the manifest. Its own run, compile or validate reports them.
+    #[serde(skip)]
+    pub parse_errors: BTreeMap<String, Vec<crate::Diagnostic>>,
     /// What the load's parse pass rendered with: the target, `--var`, the run date and timezone.
     #[serde(skip)]
     pub inputs: crate::parse::Inputs,
@@ -1093,6 +1097,7 @@ impl Loader {
             folders: Vec::new(),
             files: Vec::new(),
             inputs: crate::parse::Inputs::default(),
+            parse_errors: BTreeMap::new(),
             sources: BTreeMap::new(),
             profiles: Profiles::default(),
         })
@@ -1960,10 +1965,32 @@ impl Loader {
         }
         for (ri, bi, parsed) in results {
             for p in &parsed.errors {
-                if !failed.contains(&p.file) {
-                    self.diags
-                        .error(p.code, Some(p.file.clone()), p.line, p.message.clone());
+                if failed.contains(&p.file) {
+                    continue;
                 }
+                // A template that doesn't render may depend on this run's `--var`s: it makes
+                // its own report invalid (and fails when that report runs or compiles), but
+                // doesn't stop the rest of the project.
+                if p.code == crate::parse::PARSE_FAILED {
+                    let msg = crate::Diagnostic {
+                        severity: crate::Severity::Error,
+                        code: p.code,
+                        message: p.message.clone(),
+                        file: Some(p.file.clone()),
+                        line: p.line,
+                        plugin: None,
+                    };
+                    let errs = project
+                        .parse_errors
+                        .entry(project.reports[ri].name.clone())
+                        .or_default();
+                    if !errs.contains(&msg) {
+                        errs.push(msg);
+                    }
+                    continue;
+                }
+                self.diags
+                    .error(p.code, Some(p.file.clone()), p.line, p.message.clone());
             }
             for p in &parsed.warnings {
                 self.diags

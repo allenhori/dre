@@ -182,6 +182,8 @@ type ColumnsCache = BTreeMap<(String, Option<String>), Value>;
 
 pub struct Renderer {
     env: Environment<'static>,
+    /// The parse pass's first `raise_error()` message in the current render.
+    raised: Arc<Mutex<Option<String>>>,
     /// What `columns()` found, by relation, for the file being rendered.
     columns_cache: Arc<Mutex<ColumnsCache>>,
     /// `(source, table)` of every `source()` call since the last [`Renderer::take_sources`].
@@ -241,8 +243,14 @@ impl Renderer {
         crate::mutable::register(&mut env);
 
         add_vars(&mut env, cfg.vars, cfg.cli_vars);
+        // The parse pass has no data, so a `raise_error()` there may only mean `run_query()` came
+        // back empty: it doesn't stop the render, but if rendering fails anyway, its message is the
+        // one reported.
+        let raised: Arc<Mutex<Option<String>>> = Arc::default();
+        let raised_c = raised.clone();
         env.add_function("raise_error", move |message: String| -> Result<Value, Error> {
             if parse {
+                raised_c.lock().unwrap().get_or_insert(message);
                 return Ok(Value::from(""));
             }
             Err(Error::new(ErrorKind::InvalidOperation, message))
@@ -476,6 +484,7 @@ impl Renderer {
         );
         let mut r = Renderer {
             env,
+            raised,
             columns_cache,
             source_calls,
             destination,
@@ -518,13 +527,20 @@ impl Renderer {
     /// Render `src`, reporting errors against `file`.
     pub fn render(&self, file: &Path, src: &str) -> Result<String, RenderError> {
         self.columns_cache.lock().unwrap().clear();
+        *self.raised.lock().unwrap() = None;
         let full = format!("{}{src}", self.import);
         let name = file.to_string_lossy().to_string();
         let tmpl = self
             .env
             .template_from_named_str(&name, &full)
             .map_err(|e| self.error(file, &e))?;
-        tmpl.render(()).map_err(|e| self.error(file, &e))
+        tmpl.render(()).map_err(|e| {
+            let mut err = self.error(file, &e);
+            if let Some(m) = self.raised.lock().unwrap().take() {
+                err.message = m;
+            }
+            err
+        })
     }
 
     fn error(&self, file: &Path, e: &Error) -> RenderError {

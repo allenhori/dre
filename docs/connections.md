@@ -126,6 +126,11 @@ none, `connection.*` nothing, and `raise_error()` doesn't fire. That's how `dre 
 only while really rendering (inside a branch on `run_query()` results, say) is an error: call it
 where the parse pass reaches it too.
 
+A query the parse pass can't render (a `--var` its template rejects, say) makes its own report
+invalid in the manifest, and `dre validate` reports it, but it doesn't stop `dre run` or
+`dre compile` of other reports. `raise_error()` doesn't fire in the parse pass (it may only mean
+`run_query()` returned nothing), but when rendering then fails, its message is the one reported.
+
 ## In templates
 
 | Name | What it is |

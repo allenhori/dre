@@ -410,13 +410,16 @@ fn the_manifest_follows_the_inputs_and_needs_no_profiles() {
     assert_eq!(with_var["sources"]["crm"]["profile"], "duck_a");
 
     std::fs::write(&profiles, saved).unwrap();
-    // A query whose parse pass fails marks its report invalid, and the rest is still listed.
+    // A query whose parse pass fails marks its report invalid; the rest still compiles.
     p.write("reports/ops/bad/bad.yml", "queries: [bq]\n");
     p.write(
         "reports/ops/bad/bq.sql",
         "select * from {{ source('shop', 'nope') }}",
     );
-    p.dre("compile", &["o"]).failed();
+    p.dre("compile", &["o"]).ok();
+    p.dre("compile", &["bad"])
+        .failed()
+        .says("source `shop` has no table `nope`");
     let m = p.json("target/manifest.json");
     assert_eq!(m["reports"]["bad"]["valid"], false);
     assert!(
@@ -568,4 +571,34 @@ fn quoting_uses_each_engines_quote_character() {
         p.read("target/compiled/q/default/pq.sql"),
         "select * from \"My \"\"Schema\".\"Orders\""
     );
+}
+
+#[test]
+fn a_var_that_breaks_one_report_doesnt_stop_another() {
+    let p = project(&[
+        (
+            "macros/guard.sql",
+            "{% macro period_ok(p) %}{% if p not in ['last_week', 'last_month'] %}{{ raise_error('var `period` must be last_week or last_month, not ' ~ p) }}{% endif %}{{ p }}{% endmacro %}",
+        ),
+        (
+            "reports/ops/g/g.yml",
+            "queries: [gq]\nvars: {period: last_week}\n",
+        ),
+        (
+            "reports/ops/g/gq.sql",
+            "select '{{ period_ok(var('period')) }}' as p, '{{ period(var('period')).start }}' as d",
+        ),
+        ("reports/ops/other/other.yml", "queries: [other_q]\n"),
+        ("reports/ops/other/other_q.sql", "select 1 as n"),
+    ]);
+    p.dre("run", &["other", "--var", "period=fortnight"]).ok();
+    // The guard's own message, not the error it guards against.
+    p.dre("run", &["g", "--var", "period=fortnight"])
+        .failed()
+        .says("var `period` must be last_week or last_month, not fortnight");
+    p.dre("run", &["g"]).ok();
+    // The manifest marks it invalid for these inputs, and validate says why.
+    p.dre("validate", &["--var", "period=fortnight"])
+        .failed()
+        .says("var `period` must be last_week or last_month, not fortnight");
 }
