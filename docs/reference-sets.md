@@ -2,7 +2,7 @@
 title: "sets.yml reference"
 description: "Every key of a Sets file."
 sidebar:
-  order: 22
+  order: 24
 ---
 
 # sets.yml reference

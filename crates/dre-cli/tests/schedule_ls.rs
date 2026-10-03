@@ -114,6 +114,9 @@ fn hashes_are_stable_and_change_with_what_they_cover() {
         close.as_str()
     );
     assert!(again["schedules"].get("flash_daily").is_none());
+    // A filtered listing says so: a schedule missing from it wasn't removed.
+    assert_eq!(first["complete"], true);
+    assert_eq!(again["complete"], false);
 
     let edit = |from: &str, to: &str| {
         let text = p.read("schedules.yml").replacen(from, to, 1);

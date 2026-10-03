@@ -2,7 +2,7 @@
 title: "timings.yml reference"
 description: "Every key of the timings file: named timings schedules share."
 sidebar:
-  order: 24
+  order: 26
 ---
 
 # timings.yml reference

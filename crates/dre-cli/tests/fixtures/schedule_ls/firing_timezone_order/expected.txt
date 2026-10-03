@@ -9,6 +9,7 @@ exit: 0
     "to": "2026-11-02T00:00:00Z"
   },
   "split": false,
+  "complete": true,
   "project_hash": "daa01b166c433a84271323ba0ac842431ebc300c41658384129574ae899a8574",
   "schedules": {
     "own_zone": {

@@ -9,6 +9,7 @@ exit: 0
     "to": "2026-10-02T00:00:00Z"
   },
   "split": false,
+  "complete": true,
   "project_hash": "c1c09361f1dbf9f1635f09d2530f8040be16712598c9290207c7268c2440ebe3",
   "schedules": {
     "flash_daily": {

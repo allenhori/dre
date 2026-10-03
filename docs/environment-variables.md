@@ -2,7 +2,7 @@
 title: "Environment variables"
 description: "Every DRE_* variable and what it does."
 sidebar:
-  order: 14
+  order: 16
 ---
 
 # Environment variables

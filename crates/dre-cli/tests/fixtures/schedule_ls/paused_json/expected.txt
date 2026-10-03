@@ -9,6 +9,7 @@ exit: 0
     "to": "2026-11-02T00:00:00Z"
   },
   "split": false,
+  "complete": true,
   "project_hash": "765767a060954a45fa7ce49972ab3cee5141ef6c645d035bfe72b40d7c6bb5b3",
   "schedules": {
     "on_hold": {

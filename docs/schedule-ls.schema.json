@@ -4,98 +4,261 @@
   "title": "DRE schedule occurrences, format 1",
   "description": "What `dre schedule ls --output json` prints: when the project's schedules fire within a window, with the command to run each firing. New fields may appear within format 1; consumers should ignore fields they don't know. See docs/schedule-ls.md.",
   "type": "object",
-  "required": ["dre_schedule_version", "dre_version", "project", "window", "split", "project_hash", "schedules", "occurrences", "problems"],
+  "required": [
+    "dre_schedule_version",
+    "dre_version",
+    "project",
+    "window",
+    "split",
+    "complete",
+    "project_hash",
+    "schedules",
+    "occurrences",
+    "problems"
+  ],
   "properties": {
-    "dre_schedule_version": {"const": 1, "description": "The format's version. Removing or renaming a field, or changing what a hash covers, needs a new one."},
-    "dre_version": {"type": "string", "description": "The DRE version that wrote it."},
-    "project": {"type": "string", "description": "The project's name."},
+    "dre_schedule_version": {
+      "const": 1,
+      "description": "The format's version. Removing or renaming a field, or changing what a hash covers, needs a new one."
+    },
+    "dre_version": {
+      "type": "string",
+      "description": "The DRE version that wrote it."
+    },
+    "project": {
+      "type": "string",
+      "description": "The project's name."
+    },
     "window": {
       "type": "object",
-      "required": ["from", "to"],
+      "required": [
+        "from",
+        "to"
+      ],
       "description": "The firings listed: from `from` (inclusive) to `to` (exclusive).",
       "properties": {
-        "from": {"$ref": "#/$defs/instant"},
-        "to": {"$ref": "#/$defs/instant"}
+        "from": {
+          "$ref": "#/$defs/instant"
+        },
+        "to": {
+          "$ref": "#/$defs/instant"
+        }
       },
       "additionalProperties": false
     },
-    "split": {"type": "boolean", "description": "True with `--split`: one occurrence per report and Set instead of one per firing."},
-    "project_hash": {"$ref": "#/$defs/sha256", "description": "Over every schedule's definition hash, whatever was asked for: unchanged means no schedule changed."},
+    "split": {
+      "type": "boolean",
+      "description": "True with `--split`: one occurrence per report and Set instead of one per firing."
+    },
+    "complete": {
+      "type": "boolean",
+      "description": "True when every schedule is listed (no `--schedule` or `-s`): a schedule missing from `schedules` was removed or renamed."
+    },
+    "project_hash": {
+      "$ref": "#/$defs/sha256",
+      "description": "Over every schedule's definition hash, whatever was asked for: unchanged means no schedule changed."
+    },
     "schedules": {
       "type": "object",
       "description": "The schedules asked for, by name, including paused ones and ones under `problems`.",
-      "additionalProperties": {"$ref": "#/$defs/schedule"}
+      "additionalProperties": {
+        "$ref": "#/$defs/schedule"
+      }
     },
     "occurrences": {
       "type": "array",
       "description": "In firing order, then by key.",
-      "items": {"$ref": "#/$defs/occurrence"}
+      "items": {
+        "$ref": "#/$defs/occurrence"
+      }
     },
     "problems": {
       "type": "array",
       "description": "Schedules that can't be expanded; they have no occurrences.",
       "items": {
         "type": "object",
-        "required": ["schedule", "code", "message"],
+        "required": [
+          "schedule",
+          "code",
+          "message"
+        ],
         "properties": {
-          "schedule": {"type": "string"},
-          "code": {"type": "string", "description": "A stable identifier, e.g. `schedule-needs-anchor`."},
-          "message": {"type": "string"}
+          "schedule": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "A stable identifier, e.g. `schedule-needs-anchor`."
+          },
+          "message": {
+            "type": "string"
+          }
         }
       }
     }
   },
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "instant": {"type": "string", "description": "RFC 3339 in UTC, e.g. `2026-09-01T06:00:00Z`.", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "instant": {
+      "type": "string",
+      "description": "RFC 3339 in UTC, e.g. `2026-09-01T06:00:00Z`.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
     "binding": {
       "type": "object",
-      "required": ["report", "set", "binding"],
+      "required": [
+        "report",
+        "set",
+        "binding"
+      ],
       "properties": {
-        "report": {"type": "string"},
-        "set": {"type": ["string", "null"], "description": "The Set, or null for a report without Sets."},
-        "binding": {"type": "string", "description": "The Set, or `default`."}
+        "report": {
+          "type": "string"
+        },
+        "set": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The Set, or null for a report without Sets."
+        },
+        "binding": {
+          "type": "string",
+          "description": "The Set, or `default`."
+        }
       }
     },
     "schedule": {
       "type": "object",
-      "required": ["definition_hash", "enabled", "timing", "timezone", "vars", "bindings"],
+      "required": [
+        "definition_hash",
+        "enabled",
+        "timing",
+        "timezone",
+        "vars",
+        "bindings"
+      ],
       "properties": {
-        "definition_hash": {"$ref": "#/$defs/sha256", "description": "Over the resolved timing (named or inline), the firing timezone, vars, `enabled` and the Bindings. Opaque: the same definition gives the same hash within a format version."},
-        "enabled": {"type": "boolean", "description": "False for a paused schedule (`enabled: false`), which has no occurrences."},
-        "timing": {"type": ["string", "null"], "description": "The timings.yml entry it uses, or null for an inline timing."},
-        "timezone": {"type": "string", "description": "The timezone it fires in: its own (or its timing's), then the project's, then UTC."},
-        "vars": {"type": "object"},
-        "bindings": {"type": "array", "items": {"$ref": "#/$defs/binding"}}
+        "definition_hash": {
+          "$ref": "#/$defs/sha256",
+          "description": "Over the resolved timing (named or inline), the firing timezone, vars, `enabled` and the Bindings. Opaque: the same definition gives the same hash within a format version."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "False for a paused schedule (`enabled: false`), which has no occurrences."
+        },
+        "timing": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The timings.yml entry it uses, or null for an inline timing."
+        },
+        "timezone": {
+          "type": "string",
+          "description": "The timezone it fires in: its own (or its timing's), then the project's, then UTC."
+        },
+        "vars": {
+          "type": "object"
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/binding"
+          }
+        }
       }
     },
     "occurrence": {
       "type": "object",
-      "required": ["key", "schedule", "timing", "fires_at", "fires_at_local", "timezone", "run_date", "bindings", "vars", "invocation"],
+      "required": [
+        "key",
+        "schedule",
+        "timing",
+        "fires_at",
+        "fires_at_local",
+        "timezone",
+        "run_date",
+        "bindings",
+        "vars",
+        "invocation"
+      ],
       "properties": {
-        "key": {"type": "string", "description": "The natural key: `<schedule>/<fires_at>`, plus `/<report>/<binding>` under `--split`."},
-        "schedule": {"type": "string"},
-        "timing": {"type": ["string", "null"]},
-        "fires_at": {"$ref": "#/$defs/instant"},
-        "fires_at_local": {"type": "string", "description": "The same instant in the firing timezone, with its offset, e.g. `2026-09-01T16:00:00+10:00`."},
-        "timezone": {"type": "string"},
-        "run_date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "description": "The firing's date in its timezone: the run's `run.date`."},
-        "bindings": {"type": "array", "items": {"$ref": "#/$defs/binding"}, "description": "What it runs; one under `--split`."},
-        "vars": {"type": "object", "description": "The schedule's vars."},
+        "key": {
+          "type": "string",
+          "description": "The natural key: `<schedule>/<fires_at>`, plus `/<report>/<binding>` under `--split`."
+        },
+        "schedule": {
+          "type": "string"
+        },
+        "timing": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fires_at": {
+          "$ref": "#/$defs/instant"
+        },
+        "fires_at_local": {
+          "type": "string",
+          "description": "The same instant in the firing timezone, with its offset, e.g. `2026-09-01T16:00:00+10:00`."
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "run_date": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "The firing's date in its timezone: the run's `run.date`."
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/binding"
+          },
+          "description": "What it runs; one under `--split`."
+        },
+        "vars": {
+          "type": "object",
+          "description": "The schedule's vars."
+        },
         "invocation": {
           "type": "object",
-          "required": ["argv", "env"],
+          "required": [
+            "argv",
+            "env"
+          ],
           "description": "The command that runs it, from the project directory. It never holds a target, profile or credentials.",
           "properties": {
-            "argv": {"type": "array", "items": {"type": "string"}, "minItems": 4},
+            "argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 4
+            },
             "env": {
               "type": "object",
-              "required": ["DRE_RUN_AT", "DRE_RUN_DATE"],
+              "required": [
+                "DRE_RUN_AT",
+                "DRE_RUN_DATE"
+              ],
               "properties": {
-                "DRE_RUN_AT": {"$ref": "#/$defs/instant"},
-                "DRE_RUN_DATE": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
+                "DRE_RUN_AT": {
+                  "$ref": "#/$defs/instant"
+                },
+                "DRE_RUN_DATE": {
+                  "type": "string",
+                  "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                }
               },
-              "additionalProperties": {"type": "string"}
+              "additionalProperties": {
+                "type": "string"
+              }
             }
           }
         }

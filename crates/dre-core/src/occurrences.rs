@@ -438,6 +438,7 @@ pub fn document(project: &Project, req: &Request) -> Result<Json, String> {
         "project": project.name,
         "window": {"from": rfc3339(req.window.from), "to": rfc3339(req.window.to)},
         "split": req.split,
+        "complete": req.schedules.is_empty() && req.select.is_none(),
         "project_hash": project_hash(project),
         "schedules": schedules,
         "occurrences": occurrences.into_iter().map(|(_, _, o)| o).collect::<Vec<_>>(),

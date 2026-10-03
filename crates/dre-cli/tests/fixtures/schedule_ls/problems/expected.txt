@@ -9,6 +9,7 @@ exit: 0
     "to": "2026-09-30T00:00:00Z"
   },
   "split": false,
+  "complete": true,
   "project_hash": "fa4f0d570bd9a6e355bd75b6212d2733c2ba558c9f40ad2c11ccbc3886df052d",
   "schedules": {
     "good": {

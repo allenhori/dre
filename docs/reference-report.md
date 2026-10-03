@@ -2,7 +2,7 @@
 title: "Report YAML reference"
 description: "Every key of a report YAML file: queries, output, destinations, Sets and templates."
 sidebar:
-  order: 21
+  order: 23
 ---
 
 # Report YAML reference

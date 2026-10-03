@@ -2,7 +2,7 @@
 title: "schedules.yml reference"
 description: "Every key of the schedules file."
 sidebar:
-  order: 23
+  order: 25
 ---
 
 # schedules.yml reference

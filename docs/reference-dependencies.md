@@ -2,7 +2,7 @@
 title: "dependencies.yml reference"
 description: "Every key of dependencies.yml: plugin packages and macro packages."
 sidebar:
-  order: 25
+  order: 28
 ---
 
 # dependencies.yml reference

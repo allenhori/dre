@@ -2,7 +2,7 @@
 title: "Schedule occurrences: `dre schedule ls`"
 description: "When a project's schedules fire, as a table or a versioned JSON document with the command for each firing, and its JSON Schema."
 sidebar:
-  order: 13
+  order: 14
 ---
 
 # Schedule occurrences: `dre schedule ls`
@@ -66,6 +66,7 @@ part and option.
   "project": "acme_reports",
   "window": {"from": "2026-09-30T00:00:00Z", "to": "2026-10-01T00:00:00Z"},
   "split": false,
+  "complete": true,
   "project_hash": "4f0c…",
   "schedules": {
     "close_monthly": {
@@ -108,6 +109,8 @@ part and option.
 |---|---|
 | `dre_schedule_version` | The format's version, `1`. |
 | `window` | The firings listed: from `from` (inclusive) to `to` (exclusive), in UTC. |
+| `split` | Whether occurrences are per firing (`false`) or per report and Set (`--split`). |
+| `complete` | `true` when every schedule is listed (no `--schedule` or `-s`). Only then does a missing schedule mean it was removed. |
 | `project_hash` | One hash over every schedule in the project, whatever you asked for. Unchanged means no schedule changed: a refresh can stop there. |
 | `schedules` | The schedules you asked for, by name, including paused ones and ones under `problems`. |
 | `schedules.*.definition_hash` | Over the schedule's resolved timing (named or inline), firing timezone, vars, `enabled` and the Bindings it runs. When it changes, replace that schedule's future occurrences. |
@@ -124,8 +127,8 @@ part and option.
 
 - A schedule is identified by its name, the same name `dre run --schedule` takes. A rename is a
   removal plus an addition.
-- A schedule missing from a full listing (no `--schedule` or `-s`) has been removed or renamed:
-  retire its future occurrences.
+- A schedule missing from a `complete` listing has been removed or renamed: retire its future
+  occurrences.
 - Hashes are opaque. The only promise is that the same definition gives the same hash within a
   format version.
 

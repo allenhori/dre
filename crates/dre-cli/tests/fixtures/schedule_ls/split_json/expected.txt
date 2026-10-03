@@ -9,6 +9,7 @@ exit: 0
     "to": "2027-02-15T00:00:00Z"
   },
   "split": true,
+  "complete": true,
   "project_hash": "7e1fc059c9f4e03c096c3f308b376b57060a537d56b49bde2c1265a477d80889",
   "schedules": {
     "close_a": {

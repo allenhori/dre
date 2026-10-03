@@ -2,7 +2,7 @@
 title: "Templates"
 description: "Jinja in SQL, paths and options: target, profile(), columns(), dates and timezones."
 sidebar:
-  order: 6
+  order: 7
 ---
 
 # Templates
@@ -143,7 +143,7 @@ one, nearest first:
 
 1. `--timezone Australia/Sydney`
 2. `DRE_TIMEZONE`
-3. `timezone:` on the `schedules.yml` entry (with `--schedule`)
+3. `timezone:` on the `schedules.yml` entry, or its shared timing's (with `--schedule`)
 4. `timezone:` in the report's YAML
 5. `+timezone:` in folder config
 6. `timezone:` in `dre_project.yml`

@@ -2,7 +2,7 @@
 title: "dre_project.yml reference"
 description: "Every key of dre_project.yml, the project file."
 sidebar:
-  order: 20
+  order: 22
 ---
 
 # dre_project.yml reference
