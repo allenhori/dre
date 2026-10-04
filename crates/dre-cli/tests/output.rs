@@ -43,23 +43,24 @@ fn default_output_is_one_line_per_binding_and_a_summary() {
     let r = p.dre("run", &[]);
     r.failed();
     let lines = status_lines(&r.stdout);
-    assert_eq!(lines.len(), 4, "{}", r.stdout);
-    assert_eq!(lines[0], "   Running  2 Bindings");
+    assert_eq!(lines.len(), 5, "{}", r.stdout);
+    assert_eq!(lines[0], "    Target  dev (default)");
+    assert_eq!(lines[1], "   Running  2 Bindings");
     assert!(
-        lines[1].starts_with("    Failed  [") && lines[1].contains("broken  reports/ops/broken/bad.sql:1:"),
-        "{}",
-        lines[1]
-    );
-    assert!(
-        lines[2].starts_with(" Succeeded  [")
-            && lines[2].ends_with("daily  1 result set, 2 rows → daily.csv"),
+        lines[2].starts_with("    Failed  [") && lines[2].contains("broken  reports/ops/broken/bad.sql:1:"),
         "{}",
         lines[2]
     );
     assert!(
-        lines[3].starts_with("  Finished  'run' in ") && lines[3].ends_with(" · 1 succeeded, 1 failed"),
+        lines[3].starts_with(" Succeeded  [")
+            && lines[3].ends_with("daily  1 result set, 2 rows → daily.csv"),
         "{}",
         lines[3]
+    );
+    assert!(
+        lines[4].starts_with("  Finished  'run' in ") && lines[4].ends_with(" · 1 succeeded, 1 failed"),
+        "{}",
+        lines[4]
     );
 }
 
@@ -101,7 +102,9 @@ fn json_log_format_is_one_object_per_line() {
         .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{l}: {e}")))
         .collect();
     let kinds: Vec<&str> = events.iter().map(|e| e["event"].as_str().unwrap()).collect();
-    assert_eq!(kinds[..2], ["run_parameters", "plan"]);
+    assert_eq!(kinds[..3], ["run_parameters", "targets", "plan"]);
+    assert_eq!(events[1]["target"]["name"], "dev");
+    assert_eq!(events[1]["target"]["from"], "default");
     assert!(kinds.contains(&"binding_vars"));
     assert_eq!(kinds.last(), Some(&"finished"));
     assert!(kinds.contains(&"step") && kinds.contains(&"binding_end"));

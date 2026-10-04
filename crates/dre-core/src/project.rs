@@ -89,7 +89,6 @@ pub const PROJECT_KEYS: &[&str] = &[
     "week_start",
     "week_numbering",
     "reports",
-    "target",
     SOURCES_KEY,
     crate::target::KEY,
 ];
@@ -145,8 +144,8 @@ pub struct Project {
     /// Where the target path was set, for messages.
     #[serde(skip)]
     pub target_source: crate::target::Source,
-    /// The run's target (environment): `--target`, `DRE_TARGET`, `target:` here, else `dev`.
-    /// Every profile uses its entry for this target.
+    /// The run's target (environment): `--target`, `DRE_TARGET`, else `dev`; `target.name` in
+    /// templates. Each profile's entry is [`crate::profiles::Profiles::target_of`].
     #[serde(skip)]
     pub target_name: String,
     /// Where `target_name` came from.
@@ -230,6 +229,14 @@ pub struct Project {
 impl Project {
     pub fn report(&self, name: &str) -> Option<&Report> {
         self.reports.iter().find(|r| r.name == name)
+    }
+
+    /// The run's target and where it came from.
+    pub fn run_target(&self) -> crate::profiles::RunTarget {
+        crate::profiles::RunTarget {
+            name: self.target_name.clone(),
+            from: self.target_from,
+        }
     }
 }
 
@@ -647,7 +654,7 @@ pub struct Timing {
 pub struct LoadOptions {
     /// `--profiles-dir`; falls back to `DRE_PROFILES_DIR`, the project directory, then `~/.dre`.
     pub profiles_dir: Option<PathBuf>,
-    /// `--target`, above `DRE_TARGET` and the project's `target:`.
+    /// `--target`, above `DRE_TARGET`: the run's target, and every profile's entry.
     pub target: Option<String>,
     /// `DRE_RUN_DATE`, `DRE_RUN_AT` and `--timezone`/`DRE_TIMEZONE`: the parse pass renders
     /// `run.*` as the run will.
@@ -792,6 +799,7 @@ impl Loader {
         let (profiles_dir, found_by) =
             crate::profiles::locate(self.opts.profiles_dir.as_deref(), Some(&self.root));
         project.profiles = Profiles::load(&profiles_dir, found_by, &mut self.diags);
+        project.profiles.run = project.run_target();
 
         // Folder config needs the folder list to warn about folders that don't exist.
         let folder_cfg = self.parse_folder_config(&pyaml, &project.folders);
@@ -942,6 +950,13 @@ impl Loader {
         for k in m.keys().filter_map(Value::as_str) {
             if OLD_PLUGIN_KEYS.contains(&k) {
                 self.old_plugin_key(yf, k);
+            } else if k == "target" {
+                self.diags.error(
+                    "removed-key",
+                    file.clone(),
+                    yf.line_of(k, None),
+                    "`target` in dre_project.yml was removed in DRE 0.2.1: give each profile its default with `target:` in profiles.yml, or choose the run's target with DRE_TARGET or --target",
+                );
             } else if !PROJECT_KEYS.contains(&k) && !PLUGIN_KEYS.contains(&k) {
                 self.diags.error(
                     "unknown-key",
@@ -973,9 +988,7 @@ impl Loader {
             }
         };
         let default_profile = self.opt_string(yf, m, "default_profile");
-        let project_target = self.opt_string(yf, m, "target");
-        let (target_name, target_from) =
-            crate::profiles::resolve_target(self.opts.target.as_deref(), project_target.as_deref());
+        let run_target = crate::profiles::RunTarget::resolve(self.opts.target.as_deref());
         let default_set = self.opt_string(yf, m, "default_set");
         let vars = self.opt_vars(yf, m.get("vars"), "vars");
         let run_query_max_rows = match m.get("run_query_max_rows") {
@@ -1065,8 +1078,8 @@ impl Loader {
             root: self.root.clone(),
             target_dir: self.target.dir.clone(),
             target_source: self.target.source,
-            target_name,
-            target_from,
+            target_name: run_target.name,
+            target_from: run_target.from,
             default_profile_line: yf.line_of("default_profile", None),
             default_profile,
             default_set,

@@ -117,6 +117,20 @@ fn init_offers_the_source_values_to_a_destination_on_the_same_platform() {
 }
 
 #[test]
+fn init_with_another_target_makes_it_the_profiles_default() {
+    let d = tempfile::tempdir().unwrap();
+    registry(d.path());
+    // Target `prod`: without `target: prod` the profile would look for a `dev` entry.
+    let answers = "fixture\nwarehouse\nprod\ndata.duckdb\n\n\nn\n";
+    dre(d.path(), &["init"], answers).ok();
+    let profiles = std::fs::read_to_string(d.path().join("dot-dre/profiles.yml")).unwrap();
+    assert_eq!(
+        profiles,
+        "connections:\n  warehouse:\n    target: prod\n    targets:\n      prod:\n        type: fixture\n        path: data.duckdb\n        token: '{{ env_var(''WAREHOUSE_TOKEN'') }}'\n"
+    );
+}
+
+#[test]
 fn init_refuses_to_overwrite_an_existing_profile() {
     let d = tempfile::tempdir().unwrap();
     registry(d.path());

@@ -210,10 +210,15 @@ impl Printer {
             } else {
                 format!(", reads {}", q.sources.join(", "))
             };
+            let target = if q.target == p.target {
+                String::new()
+            } else {
+                format!(", target {}", q.target)
+            };
             i.print(
                 Tone::Note,
                 "Query",
-                &format!("{} on {} ({}){sources}", q.query, q.connection, q.kind),
+                &format!("{} on {} ({}){target}{sources}", q.query, q.connection, q.kind),
             );
         }
         i.print(
@@ -226,7 +231,7 @@ impl Printer {
             let what = match (&d.kind, &d.path) {
                 (Some(k), Some(path)) => format!("{} ({k}), target {target} → {path}", d.profile),
                 (Some(k), None) => format!("{} ({k}), target {target}", d.profile),
-                (None, _) => format!("{}: no `{target}` target, so nothing is delivered", d.profile),
+                (None, _) => format!("{}: `{target}` delivers nowhere (`deliver: false`)", d.profile),
             };
             let tone = if d.delivers && non_dev(&target) {
                 Tone::Warn
@@ -427,6 +432,21 @@ fn label(report: &str, set: Option<&str>) -> String {
 }
 
 impl Ui for Printer {
+    fn targets(&mut self, t: &dre_core::run::RunTargets) {
+        {
+            let mut i = self.inner.lock().unwrap();
+            if i.format == LogFormat::Json {
+                i.file_log("INFO", &format!("Target {}", t.line()));
+                i.json(json!({"event": "targets", "target": t}));
+            } else {
+                i.line(Tone::Note, "Target", &t.line(), Level::Info);
+            }
+        }
+        if let Some(w) = t.mismatch() {
+            self.warn(&w);
+        }
+    }
+
     fn plan(&mut self, bindings: usize) {
         let mut i = self.inner.lock().unwrap();
         i.started = Instant::now();

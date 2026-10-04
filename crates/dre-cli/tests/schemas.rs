@@ -203,10 +203,17 @@ fn the_schemas_have_the_keys_the_parser_has() {
         props(&raw("profiles")),
         set(&["connections", "sources", "destinations"]),
     );
+    for role in ["connection", "destination"] {
+        same(
+            role,
+            props(&raw("profiles")["$defs"][role]),
+            set(&["target", "targets"]),
+        );
+    }
     same(
-        "profile",
-        props(&raw("profiles")["$defs"]["profile"]),
-        set(&["target", "targets"]),
+        "deliver: false",
+        props(&raw("profiles")["$defs"]["no_delivery"]),
+        set(&["deliver"]),
     );
     same(
         "dependencies",

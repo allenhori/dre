@@ -387,11 +387,12 @@ output:
 
 - Entries are delivered in order. If one fails, the rest are still attempted; the Binding then
   fails and the run exits non-zero.
-- Each entry follows the run's target on its own: an entry whose profile has no entry for the
-  target is skipped and logged, while the others are delivered. So a dev run delivers only where
-  a destination defines `dev`.
-- `run_results.json` lists every entry under `deliveries`, with `profile`, `type`, `status`
-  (`delivered`, `skipped` or `failed`), `location` and `error`.
+- Each entry uses its profile's entry for the run (`--target`, `DRE_TARGET`, else the profile's
+  own `target:`, else `dev`). A profile with no such entry is an error before anything runs; an
+  entry `{deliver: false}` delivers nowhere, logged, while the others are delivered.
+- `run_results.json` lists every entry under `deliveries`, with `profile`, `type`, `target`,
+  `status` (`delivered`, `not_delivered` for `deliver: false`, or `failed`), `location` and
+  `error`.
 - A Set can replace the whole list. Overriding only `path:` works when exactly one destination
   is inherited; with several, override the full list.
 - The local file is named after the first entry's `path`. `--output-path` and `--output-name`

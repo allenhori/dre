@@ -1,5 +1,5 @@
 exit: 1
 error[unset-env-var]: reports/ops/daily/summary.sql:1: `env_var('DRE_TEST_SURELY_UNSET')`: environment variable `DRE_TEST_SURELY_UNSET` is not set and no default is given
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 1 error, 0 warnings

@@ -8,7 +8,15 @@ exit: 0
   },
   "target": {
     "name": "dev",
-    "from": "the default"
+    "from": "default",
+    "profiles": [
+      {
+        "role": "connection",
+        "profile": "local_dev",
+        "target": "dev",
+        "deliver": true
+      }
+    ]
   },
   "errors": 0,
   "warnings": 0,
@@ -27,17 +35,20 @@ exit: 0
         {
           "query": "q1",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         },
         {
           "query": "q2",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         },
         {
           "query": "q3",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         }
       ],
       "target": "dev",
@@ -58,12 +69,14 @@ exit: 0
         {
           "query": "q1",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         },
         {
           "query": "q2",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         }
       ],
       "target": "dev",
@@ -84,12 +97,14 @@ exit: 0
         {
           "query": "q1",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         },
         {
           "query": "q2",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         }
       ],
       "target": "dev",

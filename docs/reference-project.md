@@ -25,7 +25,6 @@ For editor autocomplete and validation, add this as the first line of the file (
 |---|---|---|---|
 | `name` (required) | string |  | The project's name. Required. |
 | `default_profile` | string |  | The connection (in `profiles.yml`) reports use when nothing else names one. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
-| `target` | string |  | The run's target (environment) when neither `--target` nor `DRE_TARGET` sets one. Default: `dev`. |
 | `default_output` | map, as in [the report reference](reference-report.md) |  | The output every report starts from (the built-in default is `format: csv`). A report's own `output` is merged on top. |
 | `format_options` | map |  | Default options per output format, under every output of that format. A report's own keys win. |
 | `default_set` | string |  | The Set used when a report has Sets and none is chosen. |

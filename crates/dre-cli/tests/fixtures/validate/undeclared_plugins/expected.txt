@@ -3,5 +3,5 @@ error[undeclared-plugin]: $CASE/profiles/profiles.yml:2: `type: duckdb` used by 
 error[undeclared-plugin]: $CASE/profiles/profiles.yml:7: `type: gcs` used by destination profile `reports_gcs`, but no plugin package the project declares provides it — add the package with the `gcs` destination under `plugins:` in dependencies.yml, then run `dre deps`
 error[undeclared-plugin]: reports/ops/daily/daily.yml: format `csv` is used by report `daily` (csv is the built-in default output), but no plugin package the project declares provides it — add the package with the `csv` format under `plugins:` in dependencies.yml, then run `dre deps`
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 3 errors, 0 warnings

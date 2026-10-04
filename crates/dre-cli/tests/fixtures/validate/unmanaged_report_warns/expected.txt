@@ -5,5 +5,5 @@ warning[unmanaged-report]: reports/scratch/temp_then_select.sql: `temp_then_sele
 warning[unmanaged-report]: reports/scratch/templated.sql: `templated` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
 Compiled 2 Bindings into target/compiled/
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 1 error, 3 warnings

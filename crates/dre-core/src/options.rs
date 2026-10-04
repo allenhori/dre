@@ -35,10 +35,9 @@ type Blocks = BTreeMap<String, (Map<String, Value>, Vec<Use>)>;
 
 /// Ask each format and destination plugin to check every config block the project gives it,
 /// found by kind and name alone: core knows nothing of any plugin's options. Each destination
-/// profile's output is the run's target's. A declared plugin that can't be found is an error, or
+/// profile's output is its entry for the run. A declared plugin that can't be found is an error, or
 /// a warning with `offline` (`dre validate --no-auto-install`, which doesn't install plugins).
 pub fn check(project: &Project, offline: bool, diags: &mut Diagnostics) {
-    let target = project.target_name.as_str();
     // (kind, plugin) -> distinct option blocks -> where each is used.
     let mut blocks: BTreeMap<(PluginKind, String), Blocks> = BTreeMap::new();
     let mut add = |kind, name: &str, options: &Map<String, Value>, u: Use| {
@@ -81,9 +80,9 @@ pub fn check(project: &Project, offline: bool, diags: &mut Diagnostics) {
                 let kind = if project.profiles.is_builtin_local(profile) {
                     LOCAL_TYPE
                 } else {
-                    match project.profiles.target(Role::Destination, profile, target) {
+                    match project.profiles.target(Role::Destination, profile) {
                         Some(t) => t.kind.as_str(),
-                        // A missing profile or target is reported elsewhere.
+                        // A missing profile or entry is reported elsewhere; `deliver: false` takes no options.
                         None => continue,
                     }
                 };

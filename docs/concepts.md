@@ -14,8 +14,9 @@ sidebar:
   subset and output.
 - **Connections, destinations, sources and the target**: a *connection* is what queries read
   from and a *destination* where output goes, both in `profiles.yml`. A *source* is a declared
-  table (dbt's `sources:`), read with `{{ source('sales', 'orders') }}`. The *target* is the
-  environment (`dev`, `prod`), one per run. Each query runs on its own connection when it names
+  table (dbt's `sources:`), read with `{{ source('sales', 'orders') }}`. A *target* is an
+  environment (`dev`, `prod`): each profile has an entry per target and picks one per run
+  (`--target`, `DRE_TARGET`, else its own `target:`, else `dev`). Each query runs on its own connection when it names
   one (`profile:` on the query, or a source's), else on the report's, so one workbook can hold
   DuckDB, Postgres and Databricks tabs. See [connections](connections.md) and
   [sources](sources.md).

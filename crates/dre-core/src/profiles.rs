@@ -15,11 +15,12 @@
 //!
 //! A connection profile is referenced by `default_profile`/`profile:` (and a source's
 //! `profile:`), a destination profile by `output.destination.profile`; each is looked up in its
-//! own section only. Each profile lists one entry per target (environment); the run picks one
-//! target for every profile (`--target`, `DRE_TARGET`, `target:` in dre_project.yml, else `dev`).
+//! own section only. Each profile lists one entry per target (environment). Each profile a run
+//! uses picks its entry by `--target`, else `DRE_TARGET` (either sets every profile), else the
+//! profile's own `target:`, else `dev`. A used profile without that entry is an error; a
+//! destination entry `{deliver: false}` deliberately delivers nowhere.
 //!
-//! DRE 0.1 called the connections section `sources:` and let each profile pick its own default
-//! `target:`; both still load in 0.2.x, with a warning.
+//! DRE 0.1 called the connections section `sources:`; it still loads in 0.2.x, with a warning.
 //!
 //! Location: `--profiles-dir` > `DRE_PROFILES_DIR` > `~/.dre`, one file, never merged. These are
 //! read directly at startup, never through the `env_var()` Jinja function. `env_var()` calls
@@ -50,7 +51,7 @@ pub static BUILTIN_LOCAL: std::sync::LazyLock<ProfileTarget> = std::sync::LazyLo
 /// The section DRE 0.1 kept connections under; read with a warning in 0.2.x.
 pub const OLD_CONNECTIONS_SECTION: &str = "sources";
 
-/// The run's target (environment) when nothing chooses one.
+/// The run's target (environment), and a profile's entry, when nothing chooses one.
 pub const DEFAULT_TARGET: &str = "dev";
 /// The environment variable choosing the run's target, below `--target`.
 pub const TARGET_ENV: &str = "DRE_TARGET";
@@ -83,7 +84,6 @@ impl Role {
 pub enum TargetSource {
     Flag,
     Env,
-    Project,
     #[default]
     Default,
 }
@@ -93,24 +93,61 @@ impl std::fmt::Display for TargetSource {
         f.write_str(match self {
             TargetSource::Flag => "--target",
             TargetSource::Env => TARGET_ENV,
-            TargetSource::Project => "`target` in dre_project.yml",
-            TargetSource::Default => "the default",
+            TargetSource::Default => "default",
         })
     }
 }
 
-/// The run's one target: `--target`, else `DRE_TARGET`, else the project's `target:`, else `dev`.
-pub fn resolve_target(flag: Option<&str>, project: Option<&str>) -> (String, TargetSource) {
-    if let Some(t) = flag.filter(|t| !t.is_empty()) {
-        return (t.to_string(), TargetSource::Flag);
+/// The run's target: `--target`, else `DRE_TARGET`, else `dev`. It's `target.name` in templates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunTarget {
+    pub name: String,
+    pub from: TargetSource,
+}
+
+impl Default for RunTarget {
+    fn default() -> Self {
+        RunTarget {
+            name: DEFAULT_TARGET.into(),
+            from: TargetSource::Default,
+        }
     }
-    if let Some(t) = std::env::var(TARGET_ENV).ok().filter(|t| !t.is_empty()) {
-        return (t, TargetSource::Env);
+}
+
+impl RunTarget {
+    /// `--target` (`flag`), else `DRE_TARGET`, else `dev`.
+    pub fn resolve(flag: Option<&str>) -> RunTarget {
+        if let Some(t) = flag.filter(|t| !t.is_empty()) {
+            return RunTarget {
+                name: t.to_string(),
+                from: TargetSource::Flag,
+            };
+        }
+        if let Some(t) = std::env::var(TARGET_ENV).ok().filter(|t| !t.is_empty()) {
+            return RunTarget {
+                name: t,
+                from: TargetSource::Env,
+            };
+        }
+        RunTarget::default()
     }
-    if let Some(t) = project.filter(|t| !t.is_empty()) {
-        return (t.to_string(), TargetSource::Project);
+
+    /// Whether `--target` or `DRE_TARGET` chose it, which sets every profile's entry.
+    pub fn chosen(&self) -> bool {
+        self.from != TargetSource::Default
     }
-    (DEFAULT_TARGET.to_string(), TargetSource::Default)
+}
+
+/// What a profile uses for the run: its entry, or why it has none.
+#[derive(Debug, Clone, Copy)]
+pub enum Entry<'a> {
+    Use(&'a ProfileTarget),
+    /// `{deliver: false}`: a destination that deliberately delivers nowhere on this target.
+    Nowhere,
+    /// The profile has no entry for its target.
+    Missing,
+    /// No such profile.
+    Unknown,
 }
 
 /// One environment of a profile: a plugin type and its connection fields.
@@ -125,7 +162,23 @@ pub struct ProfileTarget {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Profile {
+    /// Its own default entry (`target:`), below `--target` and `DRE_TARGET`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// The entries that connect or deliver.
     pub targets: BTreeMap<String, ProfileTarget>,
+    /// The destination entries written `{deliver: false}`.
+    #[serde(skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub nowhere: std::collections::BTreeSet<String>,
+}
+
+impl Profile {
+    /// Every entry's name, delivering or not.
+    pub fn entry_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.targets.keys().chain(&self.nowhere).cloned().collect();
+        names.sort();
+        names
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -140,6 +193,8 @@ pub struct Profiles {
     pub destinations: BTreeMap<String, Profile>,
     /// The section connections were read from: `connections`, or 0.1's `sources`.
     connections_section: &'static str,
+    /// The run's target, which picks each profile's entry (see [`Profiles::target_of`]).
+    pub run: RunTarget,
 }
 
 /// Resolve the profiles directory: `--profiles-dir` > `DRE_PROFILES_DIR` > `~/.dre`.
@@ -307,9 +362,66 @@ impl Profiles {
         f.line_of(name, f.line_of(self.section_key(role), None))
     }
 
-    /// A profile's settings for the run's target.
-    pub fn target(&self, role: Role, profile: &str, target: &str) -> Option<&ProfileTarget> {
-        self.get(role, profile)?.targets.get(target)
+    /// The entry a profile uses in this run: the run's target when `--target` or `DRE_TARGET`
+    /// chose it, else the profile's own `target:`, else `dev`.
+    pub fn target_of(&self, role: Role, profile: &str) -> String {
+        if self.run.chosen() {
+            return self.run.name.clone();
+        }
+        self.get(role, profile)
+            .and_then(|p| p.target.clone())
+            .unwrap_or_else(|| self.run.name.clone())
+    }
+
+    /// What a profile uses in this run. `profile: local` without a defined `local` profile is
+    /// the built-in local destination, for every target.
+    pub fn entry(&self, role: Role, profile: &str) -> Entry<'_> {
+        if role == Role::Destination && self.is_builtin_local(profile) {
+            return Entry::Use(&BUILTIN_LOCAL);
+        }
+        let Some(p) = self.get(role, profile) else {
+            return Entry::Unknown;
+        };
+        let t = self.target_of(role, profile);
+        match p.targets.get(&t) {
+            Some(o) => Entry::Use(o),
+            None if p.nowhere.contains(&t) => Entry::Nowhere,
+            None => Entry::Missing,
+        }
+    }
+
+    /// A profile's settings for this run, when it has an entry that connects or delivers.
+    pub fn target(&self, role: Role, profile: &str) -> Option<&ProfileTarget> {
+        match self.entry(role, profile) {
+            Entry::Use(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    /// Why a used profile has no entry for this run, with the way to fix it.
+    pub fn missing(&self, role: Role, profile: &str) -> String {
+        let t = self.target_of(role, profile);
+        let has = self
+            .get(role, profile)
+            .map(|p| p.entry_names().join(", "))
+            .unwrap_or_default();
+        let why = match self.run.from {
+            TargetSource::Default if self.get(role, profile).is_some_and(|p| p.target.is_some()) => {
+                "its `target:`".to_string()
+            }
+            TargetSource::Default => "the default".to_string(),
+            from => from.to_string(),
+        };
+        let mut msg = format!(
+            "{} `{profile}` has no `{t}` entry (it has: {has}); `{t}` comes from {why}",
+            role.as_str()
+        );
+        if role == Role::Destination {
+            msg.push_str(&format!(
+                ". To deliver nowhere on `{t}`, add `{t}: {{deliver: false}}` to its `targets:`"
+            ));
+        }
+        msg
     }
 }
 
@@ -333,16 +445,19 @@ fn parse_profile(
         );
         return None;
     };
-    if m.contains_key("target") {
-        diags.warning(
-            "profile-target-ignored",
-            file.clone(),
-            yf.line_of("target", line),
-            format!(
-                "{what}: a profile's own `target:` is ignored since DRE 0.2; the run picks one target for every profile (--target, DRE_TARGET, `target:` in dre_project.yml, else `dev`). Remove it"
-            ),
-        );
-    }
+    let own_target = match m.get("target") {
+        None => None,
+        Some(Value::String(t)) if !t.trim().is_empty() => Some(t.clone()),
+        Some(_) => {
+            diags.error(
+                "invalid-profile",
+                file.clone(),
+                yf.line_of("target", line),
+                format!("{what}: `target` must be the name of one of its `targets`"),
+            );
+            return None;
+        }
+    };
     let Some(targets) = m.get("targets").and_then(Value::as_mapping) else {
         let hint = if m.contains_key("outputs") {
             " (`outputs:` is now `targets:`)"
@@ -358,9 +473,36 @@ fn parse_profile(
         return None;
     };
     let mut parsed = BTreeMap::new();
+    let mut nowhere = std::collections::BTreeSet::new();
     let mut ok = true;
     for (k, o) in targets {
         let Some(tname) = k.as_str() else { continue };
+        if let Some(d) = o.get("deliver") {
+            let problem = if role == Role::Connection {
+                Some("`deliver: false` is only for destinations; a connection entry needs a `type`")
+            } else if d != &Value::Bool(false) {
+                Some("`deliver` can only be `false` (an entry that delivers just has a `type`)")
+            } else if o.as_mapping().is_some_and(|m| m.len() > 1) {
+                Some("`deliver: false` takes no other settings: the entry delivers nowhere")
+            } else {
+                None
+            };
+            match problem {
+                Some(p) => {
+                    diags.error(
+                        "invalid-profile",
+                        file.clone(),
+                        yf.line_of(tname, line),
+                        format!("target `{tname}` of {what}: {p}"),
+                    );
+                    ok = false;
+                }
+                None => {
+                    nowhere.insert(tname.to_string());
+                }
+            }
+            continue;
+        }
         let kind = o.get("type").and_then(Value::as_str);
         let Some(kind) = kind else {
             diags.error(
@@ -387,5 +529,9 @@ fn parse_profile(
             },
         );
     }
-    ok.then_some(Profile { targets: parsed })
+    ok.then_some(Profile {
+        target: own_target,
+        targets: parsed,
+        nowhere,
+    })
 }

@@ -13,7 +13,7 @@ key with its type, default and meaning. The pages are generated from the same
 
 | File | What it holds | Reference |
 |---|---|---|
-| `dre_project.yml` | The project: default connection, target and output, variables, week settings, folder config | [dre_project.yml](reference-project.md) |
+| `dre_project.yml` | The project: default connection and output, variables, week settings, folder config | [dre_project.yml](reference-project.md) |
 | `reports/**/*.yml` | A report: queries, output, destinations, Sets, templates | [Report YAML](reference-report.md) |
 | `sets.yml` | Named variants a report can run as | [sets.yml](reference-sets.md) |
 | `schedules.yml` | Named schedules your orchestrator fires | [schedules.yml](reference-schedules.md) |

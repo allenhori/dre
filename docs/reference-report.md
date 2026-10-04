@@ -77,7 +77,7 @@ Where a file is delivered: the name of a destination profile in `profiles.yml`, 
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `profile` (required) | string |  | The destination profile in `profiles.yml` (under `destinations:`) to deliver with. `local` is built in. A destination with no entry for the run's target is skipped. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
+| `profile` (required) | string |  | The destination profile in `profiles.yml` (under `destinations:`) to deliver with. `local` is built in. It uses its entry for the run (`--target`, `DRE_TARGET`, else the profile's own `target:`, else `dev`); a missing entry is an error, and an entry `{deliver: false}` delivers nowhere. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`. |
 | `path` | string |  | Where to put the file: a path, or a URL such as `s3://bucket/key`, depending on the destination. Rendered with Jinja, so it can use `var()`, `run.*`, macros and `destination.*` (this destination's settings). |
 | _other keys_ | | | Options of the plugin that handles this block; see [Plugins](plugins.md). |
 

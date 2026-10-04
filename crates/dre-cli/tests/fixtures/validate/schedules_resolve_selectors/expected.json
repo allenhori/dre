@@ -8,7 +8,15 @@ exit: 0
   },
   "target": {
     "name": "dev",
-    "from": "the default"
+    "from": "default",
+    "profiles": [
+      {
+        "role": "connection",
+        "profile": "local_dev",
+        "target": "dev",
+        "deliver": true
+      }
+    ]
   },
   "errors": 0,
   "warnings": 1,
@@ -33,7 +41,8 @@ exit: 0
         {
           "query": "fin_q",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         }
       ],
       "target": "dev",
@@ -55,7 +64,8 @@ exit: 0
         {
           "query": "ops_q",
           "connection": "local_dev",
-          "type": "duckdb"
+          "type": "duckdb",
+          "target": "dev"
         }
       ],
       "target": "dev",

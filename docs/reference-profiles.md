@@ -9,7 +9,7 @@ sidebar:
 
 <!-- Generated from docs/schemas by .github/scripts/schema_docs.py. Edit the schema, not this page. -->
 
-Connections and destinations, in `profiles.yml`: what reports read from and where outputs go. Kept outside the project (`~/.dre`, `--profiles-dir` or `DRE_PROFILES_DIR`). Every profile lists its targets (environments); the run picks one for all of them: `--target`, `DRE_TARGET`, `target` in dre_project.yml, else `dev`.
+Connections and destinations, in `profiles.yml`: what reports read from and where outputs go. Kept outside the project (`~/.dre`, `--profiles-dir` or `DRE_PROFILES_DIR`). Every profile lists its targets (environments). Each profile the run uses picks one: `--target`, else `DRE_TARGET` (either sets every profile), else the profile's own `target`, else `dev`; a used profile without that entry is an error.
 
 Where: `profiles.yml`.
 
@@ -33,8 +33,8 @@ A named connection with one entry per target (environment).
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `targets` (required) | map |  | The environments of this profile, by name (e.g. `dev`, `prod`). |
-| `target` | string |  | Ignored since DRE 0.2 (with a warning): the run picks one target for every profile. |
+| `target` | string |  | This profile's entry when neither `--target` nor `DRE_TARGET` is set (dbt's key). Default: `dev`. It doesn't change `target.name`, the run's target. |
+| `targets` (required) | map |  | The environments of this connection, by name (e.g. `dev`, `prod`). |
 
 ## `connections.<name>.targets.<name>`
 
@@ -44,3 +44,20 @@ One target of a profile: a connection or delivery configuration. `type` names th
 |---|---|---|---|
 | `type` (required) | string |  | The plugin type of the connection, e.g. `duckdb`, `postgres`, `databricks`, `sftp`, `s3`. `local` needs no plugin. |
 | _other keys_ | | | Options of the plugin that handles this block; see [Plugins](plugins.md). |
+
+## `destinations.<name>`
+
+A named destination with one entry per target (environment).
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `targets` (required) | map |  | The environments of this destination, by name (e.g. `dev`, `prod`). An entry is a delivery configuration, or `{deliver: false}` to deliver nowhere on that target. |
+| `target` | string |  | This profile's entry when neither `--target` nor `DRE_TARGET` is set (dbt's key). Default: `dev`. It doesn't change `target.name`, the run's target. |
+
+## `destinations.<name>.targets.<name>`
+
+A destination entry is a delivery configuration (`type` and the plugin's fields, as for a connection), or `{deliver: false}`: it deliberately delivers nowhere. The output stays in the target path, the run logs it, and `run_results.json` records the delivery as `not_delivered`. Destinations only.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `deliver` (required) | `false` |  | `false`: this target delivers nowhere. Takes no other keys. |

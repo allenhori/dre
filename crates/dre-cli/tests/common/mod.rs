@@ -178,6 +178,7 @@ impl TestProject {
             .env("DRE_RUN_DATE", "2026-01-25")
             .env("HOME", self.dir.path().join("home"))
             .env_remove("DRE_PROFILES_DIR")
+            .env_remove("DRE_TARGET")
             .envs(env.iter().copied());
         let out = c.output().unwrap();
         Run {

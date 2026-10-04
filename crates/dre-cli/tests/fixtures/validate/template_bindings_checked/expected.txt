@@ -6,5 +6,5 @@ error[invalid-template]: reports/finance/monthly/monthly.yml: report `monthly`: 
 error[invalid-template]: reports/finance/monthly/monthly.yml: report `monthly`: template binding 7: a table block needs a `query` (or use `cell` for a single cell)
 error[invalid-template]: reports/finance/monthly/monthly.yml: report `monthly`: template `templates/branded.xlsx` has no sheet `Summry` (sheets: Summary, Detail)
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 6 errors, 0 warnings

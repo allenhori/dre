@@ -1,0 +1,5 @@
+exit: 1
+error[missing-target-entry]: connection `duck` has no `staging` entry (it has: dev, prod); `staging` comes from DRE_TARGET; nothing was run
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  staging (DRE_TARGET)
+Validation failed: 1 error, 0 warnings

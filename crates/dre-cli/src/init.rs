@@ -431,6 +431,10 @@ fn add_profile(
     let mut targets = Mapping::new();
     targets.insert(Value::String(target.into()), Value::Mapping(settings));
     let mut profile = Mapping::new();
+    // Each profile's entry defaults to `dev`; any other name becomes this profile's default.
+    if target != dre_core::profiles::DEFAULT_TARGET {
+        profile.insert("target".into(), Value::String(target.into()));
+    }
     profile.insert("targets".into(), Value::Mapping(targets));
     let mut root = Mapping::new();
     root.insert(Value::String(name.into()), Value::Mapping(profile));

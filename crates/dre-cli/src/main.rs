@@ -190,8 +190,9 @@ struct ProjectArgs {
     /// Fail instead of installing declared plugins that are missing.
     #[arg(long)]
     no_auto_install: bool,
-    /// The run's target (environment): every profile uses its entry for it (default:
-    /// $DRE_TARGET, then `target` in dre_project.yml, then `dev`).
+    /// The run's target (environment), `target.name` in templates: every profile uses its entry
+    /// for it (default: $DRE_TARGET; without either, each profile uses its own `target:`, else
+    /// `dev`).
     #[arg(long)]
     target: Option<String>,
     /// Where DRE writes its generated files (default: $DRE_TARGET_PATH, then `target_path` in
@@ -356,10 +357,13 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
         dre_core::options::check(p, offline, &mut diags);
     }
     // Only a project that checks out gets compiled.
-    let plans = match &project {
+    let (plans, targets) = match &project {
         Some(p) if !diags.has_errors() => compile_for_validate(p, &selector, &a.set, &a.project, &mut diags),
-        _ => Vec::new(),
+        _ => (Vec::new(), None),
     };
+    if let Some(w) = targets.as_ref().and_then(dre_core::run::RunTargets::mismatch) {
+        diags.warning("target-mismatch", None, None, w);
+    }
     let ok = !diags.has_errors();
     if a.json {
         let out = serde_json::json!({
@@ -372,6 +376,7 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
             "target": project.as_ref().map(|p| serde_json::json!({
                 "name": p.target_name,
                 "from": p.target_from.to_string(),
+                "profiles": targets.as_ref().map(|t| t.profiles.clone()).unwrap_or_default(),
             })),
             "errors": diags.error_count(),
             "warnings": diags.warning_count(),
@@ -400,7 +405,8 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
         }
         if let Some(p) = &project {
             printer.line(output::Tone::Note, "Profiles", &profiles_line(&p.profiles));
-            printer.line(output::Tone::Note, "Target", &target_line(p));
+            let line = targets.as_ref().map_or_else(|| target_line(p), |t| t.line());
+            printer.line(output::Tone::Note, "Target", &line);
         }
         let (e, w) = (diags.error_count(), diags.warning_count());
         let verdict = if ok { "passed" } else { "failed" };
@@ -425,11 +431,15 @@ fn validate(a: ValidateArgs, printer: &output::Printer) -> ExitCode {
 #[derive(Default)]
 struct Collect {
     plans: Vec<dre_core::run::BindingPlan>,
+    targets: Option<dre_core::run::RunTargets>,
 }
 
 impl dre_core::run::Ui for Collect {
     fn step(&mut self, _: dre_core::run::Level, _: &str, _: &str, _: Option<std::time::Duration>) {}
     fn warn(&mut self, _: &str) {}
+    fn targets(&mut self, t: &dre_core::run::RunTargets) {
+        self.targets = Some(t.clone());
+    }
     fn compiled(&mut self, plan: &dre_core::run::BindingPlan) {
         self.plans.push(plan.clone());
     }
@@ -449,7 +459,7 @@ fn compile_for_validate(
     set: &Option<String>,
     p: &ProjectArgs,
     diags: &mut dre_core::Diagnostics,
-) -> Vec<dre_core::run::BindingPlan> {
+) -> (Vec<dre_core::run::BindingPlan>, Option<dre_core::run::RunTargets>) {
     let opts = dre_core::run::RunOptions {
         selector: selector.clone(),
         set: Some(set.clone().unwrap_or_else(|| "all".into())),
@@ -464,7 +474,12 @@ fn compile_for_validate(
     let mut ui = Collect::default();
     let summary = dre_core::run::run(project, &opts, &mut ui);
     if let Some(e) = summary.error {
-        diags.error("invalid-selector", None, None, e);
+        let code = if summary.missing_entry {
+            "missing-target-entry"
+        } else {
+            "invalid-selector"
+        };
+        diags.error(code, None, None, e);
     }
     for o in summary
         .outcomes
@@ -499,7 +514,7 @@ fn compile_for_validate(
             ),
         );
     }
-    ui.plans
+    (ui.plans, ui.targets)
 }
 
 /// `dre compile`: render the selection into target/compiled/ and list the files.
@@ -653,9 +668,9 @@ fn profiles_line(p: &dre_core::profiles::Profiles) -> String {
     format!("{} (from {}{missing})", p.path.display(), p.found_by)
 }
 
-/// The run's target and where it came from.
+/// The run's target and where it came from, for when the profiles' entries aren't known.
 fn target_line(p: &dre_core::project::Project) -> String {
-    format!("{} (from {})", p.target_name, p.target_from)
+    format!("{} ({})", p.target_name, p.target_from)
 }
 
 /// Load the project for `compile` and `run`, writing its manifest; `None` (after printing
@@ -824,7 +839,6 @@ fn run(a: RunArgs, mut printer: output::Printer) -> ExitCode {
     params["target_path"] = serde_json::json!(project.target_dir);
     printer.log_params(&params);
     printer.detail(output::Tone::Note, "Profiles", &profiles_line(&project.profiles));
-    printer.detail(output::Tone::Note, "Target", &target_line(&project));
     let summary = dre_core::run::run(&project, &opts, &mut printer);
     if let Some(e) = &summary.error {
         printer.error(e);

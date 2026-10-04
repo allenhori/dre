@@ -17,9 +17,9 @@ in `macros/` and packages, every template sees:
 | `env_var('NAME', default)` | An environment variable. |
 | `run.*` | The run: `report`, `set`, `target`, `schedule`, `date`, `now`, `timezone`. |
 | `target.name` | The run's target (environment). `target` has no other fields. |
-| `connection.*` | The query's connection: its fields for the run's target (below). |
+| `connection.*` | The query's connection: its fields for its entry in this run (below). |
 | `destination.*` | The destination being rendered, in its `path` and options only. |
-| `profile('name').*` | Any profile's entry for the run's target (below). |
+| `profile('name').*` | Any profile's entry for this run (below). |
 | `source('source', 'table')` | A declared table's name (see [Sources](sources.md)). |
 | `run_query(sql, profile=)` | Rows from the query's connection, or another. |
 | `columns(rel, profile=)` | A relation's columns (below). |
@@ -43,14 +43,16 @@ select * from {{ connection.catalog }}.{{ connection.schema }}.orders   -- clien
 - `connection` is the connection the query runs on (see
   [Which connection a query runs on](connections.md#which-connection-a-query-runs-on)):
   `connection.name` (also `.profile`) is the profile's name, `connection.type` the plugin type,
-  `connection.target` the run's target, and every other field of its entry for that target is
-  there by its own name. Fields are read after `env_var()` has been applied. Outside query SQL (an
+  `connection.target` its entry for this run (`--target`, `DRE_TARGET`, else the profile's own
+  `target:`, else `dev`), and every other field of that entry is there by its own name. Fields are read after `env_var()` has been applied. Outside query SQL (an
   output path, a subject), `connection` is the Binding's inherited connection.
-- `target.name` is the run's target (`dev`, `prod`): `--target`, `DRE_TARGET`, `target:` in
-  `dre_project.yml`, else `dev`.
+- `target.name` is the run's target (`dev`, `prod`): `--target`, else `DRE_TARGET`, else `dev`.
+  It's never a profile's own default, so with a connection on `target: prod` and no flags,
+  `target.name` is `dev` and `connection.target` is `prod`.
 - `destination.*` is the destination whose `path` and options are being rendered:
-  `path: "out/{{ destination.bucket }}/{{ run.report }}.csv"`.
-- `profile('reports_s3').bucket` reads any profile's entry for the run's target the same way. It
+  `path: "out/{{ destination.bucket }}/{{ run.report }}.csv"`. `destination.target` is its entry
+  for this run. A `{deliver: false}` entry renders no path or options.
+- `profile('reports_s3').bucket` reads any profile's entry for this run the same way. It
   looks in `connections:` and `destinations:`; when both have the name, say which:
   `profile('shared', role='destination')` (or `role='connection'`).
 - **Secrets can't be read.** A field whose value comes from a `DRE_SECRET_*` variable, or that the

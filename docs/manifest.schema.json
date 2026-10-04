@@ -15,7 +15,7 @@
         "name": {"type": "string"},
         "target": {
           "type": "string",
-          "description": "The run's target (environment): --target, DRE_TARGET, `target` in dre_project.yml, else `dev`."
+          "description": "The run's target (environment), `target.name` in templates: --target, else DRE_TARGET, else `dev`. Each profile's own entry may differ (its `target:` in profiles.yml)."
         },
         "default_profile": {"type": "string", "description": "The default connection's name, as written (it may hold Jinja)."},
         "timezone": {"type": "string", "description": "The project's `timezone:` (IANA name)."},

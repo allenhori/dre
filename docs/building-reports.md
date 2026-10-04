@@ -64,8 +64,9 @@ output:
   columns: [...]
 ```
 
-> **Changed in 0.2.** Connections are under `connections:` (was `sources:`), and the run has
-> one target. See [Upgrading to 0.2](migrating-to-0.2.md).
+> **Changed in 0.2.** Connections are under `connections:` (was `sources:`). In 0.2.1 each
+> profile has its own default `target:` again, and a missing entry is an error. See
+> [Upgrading to 0.2](migrating-to-0.2.md).
 
 Connections live in `profiles.yml`. DRE looks for it, in order, in `--profiles-dir`,
 `DRE_PROFILES_DIR`, the project directory (next to `dre_project.yml`), and `~/.dre`, the same order
@@ -82,12 +83,14 @@ connections:
 destinations:
   reports_s3:
     targets:
+      dev: {deliver: false}
       prod: {type: s3, bucket: reports}
 ```
 
-The run uses one target for every profile: `--target`, else `DRE_TARGET`, else `target:` in
-`dre_project.yml`, else `dev`. A destination with no entry for it (`reports_s3` on a dev run) is
-skipped, and the output stays in the target folder. See [Connections and targets](connections.md).
+Each profile the run uses picks its entry: `--target`, else `DRE_TARGET` (either sets every
+profile), else the profile's own `target:`, else `dev`. A used profile without that entry is an
+error before anything runs; `dev: {deliver: false}` says `reports_s3` delivers nowhere on a dev
+run, and the output stays in the target folder. See [Connections and targets](connections.md).
 
 `dre init` writes this file for you, in `~/.dre` (never into a project). A `profiles.yml` kept
 in the project, e.g. for CI, a container or a Databricks job, should take every secret from

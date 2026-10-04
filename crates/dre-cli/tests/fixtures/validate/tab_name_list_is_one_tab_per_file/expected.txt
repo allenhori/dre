@@ -3,5 +3,5 @@ error[invalid-field]: reports/ops/daily/daily.yml:2: report `daily`: `setup` has
 error[invalid-field]: reports/ops/daily/daily.yml:3: report `daily`: `tab` of `summary` must be true or false
 error[invalid-field]: reports/ops/daily/daily.yml:4: report `daily`: `tab_name` of `multi` is a list, but one .sql file makes one tab; put each tab's query in its own .sql file and list each in `queries:`
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 3 errors, 0 warnings
