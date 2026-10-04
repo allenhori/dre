@@ -3,8 +3,8 @@ name: dre-install
 description: Install DRE (the `dre` CLI, the Declarative Reporting Engine) on macOS, Linux or Windows, from nothing to a working `dre --version`. Use when the user says "install dre", "set up dre from scratch", gets "command not found" for dre, or another DRE skill finds dre missing. Covers the install script, Homebrew, Scoop, uv, pipx and pip, recommends one, and fixes PATH and Python problems.
 license: GPL-3.0-only
 metadata:
-  version: "2.0.0"
-  dre: ">=0.2.0, <0.3.0"
+  version: "2.1.0"
+  dre: ">=0.2.1, <0.3.0"
 ---
 
 # Install DRE

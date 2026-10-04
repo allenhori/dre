@@ -155,10 +155,11 @@ every secret from `env_var()` (SEC-3), since the project is committed.
 
 **Level:** advise
 
-Give each system one connection profile, with an entry per environment (`dev`, `prod`). Leave the
-run's target at `dev` locally, and set `DRE_TARGET=prod` (or pass `--target prod`) where reports
-run for real. Give destinations only the targets they should deliver from. Two Databricks
-workspaces are two profiles.
+Give each system one connection profile, with an entry per environment (`dev`, `prod`). Run
+without flags locally, and set `DRE_TARGET=prod` (or pass `--target prod`) where reports run for
+real. To read production data locally, give the connection `target: prod` rather than passing
+`--target prod`. Give every destination a `dev` entry: a dev location, or `dev: {deliver: false}`
+when it should deliver only from production. Two Databricks workspaces are two profiles.
 
 ```yaml
 connections:
@@ -169,11 +170,12 @@ connections:
 destinations:
   finance_mail:
     targets:
+      dev: {deliver: false}
       prod: {type: email, host: smtp.internal, from: reports@example.com}
 ```
 
-*Why:* the same report runs against dev and prod unchanged, and a plain `dre run` reads dev data
-and delivers nowhere it shouldn't.
+*Why:* the same report runs against dev and prod unchanged, a plain `dre run` delivers nowhere it
+shouldn't, and a mistyped `--target` fails instead of quietly delivering nothing.
 
 ### SET-3: Start from a validated project
 

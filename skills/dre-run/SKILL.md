@@ -3,8 +3,8 @@ name: dre-run
 description: Validate, compile, run and preview DRE reports, check the output files, and deliver them - confirming before production runs or real deliveries - and explain errors when a run fails. Also previews when schedules fire, reruns a scheduled firing exactly, and wires DRE into an orchestrator (cron, Airflow, Databricks Jobs). Use when the user wants to run, test, preview or deliver a dre report, see upcoming scheduled runs, rerun a firing, set up an orchestrator, or asks why a dre run, validate or delivery failed.
 license: GPL-3.0-only
 metadata:
-  version: "2.0.0"
-  dre: ">=0.2.0, <0.3.0"
+  version: "2.1.0"
+  dre: ">=0.2.1, <0.3.0"
 ---
 
 # Run, check and deliver DRE reports
@@ -112,8 +112,11 @@ variable for this run.
 
 Run `dre validate -s <report>`. It checks the project, compiles the SQL, checks every format and
 destination option, and for each selected Binding shows the compiled files, the target, each
-query's connection, the output file, and every destination. Non-dev targets stand out. Read that list back
-to the user: it's what a run will do.
+query's connection (with its entry when it differs from the run's target), the output file, and
+every destination with its entry (`delivers nowhere` for a `{deliver: false}` entry). Non-dev
+targets stand out. The `Target` line names the run's target, where it came from, and each profile
+whose entry differs (`dev (default); connection `warehouse`: prod`). Read that back to the user:
+it's what a run will do.
 
 `dre compile -s <report>` only renders the SQL into `target/compiled/` and lists the files, to
 read the SQL exactly as the database will get it. `dre validate -s <report> --live` also checks
@@ -123,7 +126,8 @@ every statement against the database without running it.
 
 Run `dre run <report> --preview` (100 rows; `--preview 20` for fewer). It runs the queries with a
 row limit and writes the output to `target/run/`, and **never delivers**. It's safe to run
-without asking, unless the source is a production target.
+without asking, unless a connection reads a production entry (its own `target: prod`, or
+`--target prod`).
 
 ### Step 5: look at the output
 
@@ -141,10 +145,10 @@ Say what matches and what doesn't. A mismatch goes back to `dre-report`.
 ### Step 6: the real run
 
 A run without `--preview` writes the full output to `target/run/` and **delivers it to every
-destination** in the report. Before any run that delivers anywhere but the local folder, or
-reads a production target (`--target prod`, `DRE_TARGET=prod`, or `target: prod` in
-`dre_project.yml`; `dre validate` prints the target and where it came from), confirm first
-(RUN-2):
+destination** in the report whose entry for the run delivers (not `{deliver: false}`). Before
+any run that delivers anywhere but the local folder, or reads a production entry
+(`--target prod`, `DRE_TARGET=prod`, or a profile's own `target: prod`; `dre validate` prints the
+target, where it came from, and each profile's entry), confirm first (RUN-2):
 
 1. show what will happen, from step 3's `dre validate -s <report>` (target, connections, output,
    each destination with its recipients, channel or path);
@@ -154,14 +158,15 @@ reads a production target (`--target prod`, `DRE_TARGET=prod`, or `target: prod`
 If a report hasn't been through steps 3 to 5 and the user wants to schedule it or run it in
 production, that's a warning (RUN-1): explain, and go ahead only after an explicit yes.
 
-To run everything up to formatting without delivering, keep to `--preview`, or remove the
-destination for the test.
+To run everything up to formatting without delivering, keep to `--preview`, or give the
+destination's entry for this target `{deliver: false}`.
 
 ### Step 7: read the result
 
 The summary shows each Binding's status and each delivery's. `target/run_results.json` has the
-detail (`deliveries` with `status` and `location`), and `logs/dre.log` the full SQL of every
-statement. Report what was delivered where, and what failed.
+detail (`deliveries` with `target`, `status` and `location`; `not_delivered` is a
+`{deliver: false}` entry, not a failure), and `logs/dre.log` the full SQL of every statement.
+Report what was delivered where, what delivered nowhere on purpose, and what failed.
 
 End with what ran and what's next: fixing a failure, or scheduling (`dre run --schedule <name>`
 from the user's orchestrator, with `DRE_RUN_AT` for the instant it was scheduled for, RUN-3; a
@@ -200,6 +205,15 @@ Read the error: DRE names the report, Binding, file and line. Then:
   has the sign-in order and known errors. Databricks: a stopped warehouse is started and waited
   for (DRE says so every 30 seconds); with no one at the terminal, browser sign-in fails at once
   and lists what would work.
+- **"`<profile>` has no `<target>` entry (it has: ...)":** nothing ran. Either the target is
+  mistyped (`--target prd`), or the profile needs that entry: for a destination that shouldn't
+  deliver on this target, `<target>: {deliver: false}` (`dre-setup`). Only profiles the
+  selected reports use are checked.
+- **"every profile is on `prod` but the run's target is `dev`" (`target-mismatch`):** templates
+  that test `target.name` see `dev` while every profile reads `prod`. Pass `--target prod` or set
+  `DRE_TARGET` if that's the intent.
+- **`removed-key` for `target` in `dre_project.yml`:** DRE 0.2.1 removed it; give the profiles
+  their own `target:`, or set `DRE_TARGET` where reports run.
 - **"environment variable `X` is not set":** the user sets it themselves (SEC-3), in the shell
   `dre` runs in; check with SEC-4.
 - **SQL errors from the database:** show the compiled SQL (`target/compiled/`, or `logs/dre.log`)
