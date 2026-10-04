@@ -87,9 +87,9 @@ fn same(what: &str, schema: BTreeSet<String>, parser: BTreeSet<String>) {
 }
 
 /// The schemas are versioned with DRE's minor version (`x-dre-schema-version`), published under
-/// `/schemas/v<minor>/`, which serves the newest patch's schemas. A new minor may change what
-/// they accept (before 1.0 a patch may too, see CONTRIBUTING.md), and this test fails until the
-/// schemas are reviewed and stamped with the new version.
+/// `/schemas/v<minor>/`. A patch release never breaks a project, so it doesn't narrow what the
+/// schemas accept (0.2.1 was the one exception, see CONTRIBUTING.md); a new minor may, and this
+/// test fails until the schemas are reviewed and stamped with the new version.
 #[test]
 fn the_schemas_carry_dres_minor_version() {
     let v: Vec<&str> = env!("CARGO_PKG_VERSION").split(['.', '-']).collect();

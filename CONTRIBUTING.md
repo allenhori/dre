@@ -74,12 +74,12 @@ variables they use.
   and opinions go in [`docs/practices.md`](docs/practices.md).
 - **Plugins** are versioned on their own. If you change a plugin's code, bump the `version` in
   that plugin's `Cargo.toml` (CI warns when you forget).
-- **Compatibility:** DRE is pre-1.0 and still evolving, so fixing a design properly wins over
-  keeping compatibility layers. A minor release (0.2 → 0.3) may break a project; so may a patch
-  release that corrects a design mistake in the release just before it (as 0.2.1 did for
-  0.2.0's targets). Every break goes in the release notes and the migration guide, and a
-  removed key or name is an error that says what to write instead, never silently ignored.
-  Renamed keys may keep working, with a warning, where that costs little.
+- **Compatibility:** a patch release (0.2.x) never breaks a project. A minor release (0.2 → 0.3)
+  may, since DRE is pre-1.0 and fixing a design properly wins over keeping compatibility layers.
+  Every break goes in the release notes and the migration guide, and a removed key or name is an
+  error that says what to write instead, never silently ignored. Renamed keys may keep working,
+  with a warning, where that costs little. The one exception so far is 0.2.1, which corrected
+  0.2.0's targets (see the migration guide).
 - **Agent skills** in `skills/`: edit the sources, never the generated copies (the
   `references/` folders and the `shared/` blocks in `SKILL.md`), then run
   `.github/scripts/skills.py sync` and `generate`. See [`skills/README.md`](skills/README.md).

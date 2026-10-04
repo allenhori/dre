@@ -16,8 +16,8 @@ csv, delimited, fixed-width, parquet or xlsx (including multi-sheet workbooks, n
 formulas and totals rows, and branded Excel templates), and delivers the file wherever it needs
 to go. It runs on whatever scheduler you already have: cron, Airflow, Dagster, Databricks Jobs.
 
-Status: under active development, before 1.0. Breaking changes come with release notes and a
-[migration guide](docs/migrating-to-0.2.md); see [Contributing](CONTRIBUTING.md) for the rules.
+Status: under active development, before 1.0. A patch release never breaks a project; a minor
+release may, with release notes and a [migration guide](docs/migrating-to-0.2.md).
 
 ## Install
 
