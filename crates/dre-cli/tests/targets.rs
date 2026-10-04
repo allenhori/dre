@@ -154,6 +154,33 @@ fn profiles_no_selected_report_uses_are_not_checked() {
 }
 
 #[test]
+fn a_destination_uses_its_own_target_too() {
+    let p = project_with(
+        &[T, TQ],
+        "connections:\n  warehouse:\n    targets:\n      dev: {type: duckdb, path: dev.duckdb}\n      prod: {type: duckdb, path: prod.duckdb}\n\
+         destinations:\n  inbox:\n    target: prod\n    targets:\n      dev: {deliver: false}\n      prod: {type: local}\n",
+    );
+    p.dre("run", &["t"]).ok();
+    assert_eq!(p.read("out/prod/t.csv"), "name\r\ndev\r\n");
+    // DRE_TARGET is above it.
+    std::fs::remove_dir_all(p.path("out")).unwrap();
+    p.dre_env("run", &["t"], &[("DRE_TARGET", "dev")]).ok();
+    assert!(!p.path("out").exists());
+}
+
+#[test]
+fn a_profile_target_naming_no_entry_is_an_error_even_unused() {
+    let p = project_with(
+        &[T, TQ],
+        "connections:\n  warehouse:\n    targets:\n      dev: {type: duckdb, path: dev.duckdb}\n  spare:\n    target: prdo\n    targets:\n      dev: {type: duckdb}\n      prod: {type: duckdb}\n\
+         destinations:\n  inbox:\n    targets:\n      dev: {deliver: false}\n",
+    );
+    p.dre("validate", &[])
+        .failed()
+        .says("connection profile `spare`: `target: prdo` isn't one of its targets (dev, prod)");
+}
+
+#[test]
 fn deliver_false_is_only_for_destinations() {
     let p = project_with(
         &[T, TQ],

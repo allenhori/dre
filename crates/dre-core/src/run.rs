@@ -409,7 +409,7 @@ pub fn run_targets(
             Entry::Use(_) => true,
             Entry::Nowhere => false,
             Entry::Missing => {
-                missing.push(profiles.missing(*role, name));
+                missing.push(profiles.missing_entry(*role, name));
                 continue;
             }
             // Reported by the load.
@@ -1615,7 +1615,7 @@ impl<'a> BindingRun<'a> {
                 return Ok(None);
             }
             // Both are checked before the run starts.
-            Entry::Missing => return Err(profiles.missing(Role::Destination, &d.profile)),
+            Entry::Missing => return Err(profiles.missing_entry(Role::Destination, &d.profile)),
             Entry::Unknown => {
                 return Err(format!(
                     "destination profile `{}` isn't in profiles.yml",
@@ -2126,7 +2126,7 @@ impl Pool {
                 profiles.path.display()
             )),
             // A connection never has `deliver: false`.
-            Entry::Missing | Entry::Nowhere => Err(profiles.missing(Role::Connection, name)),
+            Entry::Missing | Entry::Nowhere => Err(profiles.missing_entry(Role::Connection, name)),
         }
     }
 
@@ -2378,7 +2378,7 @@ impl ProfileConnections {
                     "destination `{name}`: `{target}` delivers nowhere (`deliver: false`), so it has no settings"
                 ));
             }
-            Entry::Missing => return Err(self.profiles.missing(role, name)),
+            Entry::Missing => return Err(self.profiles.missing_entry(role, name)),
             Entry::Unknown => {
                 return Err(format!(
                     "no {} profile `{name}` in {}",

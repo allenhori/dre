@@ -93,7 +93,12 @@
       "required": [
         "type"
       ],
-      "additionalProperties": true
+      "additionalProperties": true,
+      "not": {
+        "required": [
+          "deliver"
+        ]
+      }
     },
     "no_delivery": {
       "type": "object",

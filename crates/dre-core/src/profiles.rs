@@ -399,7 +399,7 @@ impl Profiles {
     }
 
     /// Why a used profile has no entry for this run, with the way to fix it.
-    pub fn missing(&self, role: Role, profile: &str) -> String {
+    pub fn missing_entry(&self, role: Role, profile: &str) -> String {
         let t = self.target_of(role, profile);
         let has = self
             .get(role, profile)
@@ -528,6 +528,24 @@ fn parse_profile(
                 fields,
             },
         );
+    }
+    if let Some(t) = &own_target
+        && ok
+        && !parsed.contains_key(t)
+        && !nowhere.contains(t)
+    {
+        let mut has: Vec<&String> = parsed.keys().chain(&nowhere).collect();
+        has.sort();
+        diags.error(
+            "invalid-profile",
+            file.clone(),
+            yf.line_of("target", line),
+            format!(
+                "{what}: `target: {t}` isn't one of its targets ({})",
+                has.into_iter().cloned().collect::<Vec<_>>().join(", ")
+            ),
+        );
+        return None;
     }
     ok.then_some(Profile {
         target: own_target,
