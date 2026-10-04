@@ -31,8 +31,8 @@ pub struct LsArgs {
     /// and the reports that read it; unused ones are flagged).
     #[arg(long, value_enum, default_value = "report")]
     resource_type: ResourceType,
-    /// The target (environment) whose connections to show (default: $DRE_TARGET, then `target`
-    /// in dre_project.yml, then `dev`).
+    /// The run's target (environment), which sets every profile's entry (default: $DRE_TARGET;
+    /// without either, each profile uses its own `target:`, else `dev`).
     #[arg(long)]
     target: Option<String>,
     /// Set a variable for `var()`, as on `dre run`.

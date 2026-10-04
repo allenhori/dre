@@ -13,6 +13,7 @@ connections:
 destinations:
   inbox:
     targets:
+      dev: {deliver: false}
       prod: {type: local}
   dev_inbox:
     targets:
@@ -116,7 +117,7 @@ fn set_narrows_to_one_binding() {
 }
 
 #[test]
-fn one_target_for_the_run_switches_connections_and_destinations() {
+fn the_run_target_switches_connections_and_destinations() {
     let p = project(&[
         (
             "reports/ops/t/t.yml",
@@ -124,10 +125,10 @@ fn one_target_for_the_run_switches_connections_and_destinations() {
         ),
         ("reports/ops/t/tq.sql", "select name from env\n"),
     ]);
-    // Default target `dev`: dev data, and the prod-only destination is skipped.
+    // Default target `dev`: dev data, and the destination delivers nowhere.
     p.dre("run", &["t"])
         .ok()
-        .says("destination profile `inbox` has no `dev` target: not delivered, output stays in target/");
+        .says("destination `inbox`: `dev` delivers nowhere (`deliver: false`); output stays in target/");
     assert!(!p.path("out/t.csv").exists());
     assert_eq!(p.read("target/run/t/default/t.csv"), "name\r\ndev\r\n");
     let r = p.json("target/run/t/default/run_results.json");
@@ -142,14 +143,6 @@ fn one_target_for_the_run_switches_connections_and_destinations() {
     std::fs::remove_file(p.path("out/t.csv")).unwrap();
     p.dre_env("run", &["t", "--target", "dev"], &[("DRE_TARGET", "prod")])
         .ok();
-    assert!(!p.path("out/t.csv").exists());
-    // `target:` in dre_project.yml is below DRE_TARGET.
-    let project_file = p.read("dre_project.yml");
-    p.write("dre_project.yml", &format!("{project_file}target: prod\n"));
-    p.dre("run", &["t"]).ok();
-    assert_eq!(p.read("out/t.csv"), "name\r\nprod\r\n");
-    std::fs::remove_file(p.path("out/t.csv")).unwrap();
-    p.dre_env("run", &["t"], &[("DRE_TARGET", "dev")]).ok();
     assert!(!p.path("out/t.csv").exists());
 }
 

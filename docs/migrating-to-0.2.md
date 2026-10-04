@@ -1,6 +1,6 @@
 ---
 title: "Upgrading to 0.2"
-description: "Every rename and removed name in DRE 0.2 (connections, one target per run, sources, template names), with what to write instead."
+description: "Every rename and removed name in DRE 0.2 (connections, targets, sources, template names) and what changed in 0.2.1, with what to write instead."
 sidebar:
   order: 15.5
 ---
@@ -9,9 +9,10 @@ sidebar:
 
 DRE 0.2 lets each query run on its own connection, adds dbt-style [sources](sources.md), and gives
 each word one meaning: a **connection** is what you read from, a **destination** where output
-goes, a **source** a declared table, and the **target** the environment, one per run. Most
-projects upgrade by renaming one key in `profiles.yml` and a few template names; DRE's messages
-say exactly what to write. There's no migration command.
+goes, a **source** a declared table, and a **target** an environment. Most projects upgrade by
+renaming one key in `profiles.yml` and a few template names; DRE's messages say exactly what to
+write. There's no migration command. Coming from 0.2.0? See
+[0.2.0 to 0.2.1](#020-to-021).
 
 Source plugins report the identifier quote character DRE 0.2 uses for `quoting:`: update them
 with `dre plugin update duckdb` (1.1.0), `postgres` (1.1.0) and `databricks` (1.1.0). Without
@@ -22,27 +23,30 @@ with `dre plugin update duckdb` (1.1.0), `postgres` (1.1.0) and `databricks` (1.
 | 0.1 | 0.2 |
 |---|---|
 | `sources:` | `connections:`. `sources:` still works in 0.2.x, with a warning. |
-| a profile's `target: dev` | Remove it: the run has one target for every profile (below). It's ignored in 0.2.x, with a warning. |
+| a profile's `target: dev` | Unchanged since 0.2.1: the profile's default entry, below `--target` and `DRE_TARGET` (0.2.0 ignored it). |
 
 ```yaml
 # 0.1                                  # 0.2
 sources:                               connections:
   warehouse:                             warehouse:
-    target: dev                            targets:
-    targets:                                 dev: {type: duckdb, path: dev.duckdb}
-      dev: {type: duckdb, path: dev.duckdb}
+    target: dev                            target: dev
+    targets:                               targets:
+      dev: {type: duckdb, path: dev.duckdb}  dev: {type: duckdb, path: dev.duckdb}
 ```
 
 `dre init` writes the 0.2 form, and adds to an 0.1 file's `sources:` section if it has one.
 
-## One target per run
+## Targets
 
-In 0.1 each profile picked its own default target, so a plain `dre run` could read a `dev`
-database and deliver to a `prod` bucket. In 0.2 the run has one target: `--target`, then the
-new `DRE_TARGET`, then the new `target:` key in `dre_project.yml`, then `dev`. A destination with
-no entry for the target is skipped (and logged), so a dev run delivers only where a destination
-defines `dev`. To keep delivering from a plain run, give the destination a `dev` entry, or set
-`target: prod` in `dre_project.yml` (or `DRE_TARGET=prod` where reports run for real).
+As in 0.1, each profile picks its own entry: `--target`, then the new `DRE_TARGET` (either sets
+every profile), then the profile's own `target:`, then `dev`. New in 0.2 (0.2.1):
+
+- A profile the run uses with no entry for its target is an error before anything runs, where
+  0.1 failed only when a query reached it. A destination is never skipped silently.
+- A destination entry `{deliver: false}` delivers nowhere on that target, on purpose: write
+  `dev: {deliver: false}` for a destination that should only deliver from production.
+- `target.name` is the run's target (`--target`, `DRE_TARGET`, else `dev`), never a profile's
+  default. A profile's own entry is `connection.target` or `destination.target`.
 
 See [Connections and targets](connections.md).
 
@@ -76,6 +80,48 @@ inherited connection, and `destination.*` (new) is the destination being rendere
 ## The CLI
 
 - `dre new` takes the plugin as `--type <plugin>`; the 0.1 name, `--source`, still works.
+
+## 0.2.0 to 0.2.1
+
+0.2.0 gave the run one target for every profile and moved the default into `dre_project.yml`.
+0.2.1 returns to dbt's model. Every change:
+
+| 0.2.0 | 0.2.1 |
+|---|---|
+| A profile's own `target:` was ignored, with the warning `profile-target-ignored`. | It's the profile's default entry, below `--target` and `DRE_TARGET`. The warning is gone. |
+| `target:` in `dre_project.yml` chose the run's target. | Removed: it's an error (`removed-key`) naming the replacement. Give each profile its `target:` in `profiles.yml`, or set `DRE_TARGET` where reports run. |
+| A destination with no entry for the target was skipped and logged; the run succeeded. | An error before anything runs, in `dre run`, `dre compile` and `dre validate`, naming each profile that lacks the entry and the entries it has. Profiles the run doesn't use aren't checked. |
+| (none) | `{deliver: false}` on a destination entry delivers nowhere on that target, logged on each run and recorded in `run_results.json` as `not_delivered`. Rejected on connections. |
+| `run_results.json` recorded a skipped destination as `skipped`. | `not_delivered`, for a `deliver: false` entry; each delivery also records its `target`. |
+| `target.name` was the one target of every profile. | The run's target: `--target`, `DRE_TARGET`, else `dev`. `connection.target` and `destination.target` are each profile's entry; the manifest's `project.target` is the run's target. |
+| `dre run -v` and `dre validate` printed `Target  dev (from the default)`. | `dre run` and `dre validate` print `Target  dev (default)`, plus each profile whose entry differs, and warn (`target-mismatch`) when every profile is on one other target. |
+
+To upgrade a 0.2.0 project:
+
+1. Remove `target:` from `dre_project.yml`. If it was `prod`, set `DRE_TARGET=prod` where reports
+   run for real, or give the profiles `target: prod`.
+2. Give each destination that has no `dev` entry a `dev: {deliver: false}` (or a real `dev`
+   location), so local runs keep not delivering.
+3. Run `dre validate`: it names every used profile still missing an entry.
+
+A common local setup, reading production data and delivering nowhere with no flags:
+
+```yaml
+connections:
+  warehouse:
+    target: prod
+    targets:
+      dev: {type: duckdb, path: dev.duckdb}
+      prod: {type: databricks, host: "{{ env_var('DATABRICKS_HOST') }}", http_path: /sql/1.0/warehouses/prod}
+destinations:
+  reports_s3:
+    targets:
+      dev: {deliver: false}
+      prod: {type: s3, bucket: reports}
+```
+
+Production jobs pass `--target prod` (or set `DRE_TARGET=prod`), which puts every profile on
+`prod`.
 
 ## Schedules
 

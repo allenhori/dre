@@ -1,5 +1,5 @@
 exit: 1
 error[no-connection]: reports/ops/daily/daily.yml: report `daily`: query `summary` has no connection: give it `profile:`, use a source with a `profile:`, or give the report one (`profile:` on the report or Set, a folder's `+profile`, or `default_profile` in dre_project.yml)
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 1 error, 0 warnings

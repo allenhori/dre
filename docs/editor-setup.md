@@ -18,8 +18,8 @@ kind (the [YAML reference](yaml-reference.md) lists them):
 # yaml-language-server: $schema=https://getdre.com/schemas/v0.2/report.schema.json
 ```
 
-The URL carries DRE's minor version (`v0.2`). A patch release never changes what a schema
-accepts, so `v0.2` always serves the newest 0.2.x schema. Use the minor version of the DRE you
+The URL carries DRE's minor version (`v0.2`), and always serves the newest 0.2.x schema (0.2.1
+removed `target:` from `dre_project.yml` and added `deliver: false`). Use the minor version of the DRE you
 run. The schemas are also in the `dre` repository, in `docs/schemas/`, at every release tag.
 
 ## VS Code

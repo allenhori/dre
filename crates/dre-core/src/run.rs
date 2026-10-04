@@ -25,7 +25,7 @@ use serde_json::{Map as JsonMap, Value as Json, json};
 use crate::dates::Calendar;
 use crate::lookups::Table;
 use crate::parse::ParsedBinding;
-use crate::profiles::{BUILTIN_LOCAL, LOCAL_TYPE, ProfileTarget, Profiles, Role};
+use crate::profiles::{Entry, LOCAL_TYPE, ProfileTarget, Profiles, Role};
 use crate::project::{Binding, PluginKind, Project, QueryEntry, Report};
 use crate::render::{
     Column, Connection, Connections, Mode, QueryRows, QueryRunner, RenderError, Renderer, RendererConfig,
@@ -99,6 +99,8 @@ pub enum Level {
 /// How the run reports progress. The engine emits structured events; the CLI decides how
 /// they look (colour, progress bar, JSON, log file).
 pub trait Ui {
+    /// The run's target and each used profile's entry, once they're all known to exist.
+    fn targets(&mut self, _targets: &RunTargets) {}
     /// The number of Bindings about to run, once Sets are resolved.
     fn plan(&mut self, _bindings: usize) {}
     fn binding_start(&mut self, _report: &str, _set: Option<&str>) {}
@@ -185,6 +187,8 @@ pub struct PlannedQuery {
     pub connection: String,
     #[serde(rename = "type")]
     pub kind: String,
+    /// The connection's entry: the run's target, else its own `target:`, else `dev`.
+    pub target: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<String>,
 }
@@ -192,19 +196,22 @@ pub struct PlannedQuery {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlannedDestination {
     pub profile: String,
-    /// The destination type for the active target, when it has one.
+    /// The destination type of its entry for this run; `None` for `deliver: false`.
     pub kind: Option<String>,
+    /// Its entry: the run's target, else the profile's own `target:`, else `dev`.
     pub target: Option<String>,
     pub path: Option<String>,
-    /// False when the profile has no target for this run: the output stays in `target/`.
+    /// False for a `deliver: false` entry: the output stays in the target path.
     pub delivers: bool,
 }
 
 #[derive(Debug, Default)]
 pub struct RunSummary {
     pub outcomes: Vec<BindingOutcome>,
-    /// Selection failed before anything ran.
+    /// Selection failed, or a profile has no entry for the run: nothing ran.
     pub error: Option<String>,
+    /// `error` is about a profile's missing entry.
+    pub missing_entry: bool,
 }
 
 impl RunSummary {
@@ -223,65 +230,71 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
         ));
         return summary;
     }
-    if let Some(name) = &opts.schedule {
-        if !project.schedules.iter().any(|e| &e.name == name) {
-            summary.error = Some(unknown_schedule(project, name));
-            return summary;
+    let planned: Vec<(&Report, Binding)> = match &opts.schedule {
+        Some(name) => {
+            if !project.schedules.iter().any(|e| &e.name == name) {
+                summary.error = Some(unknown_schedule(project, name));
+                return summary;
+            }
+            match schedule_bindings(project, name, opts) {
+                Ok(p) => p,
+                Err(e) => {
+                    summary.error = Some(e);
+                    return summary;
+                }
+            }
         }
-        let planned = match schedule_bindings(project, name, opts) {
-            Ok(p) => p,
-            Err(e) => {
-                summary.error = Some(e);
-                return summary;
+        None => {
+            let reports: Vec<&Report> = match &opts.selector {
+                None => project.reports.iter().collect(),
+                Some(s) => match selector::resolve(project, s) {
+                    Ok(r) if r.is_empty() => {
+                        summary.error = Some(format!("selector `{s}` matches no report"));
+                        return summary;
+                    }
+                    Ok(r) => r,
+                    Err(e) => {
+                        summary.error = Some(e.to_string());
+                        return summary;
+                    }
+                },
+            };
+            // Resolve every report's Bindings first (prompts happen here), so progress has a
+            // total.
+            let mut planned = Vec::new();
+            for report in reports {
+                match choose_bindings(project, report, opts, ui) {
+                    Ok(bs) => planned.extend(bs.into_iter().map(|b| (report, b))),
+                    Err(e) => {
+                        let outcome = BindingOutcome {
+                            report: report.name.clone(),
+                            set: None,
+                            binding: "-".into(),
+                            status: Status::Error,
+                            error: Some(e),
+                            files: Vec::new(),
+                            summary: String::new(),
+                            schedule: opts.schedule.clone(),
+                            schedule_vars: None,
+                            vars: JsonMap::new(),
+                            timezone: String::new(),
+                            elapsed: Duration::ZERO,
+                        };
+                        ui.binding_end(&outcome);
+                        summary.outcomes.push(outcome);
+                    }
+                }
             }
-        };
-        ui.plan(planned.len());
-        for (report, b) in &planned {
-            ui.binding_start(&report.name, b.set.as_deref());
-            let mut r = BindingRun::new(project, report, b, opts, ui);
-            let outcome = r.run();
-            ui.binding_end(&outcome);
-            summary.outcomes.push(outcome);
+            planned
         }
-        return summary;
-    }
-    let reports: Vec<&Report> = match &opts.selector {
-        None => project.reports.iter().collect(),
-        Some(s) => match selector::resolve(project, s) {
-            Ok(r) if r.is_empty() => {
-                summary.error = Some(format!("selector `{s}` matches no report"));
-                return summary;
-            }
-            Ok(r) => r,
-            Err(e) => {
-                summary.error = Some(e.to_string());
-                return summary;
-            }
-        },
     };
-    // Resolve every report's Bindings first (prompts happen here), so progress has a total.
-    let mut planned: Vec<(&Report, Binding)> = Vec::new();
-    for report in reports {
-        match choose_bindings(project, report, opts, ui) {
-            Ok(bs) => planned.extend(bs.into_iter().map(|b| (report, b))),
-            Err(e) => {
-                let outcome = BindingOutcome {
-                    report: report.name.clone(),
-                    set: None,
-                    binding: "-".into(),
-                    status: Status::Error,
-                    error: Some(e),
-                    files: Vec::new(),
-                    summary: String::new(),
-                    schedule: opts.schedule.clone(),
-                    schedule_vars: None,
-                    vars: JsonMap::new(),
-                    timezone: String::new(),
-                    elapsed: Duration::ZERO,
-                };
-                ui.binding_end(&outcome);
-                summary.outcomes.push(outcome);
-            }
+    // Every profile the run uses needs an entry for it, before anything runs.
+    match run_targets(project, &planned, opts) {
+        Ok(t) => ui.targets(&t),
+        Err(e) => {
+            summary.error = Some(e);
+            summary.missing_entry = true;
+            return summary;
         }
     }
     ui.plan(planned.len());
@@ -293,6 +306,134 @@ pub fn run(project: &Project, opts: &RunOptions, ui: &mut dyn Ui) -> RunSummary 
         summary.outcomes.push(outcome);
     }
     summary
+}
+
+/// A profile a run uses, and its entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UsedProfile {
+    /// `connection` or `destination`.
+    pub role: &'static str,
+    pub profile: String,
+    /// Its entry: the run's target, else the profile's own `target:`, else `dev`.
+    pub target: String,
+    /// False for a destination entry written `deliver: false`.
+    pub deliver: bool,
+}
+
+/// The run's target and the entry each profile it uses picked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RunTargets {
+    /// `target.name`.
+    pub name: String,
+    /// `--target`, `DRE_TARGET` or `default`.
+    pub from: String,
+    pub profiles: Vec<UsedProfile>,
+}
+
+impl RunTargets {
+    /// `dev (default)`, then each profile whose entry differs: `; connection `warehouse`: prod`.
+    pub fn line(&self) -> String {
+        let mut out = format!("{} ({})", self.name, self.from);
+        for p in self.profiles.iter().filter(|p| p.target != self.name) {
+            out.push_str(&format!("; {} `{}`: {}", p.role, p.profile, p.target));
+        }
+        out
+    }
+
+    /// When every profile the run uses is on one target other than the run's, `target.name`
+    /// probably isn't what the templates expect.
+    pub fn mismatch(&self) -> Option<String> {
+        let first = &self.profiles.first()?.target;
+        if first == &self.name || self.profiles.iter().any(|p| &p.target != first) {
+            return None;
+        }
+        Some(format!(
+            "every profile is on `{first}` but the run's target is `{}`: pass `--target {first}` or set `{}`",
+            self.name,
+            crate::profiles::TARGET_ENV
+        ))
+    }
+}
+
+/// The profiles the planned Bindings use (by the parse pass, with this run's inputs) and each
+/// one's entry. A profile without an entry for the run is an error naming them all; profiles
+/// nothing planned uses aren't checked.
+pub fn run_targets(
+    project: &Project,
+    planned: &[(&Report, Binding)],
+    opts: &RunOptions,
+) -> Result<RunTargets, String> {
+    let profiles = &project.profiles;
+    let schedule_vars = opts
+        .schedule
+        .as_ref()
+        .and_then(|n| project.schedules.iter().find(|e| &e.name == n))
+        .map(|e| e.vars.clone());
+    let inputs = crate::parse::Inputs {
+        target: project.target_name.clone(),
+        cli_vars: opts.vars.clone(),
+        date: opts.date,
+        scheduled_at: opts.scheduled_at,
+        timezone: opts.timezone.clone(),
+        schedule: opts.schedule.clone(),
+        started_at: None,
+    };
+    let mut used: Vec<(Role, String)> = Vec::new();
+    for (report, b) in planned {
+        let mut vars = b.vars.clone();
+        vars.extend(schedule_vars.clone().unwrap_or_default());
+        // A Binding whose parse fails reports that when it runs.
+        let parsed = crate::parse::binding(project, report, b, &vars, &inputs);
+        let names = parsed
+            .connections()
+            .into_iter()
+            .map(|c| (Role::Connection, c.to_string()))
+            .chain(
+                parsed
+                    .destinations
+                    .iter()
+                    .flatten()
+                    .filter(|d| !profiles.is_builtin_local(d))
+                    .map(|d| (Role::Destination, d.clone())),
+            );
+        for u in names {
+            if !used.contains(&u) {
+                used.push(u);
+            }
+        }
+    }
+    let mut missing = Vec::new();
+    let mut out = Vec::new();
+    for (role, name) in &used {
+        let deliver = match profiles.entry(*role, name) {
+            Entry::Use(_) => true,
+            Entry::Nowhere => false,
+            Entry::Missing => {
+                missing.push(profiles.missing_entry(*role, name));
+                continue;
+            }
+            // Reported by the load.
+            Entry::Unknown => continue,
+        };
+        out.push(UsedProfile {
+            role: role.as_str(),
+            profile: name.clone(),
+            target: profiles.target_of(*role, name),
+            deliver,
+        });
+    }
+    match missing.len() {
+        0 => Ok(RunTargets {
+            name: project.target_name.clone(),
+            from: project.target_from.to_string(),
+            profiles: out,
+        }),
+        1 => Err(format!("{}; nothing was run", missing[0])),
+        n => Err(format!(
+            "{n} profiles this run uses have no entry for it; nothing was run:\n    {}",
+            missing.join("\n    ")
+        )),
+    }
 }
 
 /// The Bindings `--schedule <name>` runs: all of them, or those a selector and/or `--set` pick.
@@ -616,7 +757,6 @@ impl<'a> BindingRun<'a> {
     fn connections(&self) -> Arc<ProfileConnections> {
         Arc::new(ProfileConnections {
             profiles: self.project.profiles.clone(),
-            target: self.target.clone(),
             root: self.project.root.clone(),
             plugins: self.project.plugins.clone(),
             log: self.ui.plugin_log(),
@@ -1124,6 +1264,18 @@ impl<'a> BindingRun<'a> {
                 .cloned()
                 .flatten()
                 .ok_or_else(|| format!("destination `{}` has no profile", d.profile))?;
+            // Nothing is delivered, so there's no path or options to render.
+            if matches!(
+                self.project.profiles.entry(Role::Destination, &profile),
+                Entry::Nowhere
+            ) {
+                out.push(RenderedDest {
+                    profile,
+                    path: None,
+                    options: JsonMap::new(),
+                });
+                continue;
+            }
             renderer.set_destination(connections.profile(&profile, Some("destination")).ok());
             let rendered = (|| {
                 let path = match &d.path {
@@ -1196,13 +1348,13 @@ impl<'a> BindingRun<'a> {
             .dests
             .iter()
             .map(|d| {
-                let resolved = self.dest_output(&d.profile);
+                let out = self.project.profiles.target(Role::Destination, &d.profile);
                 PlannedDestination {
                     profile: d.profile.clone(),
-                    kind: resolved.as_ref().map(|(_, o)| o.kind.clone()),
-                    target: resolved.map(|(t, _)| t).or_else(|| self.dest_target(&d.profile)),
+                    kind: out.map(|o| o.kind.clone()),
+                    target: Some(self.project.profiles.target_of(Role::Destination, &d.profile)),
                     path: d.path.clone(),
-                    delivers: self.dest_output(&d.profile).is_some(),
+                    delivers: out.is_some(),
                 }
             })
             .collect();
@@ -1216,6 +1368,7 @@ impl<'a> BindingRun<'a> {
                 PlannedQuery {
                     query: q.query.clone(),
                     kind: pool.kind(&connection).unwrap_or_default(),
+                    target: self.project.profiles.target_of(Role::Connection, &connection),
                     connection,
                     sources: q.sources.clone(),
                 }
@@ -1407,28 +1560,26 @@ impl<'a> BindingRun<'a> {
         }
         let dests = std::mem::take(&mut self.dests);
         let mut failures = Vec::new();
-        let mut skipped = Vec::new();
+        let mut nowhere = Vec::new();
         for d in &dests {
-            // The type of the output used, or for a skipped entry the profile's default one.
-            let kind = self
-                .dest_output(&d.profile)
-                .map(|(_, o)| o.kind.clone())
-                .or_else(|| {
-                    let p = self.project.profiles.get(Role::Destination, &d.profile)?;
-                    p.targets.values().next().map(|o| o.kind.clone())
-                });
+            let profiles = &self.project.profiles;
+            let target = profiles.target_of(Role::Destination, &d.profile);
+            // `None` for an entry that delivers nowhere.
+            let kind = profiles
+                .target(Role::Destination, &d.profile)
+                .map(|o| o.kind.clone());
             let (status, location, error) = match self.deliver_one(d) {
                 Ok(Some(loc)) => ("delivered", Some(loc), None),
                 Ok(None) => {
-                    skipped.push(self.skip_note(&d.profile));
-                    ("skipped", None, None)
+                    nowhere.push(nowhere_note(&d.profile, &target));
+                    ("not_delivered", None, None)
                 }
                 Err(e) => {
                     failures.push(e.clone());
                     ("failed", None, Some(e))
                 }
             };
-            let mut record = json!({"profile": d.profile, "type": kind, "status": status});
+            let mut record = json!({"profile": d.profile, "type": kind, "target": target, "status": status});
             if let Some(l) = location {
                 record["location"] = json!(l);
             }
@@ -1438,8 +1589,8 @@ impl<'a> BindingRun<'a> {
             self.deliveries.push(record);
         }
         self.dests = dests;
-        if self.files.iter().all(|(_, d)| d.is_none()) && !skipped.is_empty() {
-            self.delivery_note = Some(skipped.join("; "));
+        if self.files.iter().all(|(_, d)| d.is_none()) && !nowhere.is_empty() {
+            self.delivery_note = Some(nowhere.join("; "));
         }
         match failures.len() {
             0 => Ok(()),
@@ -1452,47 +1603,25 @@ impl<'a> BindingRun<'a> {
         }
     }
 
-    /// The destination profile's settings for the run's target.
-    fn dest_output(&self, profile: &str) -> Option<(String, &ProfileTarget)> {
-        if self.project.profiles.is_builtin_local(profile) {
-            return Some((self.target.clone(), &BUILTIN_LOCAL));
-        }
-        self.project
-            .profiles
-            .target(Role::Destination, profile, &self.target)
-            .map(|o| (self.target.clone(), o))
-    }
-
-    /// The target a destination profile delivers for: the run's, when the profile exists.
-    fn dest_target(&self, profile: &str) -> Option<String> {
-        self.project
-            .profiles
-            .get(Role::Destination, profile)
-            .map(|_| self.target.clone())
-    }
-
-    fn skip_note(&self, profile: &str) -> String {
-        let dtarget = self.dest_target(profile).unwrap_or_default();
-        format!(
-            "destination profile `{profile}` has no `{dtarget}` target: not delivered, output stays in target/"
-        )
-    }
-
-    /// Deliver every file to one destination. `Ok(None)`: its profile has no output for the
-    /// active target, so nothing was sent.
+    /// Deliver every file to one destination. `Ok(None)`: its entry for this run is
+    /// `deliver: false`, so nothing was sent.
     fn deliver_one(&mut self, d: &RenderedDest) -> Result<Option<String>, Fail> {
-        if self.project.profiles.get(Role::Destination, &d.profile).is_none()
-            && !self.project.profiles.is_builtin_local(&d.profile)
-        {
-            return Err(format!(
-                "destination profile `{}` isn't in profiles.yml",
-                d.profile
-            ));
-        }
-        let Some((_, out)) = self.dest_output(&d.profile) else {
-            let note = self.skip_note(&d.profile);
-            self.ui.step(Level::Info, "Kept", &note, None);
-            return Ok(None);
+        let profiles = &self.project.profiles;
+        let out = match profiles.entry(Role::Destination, &d.profile) {
+            Entry::Use(o) => o,
+            Entry::Nowhere => {
+                let note = nowhere_note(&d.profile, &profiles.target_of(Role::Destination, &d.profile));
+                self.ui.step(Level::Info, "Kept", &note, None);
+                return Ok(None);
+            }
+            // Both are checked before the run starts.
+            Entry::Missing => return Err(profiles.missing_entry(Role::Destination, &d.profile)),
+            Entry::Unknown => {
+                return Err(format!(
+                    "destination profile `{}` isn't in profiles.yml",
+                    d.profile
+                ));
+            }
         };
         let kind = out.kind.clone();
         let connection = render_connection(out)?;
@@ -1802,7 +1931,7 @@ impl<'a> BindingRun<'a> {
                     self.project.root.clone(),
                     key.clone(),
                     conn.clone(),
-                    self.target.clone(),
+                    self.project.profiles.target_of(Role::Connection, &conn),
                 );
                 if !CHECKED.lock().unwrap().insert(id) {
                     continue;
@@ -1958,6 +2087,13 @@ impl Drop for OpaqueLogScope {
     }
 }
 
+/// What a run logs, and records, for a destination whose entry is `deliver: false`.
+fn nowhere_note(profile: &str, target: &str) -> String {
+    format!(
+        "destination `{profile}`: `{target}` delivers nowhere (`deliver: false`); output stays in target/"
+    )
+}
+
 /// The Binding's connections: each one's session, opened when a query first needs it and held
 /// until the report ends.
 struct Pool {
@@ -1979,23 +2115,19 @@ impl Pool {
         }
     }
 
-    /// A connection's settings for the run's target.
+    /// A connection's settings for this run.
     fn target(&self, name: &str) -> Result<ProfileTarget, String> {
         let profiles = &self.connections.profiles;
-        let target = &self.connections.target;
-        let p = profiles.get(Role::Connection, name).ok_or_else(|| {
-            format!(
+        match profiles.entry(Role::Connection, name) {
+            Entry::Use(o) => Ok(o.clone()),
+            Entry::Unknown => Err(format!(
                 "connection `{name}` isn't under `{}:` in {}",
                 profiles.section_key(Role::Connection),
                 profiles.path.display()
-            )
-        })?;
-        p.targets.get(target).cloned().ok_or_else(|| {
-            format!(
-                "connection `{name}` has no `{target}` target (it has: {})",
-                p.targets.keys().cloned().collect::<Vec<_>>().join(", ")
-            )
-        })
+            )),
+            // A connection never has `deliver: false`.
+            Entry::Missing | Entry::Nowhere => Err(profiles.missing_entry(Role::Connection, name)),
+        }
     }
 
     /// A connection's plugin type.
@@ -2213,9 +2345,8 @@ pub fn find_plugin(
 /// field is secret when the plugin's `describe` says so; when the plugin can't be asked, when its
 /// name looks like one; and always when its value comes from a `DRE_SECRET_*` variable.
 struct ProfileConnections {
+    /// Each profile's entry for the run comes from here.
     profiles: Profiles,
-    /// The run's target.
-    target: String,
     root: PathBuf,
     plugins: Vec<crate::project::PluginRequirement>,
     log: LogSink,
@@ -2239,22 +2370,16 @@ const SECRET_NAME_WORDS: &[&str] = &["password", "secret", "token", "key", "cred
 
 impl ProfileConnections {
     fn view(&self, role: Role, name: &str) -> Result<Connection, String> {
-        let (target, out): (String, ProfileTarget) = match self.profiles.get(role, name) {
-            Some(p) => {
-                let t = &self.target;
-                let o = p.targets.get(t).ok_or_else(|| {
-                    format!(
-                        "{} `{name}` has no `{t}` target (it has: {})",
-                        role.as_str(),
-                        p.targets.keys().cloned().collect::<Vec<_>>().join(", ")
-                    )
-                })?;
-                (t.clone(), o.clone())
+        let target = self.profiles.target_of(role, name);
+        let out: ProfileTarget = match self.profiles.entry(role, name) {
+            Entry::Use(o) => o.clone(),
+            Entry::Nowhere => {
+                return Err(format!(
+                    "destination `{name}`: `{target}` delivers nowhere (`deliver: false`), so it has no settings"
+                ));
             }
-            None if role == Role::Destination && self.profiles.is_builtin_local(name) => {
-                (self.target.clone(), BUILTIN_LOCAL.clone())
-            }
-            None => {
+            Entry::Missing => return Err(self.profiles.missing_entry(role, name)),
+            Entry::Unknown => {
                 return Err(format!(
                     "no {} profile `{name}` in {}",
                     role.as_str(),

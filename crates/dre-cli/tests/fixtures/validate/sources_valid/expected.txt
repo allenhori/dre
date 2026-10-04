@@ -10,5 +10,5 @@ warning[source-key-not-supported]: sources/shop.yml:3: dbt source keys DRE doesn
      Query  regions on duck (duckdb), reads lookups.regions
     Output  target/run/daily/default/daily.csv (csv)
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation passed: 0 errors, 1 warning

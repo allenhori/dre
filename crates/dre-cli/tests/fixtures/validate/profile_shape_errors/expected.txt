@@ -4,5 +4,5 @@ error[invalid-profile]: $CASE/profiles/profiles.yml:9: target `prod` of connecti
 error[invalid-profile]: $CASE/profiles/profiles.yml:10: connection profile `old_shape` needs a map of named `targets` (`outputs:` is now `targets:`)
 error[invalid-profiles]: $CASE/profiles/profiles.yml:13: unknown profiles.yml section `wat`; profiles go under `connections:` or `destinations:`
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 4 errors, 0 warnings

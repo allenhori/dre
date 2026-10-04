@@ -5,5 +5,5 @@ error[removed-template-name]: reports/ops/daily/summary.sql:1: `run.source_type`
 error[removed-template-name]: reports/ops/daily/summary.sql:2: `target.catalog` was removed in DRE 0.2: use `connection.catalog` (the query's connection) or `profile('<name>').catalog`; `target` is now only the environment, `target.name`
 error[removed-template-name]: reports/ops/daily/summary.sql:2: `role='source'` was removed in DRE 0.2: use `role='connection'`
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 5 errors, 0 warnings

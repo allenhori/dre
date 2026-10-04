@@ -8,5 +8,5 @@ error[schedule-seconds]: schedules.yml:9: schedule `seconds`: `BYSECOND` isn't s
 warning[schedule-no-time]: schedules.yml:10: schedule `no_time_every`: no time of day is given, so it fires at 00:00 in its timezone; set `at: "HH:MM"` to say when
 warning[schedule-no-time]: schedules.yml:11: schedule `no_time_rule`: no time of day is given, so it fires at 00:00 in its timezone; set `at: "HH:MM"` to say when
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 6 errors, 2 warnings

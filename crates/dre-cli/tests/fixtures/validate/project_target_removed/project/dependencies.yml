@@ -1,0 +1,4 @@
+plugins:
+  - duckdb: ">=0.0"
+  - postgres: ">=0.0"
+  - csv

@@ -4,5 +4,5 @@ error[unknown-profile]: reports/ops/daily/daily.yml: destination profile `missin
 error[unknown-profile]: reports/ops/daily/daily.yml:2: connection profile `missing_source` isn't defined under `connections:` in $CASE/profiles/profiles.yml
 warning[unmanaged-report]: reports/ops/unmanaged_one.sql: `unmanaged_one` is an unmanaged report (no YAML lists it in `queries:`); unmanaged reports are for quick tests — add a YAML to make it a managed report
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 3 errors, 1 warning

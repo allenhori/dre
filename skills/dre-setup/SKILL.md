@@ -172,16 +172,19 @@ Then ask before writing. Rules:
 - Edit the file in place: add the profile at the end of the `connections:` section (or add the
   section), keeping every other line, comment and profile as it was. A file from DRE 0.1 has
   `sources:` instead: suggest renaming it to `connections:` (dre warns about it), and never have
-  both. Remove a profile's own `target:` line if there is one (DRE 0.2 ignores it, with a warning).
+  both. Keep a profile's own `target:` line if there is one: it's that profile's default entry.
 - If a profile with that name already exists, don't overwrite it without an explicit yes; offer
   another name, or a new target inside it (SET-2).
 - Never write a secret's value (SEC-3).
 
 **Several environments** (dev and prod): add another target to the same profile, with its own
-`env_var()` names. The run picks one target for every profile: `--target`, else `DRE_TARGET`, else
-`target:` in `dre_project.yml`, else `dev`, so a plain local run is a dev run. Production runs set
-`DRE_TARGET=prod` or pass `--target prod` (SET-2). A destination only delivers on the targets it
-has an entry for. Two Databricks workspaces, or two unrelated databases, are two profiles; a
+`env_var()` names. Each profile the run uses picks its entry: `--target`, else `DRE_TARGET` (either
+sets every profile), else the profile's own `target:`, else `dev`. So a plain local run uses each
+profile's default, and production runs set `DRE_TARGET=prod` or pass `--target prod` (SET-2). To
+read production data locally, give the connection `target: prod` instead of passing a flag. A
+used profile with no entry for its target is an error, so every destination needs a `dev` entry:
+a dev location, or `dev: {deliver: false}` when it should deliver only from production. Never put
+`target:` in `dre_project.yml` (DRE 0.2.1 removed it). Two Databricks workspaces, or two unrelated databases, are two profiles; a
 report names the one it uses with `profile:` (a query or a source can name its own), or the
 project's `default_profile`.
 
@@ -189,7 +192,8 @@ project's `default_profile`.
 
 Ask whether reports should be delivered anywhere besides the local `target/run/` folder now, or
 later (recommend later, once a report works, unless they already said). For each destination,
-the same as steps 4 to 6, under `destinations:`, from its reference:
+the same as steps 4 to 6, under `destinations:`, from its reference, and give it
+`dev: {deliver: false}` unless it has a real dev location (SET-2):
 `destination-s3.md`, `-gcs`, `-azure_blob` (package `object_store`), `-sftp`, `-ftp`,
 `-databricks`, `-email`, `-slack`. A Databricks destination reuses the source's host and
 sign-in.

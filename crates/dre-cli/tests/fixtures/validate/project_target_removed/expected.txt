@@ -1,0 +1,5 @@
+exit: 1
+error[removed-key]: dre_project.yml:3: `target` in dre_project.yml was removed in DRE 0.2.1: give each profile its default with `target:` in profiles.yml, or choose the run's target with DRE_TARGET or --target
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (default)
+Validation failed: 1 error, 0 warnings

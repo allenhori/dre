@@ -87,9 +87,9 @@ fn same(what: &str, schema: BTreeSet<String>, parser: BTreeSet<String>) {
 }
 
 /// The schemas are versioned with DRE's minor version (`x-dre-schema-version`), published under
-/// `/schemas/v<minor>/`. A patch release never breaks a project, so it never changes what the
-/// schemas accept; a new minor may, and this test fails until the schemas are reviewed and
-/// stamped with the new version.
+/// `/schemas/v<minor>/`, which serves the newest patch's schemas. A new minor may change what
+/// they accept (before 1.0 a patch may too, see CONTRIBUTING.md), and this test fails until the
+/// schemas are reviewed and stamped with the new version.
 #[test]
 fn the_schemas_carry_dres_minor_version() {
     let v: Vec<&str> = env!("CARGO_PKG_VERSION").split(['.', '-']).collect();
@@ -203,10 +203,17 @@ fn the_schemas_have_the_keys_the_parser_has() {
         props(&raw("profiles")),
         set(&["connections", "sources", "destinations"]),
     );
+    for role in ["connection", "destination"] {
+        same(
+            role,
+            props(&raw("profiles")["$defs"][role]),
+            set(&["target", "targets"]),
+        );
+    }
     same(
-        "profile",
-        props(&raw("profiles")["$defs"]["profile"]),
-        set(&["target", "targets"]),
+        "deliver: false",
+        props(&raw("profiles")["$defs"]["no_delivery"]),
+        set(&["deliver"]),
     );
     same(
         "dependencies",

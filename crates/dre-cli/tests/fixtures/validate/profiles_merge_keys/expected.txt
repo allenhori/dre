@@ -1,5 +1,5 @@
 exit: 0
 Compiled 1 Binding into target/compiled/
   Profiles  $CASE/project/profiles.yml (from the project directory)
-    Target  prod (from --target)
+    Target  prod (--target)
 Validation passed: 0 errors, 0 warnings

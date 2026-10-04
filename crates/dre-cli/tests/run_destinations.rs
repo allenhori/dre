@@ -5,7 +5,7 @@ mod common;
 use common::TestProject;
 use serde_json::{Value, json};
 
-/// `rec` records deliveries in `<tmp>/rec`; `broken` always fails; `mail` has only a prod target.
+/// `rec` records deliveries in `<tmp>/rec`; `broken` always fails; `mail` delivers only on prod.
 fn profiles(rec: &str) -> String {
     format!(
         "connections:\n  warehouse:\n    targets:\n      dev: {{type: duckdb, path: data.duckdb}}\n\
@@ -13,7 +13,7 @@ fn profiles(rec: &str) -> String {
          \x20 inbox:\n    targets:\n      dev: {{type: local}}\n\
          \x20 rec:\n    targets:\n      dev: {{type: fixture, dir: \"{rec}\"}}\n\
          \x20 broken:\n    targets:\n      dev: {{type: fixture, dir: \"{rec}\", fail: true}}\n\
-         \x20 mail:\n    targets:\n      prod: {{type: fixture, dir: \"{rec}\"}}\n"
+         \x20 mail:\n    targets:\n      dev: {{deliver: false}}\n      prod: {{type: fixture, dir: \"{rec}\"}}\n"
     )
 }
 
@@ -127,7 +127,7 @@ fn a_failed_destination_does_not_stop_the_next_one() {
 }
 
 #[test]
-fn a_destination_without_the_active_target_is_skipped_per_entry() {
+fn a_deliver_false_entry_is_not_delivered_and_the_others_are() {
     let (p, rec) = project(
         "queries: [q]\noutput:\n  destination:\n\
          \x20   - {profile: mail, to: client_a@example.com}\n\
@@ -136,11 +136,12 @@ fn a_destination_without_the_active_target_is_skipped_per_entry() {
     );
     p.dre("run", &["daily", "--target", "dev"])
         .ok()
-        .says("destination profile `mail` has no `dev` target");
+        .says("destination `mail`: `dev` delivers nowhere (`deliver: false`)");
     assert!(deliveries(&rec).is_empty());
     assert_eq!(p.read("out/daily.csv"), "n\r\n1\r\n");
     let r = results(&p);
-    assert_eq!(r["deliveries"][0]["status"], "skipped");
+    assert_eq!(r["status"], "success");
+    assert_eq!(r["deliveries"][0]["status"], "not_delivered");
     assert_eq!(r["deliveries"][1]["status"], "delivered");
 }
 
@@ -267,14 +268,15 @@ fn a_plugin_without_options_refuses_them() {
 }
 
 #[test]
-fn a_skipped_entry_still_records_its_type() {
+fn a_not_delivered_entry_records_its_target_and_no_type() {
     let (p, _rec) = project(
         "queries: [q]\noutput:\n  destination: [{profile: mail, to: a@example.com}]\n",
         &[Q],
     );
     p.dre("run", &["daily", "--target", "dev"]).ok();
     let d = &results(&p)["deliveries"][0];
-    assert_eq!(d["status"], "skipped");
-    assert_eq!(d["type"], "fixture");
+    assert_eq!(d["status"], "not_delivered");
+    assert_eq!(d["target"], "dev");
+    assert!(d["type"].is_null(), "{d}");
     assert!(d.get("location").is_none() && d.get("error").is_none(), "{d}");
 }

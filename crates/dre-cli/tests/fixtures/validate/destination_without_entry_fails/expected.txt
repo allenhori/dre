@@ -1,0 +1,5 @@
+exit: 1
+error[missing-target-entry]: destination `client_sftp` has no `dev` entry (it has: prod); `dev` comes from --target. To deliver nowhere on `dev`, add `dev: {deliver: false}` to its `targets:`; nothing was run
+  Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
+    Target  dev (--target)
+Validation failed: 1 error, 0 warnings

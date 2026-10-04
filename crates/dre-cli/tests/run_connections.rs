@@ -432,7 +432,7 @@ fn the_manifest_follows_the_inputs_and_needs_no_profiles() {
 }
 
 #[test]
-fn a_dev_run_skips_a_prod_only_destination() {
+fn a_dev_run_fails_on_a_prod_only_destination() {
     let p = project(&[
         (
             "reports/ops/d/d.yml",
@@ -442,9 +442,10 @@ fn a_dev_run_skips_a_prod_only_destination() {
     ]);
     p.duckdb("a_prod.duckdb", "select 1;");
     p.dre("run", &["d"])
-        .ok()
-        .says("destination profile `prod_only` has no `dev` target: not delivered");
+        .failed()
+        .says("destination `prod_only` has no `dev` entry (it has: prod)");
     assert!(!p.path("out/dev.csv").exists());
+    assert!(!p.path("target/run").exists());
     p.dre("run", &["d", "--target", "prod"]).ok();
     assert_eq!(p.read("out/prod.csv"), "n\r\n1\r\n");
 }

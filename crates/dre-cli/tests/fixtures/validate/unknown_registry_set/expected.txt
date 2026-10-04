@@ -1,5 +1,5 @@
 exit: 1
 error[unknown-set]: reports/ops/daily/daily.yml:2: report `daily`: Set `client_z` isn't declared in sets.yml
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation failed: 1 error, 0 warnings

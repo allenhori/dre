@@ -6,4 +6,5 @@ connections:
 destinations:
   local_fs:
     targets:
+      dev: {type: local}
       prod: {type: local}

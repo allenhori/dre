@@ -316,7 +316,7 @@
       "properties": {
         "profile": {
           "type": "string",
-          "description": "The destination profile in `profiles.yml` (under `destinations:`) to deliver with. `local` is built in. A destination with no entry for the run's target is skipped. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`."
+          "description": "The destination profile in `profiles.yml` (under `destinations:`) to deliver with. `local` is built in. It uses its entry for the run (`--target`, `DRE_TARGET`, else the profile's own `target:`, else `dev`); a missing entry is an error, and an entry `{deliver: false}` delivers nowhere. May use Jinja with `var()`, `env_var()`, `run.*` and `target.name`."
         },
         "path": {
           "type": "string",

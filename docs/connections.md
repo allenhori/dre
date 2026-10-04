@@ -1,6 +1,6 @@
 ---
 title: "Connections and targets"
-description: "profiles.yml connections and destinations, the run's one target, and which connection each query runs on."
+description: "profiles.yml connections and destinations, which target each profile uses, and which connection each query runs on."
 sidebar:
   order: 4.2
 ---
@@ -8,15 +8,17 @@ sidebar:
 # Connections and targets
 
 > **Changed in 0.2.** `profiles.yml` calls database connections `connections:` (it was
-> `sources:`), every run has one target, and each query can run on its own connection. See
-> [Upgrading to 0.2](migrating-to-0.2.md).
+> `sources:`), and each query can run on its own connection. **Changed in 0.2.1:** each profile
+> has its own default `target:` again, a missing entry is an error, and `{deliver: false}` marks
+> a destination that delivers nowhere. See [Upgrading to 0.2](migrating-to-0.2.md).
 
 Four words, one meaning each:
 
 - a **connection** is what queries read from (a database), under `connections:` in `profiles.yml`;
 - a **destination** is where output goes, under `destinations:`;
 - a **source** is a declared table, read with `{{ source() }}` (see [Sources](sources.md));
-- the **target** is the environment (`dev`, `prod`), one for the whole run.
+- a **target** is an environment (`dev`, `prod`): each profile has one entry per target, and the
+  run's target (`target.name`) is the one `--target` or `DRE_TARGET` names, else `dev`.
 
 ## profiles.yml
 
@@ -27,12 +29,14 @@ connections:
       dev: {type: duckdb, path: dev.duckdb}
       prod: {type: postgres, host: db.internal, user: reports, password: "{{ env_var('PG_PASSWORD') }}"}
   lakehouse:
+    target: prod             # this profile's default entry (dbt's key); otherwise `dev`
     targets:
       dev: {type: databricks, host: "{{ env_var('DATABRICKS_HOST') }}", http_path: /sql/1.0/warehouses/dev}
       prod: {type: databricks, host: "{{ env_var('DATABRICKS_HOST') }}", http_path: /sql/1.0/warehouses/prod}
 destinations:
   reports_s3:
     targets:
+      dev: {deliver: false}  # deliberately deliver nowhere on dev
       prod: {type: s3, bucket: reports}
 ```
 
@@ -55,21 +59,64 @@ connections:
 `profile:` stays the name of every key that points at a profile: a report's, a query's, a Set's,
 a folder's `+profile`, `default_profile`, a source's and `output.destination[].profile`.
 
-## One target per run
+## Which target each profile uses
 
-The run picks one target for every profile:
+Each profile the run uses picks its entry, highest first:
 
 1. `--target`
 2. `DRE_TARGET`
-3. `target:` in `dre_project.yml`
+3. the profile's own `target:` in `profiles.yml`
 4. `dev`
 
-`run.target` and `target.name` are that target. A plain local `dre run` therefore reads `dev`
-data and delivers only where a destination has a `dev` entry: a destination with no entry for the
-target is skipped and logged (`destination profile `reports_s3` has no `dev` target: not
-delivered`), and the output stays in the target folder. A connection with no entry for the
-target is an error when a query needs it. `dre validate` and `dre run` print the target and where
-it came from.
+`--target` and `DRE_TARGET` set every profile at once; there's no per-profile flag. Without
+them, each profile uses its own default, as in dbt. So the profiles above, with no flags, read
+`warehouse` on `dev`, `lakehouse` on `prod`, and deliver nowhere; `--target prod` (or
+`DRE_TARGET=prod` where reports run for real) puts all three on `prod`.
+
+Only the profiles the run uses are checked. Each needs an entry for its target: one without is
+an error before anything runs, in `dre run`, `dre compile` and `dre validate`, naming every
+profile that lacks it and the entries it has. So `--target prd` fails loudly instead of
+delivering nothing:
+
+```text
+error: connection `warehouse` has no `prd` entry (it has: dev, prod); `prd` comes from --target; nothing was run
+```
+
+### Delivering nowhere
+
+A destination entry `{deliver: false}` delivers nowhere on that target, on purpose:
+
+```yaml
+destinations:
+  reports_s3:
+    targets:
+      dev: {deliver: false}
+      prod: {type: s3, bucket: reports}
+```
+
+The output stays in the target folder, each run logs it (`destination `reports_s3`: `dev`
+delivers nowhere`), and `run_results.json` records the delivery as `not_delivered`, which isn't
+a failure. `deliver: false` takes no other keys, and connections can't have it. A common setup
+for developing locally against production data: the connection's `target: prod`, every
+destination's `dev: {deliver: false}`, and no flags.
+
+### The run's target
+
+`target.name` (and `run.target`) is the run's target: `--target`, else `DRE_TARGET`, else `dev`.
+It's one value for the whole run and never a profile's default, so in the setup above
+`target.name` is `dev` while the connection reads `prod`. Each profile's own entry is
+`connection.target` and `destination.target`.
+
+`dre run` and `dre validate` print the run's target, where it came from, and each profile whose
+entry differs:
+
+```text
+    Target  dev (default); connection `lakehouse`: prod
+```
+
+When every profile the run uses is on one target other than the run's, DRE warns
+(`target-mismatch`): templates that test `target.name` would see `dev` while every profile reads
+`prod`. Pass `--target prod` or set `DRE_TARGET` to make them agree.
 
 ## Which connection a query runs on
 
@@ -135,9 +182,9 @@ invalid in the manifest, and `dre validate` reports it, but it doesn't stop `dre
 
 | Name | What it is |
 |---|---|
-| `target.name` | The run's target. `target` has no other fields. |
-| `connection.*` | The query's connection: `name` (also `profile`), `type`, `target` and every non-secret field. Outside query SQL (a path, a subject), the Binding's inherited connection. |
-| `destination.*` | The destination being rendered, only in its `path` and options. |
+| `target.name` | The run's target: `--target`, `DRE_TARGET`, else `dev`. `target` has no other fields. |
+| `connection.*` | The query's connection: `name` (also `profile`), `type`, `target` (its entry for this run) and every non-secret field. Outside query SQL (a path, a subject), the Binding's inherited connection. |
+| `destination.*` | The destination being rendered, only in its `path` and options: `name`, `type`, `target` (its entry for this run) and its fields. |
 | `profile('name', role=)` | Any profile's fields; `role` is `connection` or `destination` when both sections have the name. |
 | `run_query(sql, profile=)`, `columns(rel, profile=)` | Default to the query's connection in query SQL and the inherited one elsewhere; a source the SQL reads decides otherwise, and an explicit `profile=` must agree with it. |
 

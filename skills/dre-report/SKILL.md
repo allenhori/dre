@@ -113,9 +113,10 @@ output:
 - **Jinja** works in SQL, paths and options: `var('name')`, `run.date` (e.g.
   `run.date.prev_month.start.date`, `run.date.yyyymmdd`), `env_var()`, `ref('file')` for another
   `.sql` file as a subquery, `source()` for a declared table, `connection.*` for the query's
-  connection settings (`connection.schema`, `connection.type`), `target.name` for the
-  environment, and macros from `macros/`. Never `target.<field>`, `run.profile` or
-  `run.source_type`: DRE 0.2 removed them (`dre validate` names the replacement).
+  connection settings (`connection.schema`, `connection.type`), `target.name` for the run's
+  environment (`connection.target` is the connection's own entry, which can differ), and macros
+  from `macros/`. Never `target.<field>`, `run.profile` or `run.source_type`: DRE 0.2 removed
+  them (`dre validate` names the replacement).
 - Report keys: `queries`, `output`, `vars`, `profile` (a connection other than the project's
   `default_profile`), `sets`, `default_set`, `tags`, `timezone`. Schedules live in `schedules.yml`,
   never in a report (see Scheduling a report). Query entry keys:
@@ -220,7 +221,8 @@ Each entry of `output.destination` names a destination profile, an optional `pat
 plugin's options (recipients, channel, message). Use only options and fields from
 `references/plugins/destination-<type>.md`. Several destinations are a list, delivered in order.
 
-- The destination profile must exist under `destinations:` in `profiles.yml`. If it doesn't, set
+- The destination profile must exist under `destinations:` in `profiles.yml`, with an entry for
+  each target it runs on (`dev: {deliver: false}` to deliver nowhere on dev). If it doesn't, set
   it up the `dre-setup` way (show, confirm, `env_var()` for secrets).
 - Name paths with dates and variables so runs don't overwrite each other:
   `path: "s3://reports/{{ var('client') }}/monthly-{{ run.date.yyyymmdd }}.xlsx"`.

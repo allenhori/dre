@@ -2,5 +2,5 @@ exit: 0
 warning[setup-on-other-connection]: reports/ops/daily/daily.yml: report `daily`: setup query `setup_pg` (`tab: false`) runs on connection `pg`, but the tabs after it run elsewhere (`duck_tab` on `duck`); its temp tables and `SET`s are only visible on `pg`
 Compiled 1 Binding into target/compiled/
   Profiles  $CASE/profiles/profiles.yml (from --profiles-dir)
-    Target  dev (from the default)
+    Target  dev (default)
 Validation passed: 0 errors, 1 warning

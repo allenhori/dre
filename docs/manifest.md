@@ -59,9 +59,9 @@ works on a fresh CI runner with no credentials.
 
 ### Resolved for the run's inputs
 
-Like dbt's, the manifest records values resolved from the run's inputs: the target (`--target`,
-`DRE_TARGET`, `target:`), `--var` and the project's vars, environment variables, and `run.*`
-(`DRE_RUN_DATE`, `DRE_RUN_AT`, `--timezone`). Jinja in `profile:` values and in source fields
+Like dbt's, the manifest records values resolved from the run's inputs: the run's target
+(`--target`, `DRE_TARGET`, else `dev`), `--var` and the project's vars, environment variables,
+and `run.*` (`DRE_RUN_DATE`, `DRE_RUN_AT`, `--timezone`). Jinja in `profile:` values and in source fields
 decides each query's connection, a destination's profile and a source's `schema`, so two targets
 can give two manifests. The same project with the same inputs gives the same bytes. CI that
 compares manifests should build both with the same target and vars.
@@ -135,9 +135,8 @@ compares manifests should build both with the same target and vars.
 
 - **`schema`**: the format's version (see [Versioning](#versioning)). **`version`**: the DRE
   that wrote it.
-- **`project`**: its name, the run's target, the default connection (as written), `timezone:`,
-  and the project-wide
-  [checksum](#checksums).
+- **`project`**: its name, the run's target (`target.name`, never a profile's own default), the
+  default connection (as written), `timezone:`, and the project-wide [checksum](#checksums).
 - **`reports`**, by name: whether it's managed (declared in YAML) or a bare `.sql`, its defining
   file, folder segments, tags, timezone, default Set, queries (with tab settings and column
   options, and a query's own `profile:` as written), every source any Binding reads
@@ -217,7 +216,9 @@ target path. It records the report, Set, the inherited `profile`, the `target`, 
 `connections` its queries used, the schedule and its vars, every
 var the run used, the run date and timezone, the command's parameters, the status and any error,
 each result set (rows, columns and the `connection` it came from), each output file (`path`, relative to the project root, or to
-the target path when that's outside the project), each delivery, schema drift, the resolved
+the target path when that's outside the project), each delivery (its profile, `type`, `target`
+and `status`: `delivered`, `not_delivered` for a `{deliver: false}` entry, or `failed`), schema
+drift, the resolved
 `target_path`, and `manifest_checksum`: the SHA-256 of the `manifest.json` bytes that run wrote.
 
 ## Versioning
