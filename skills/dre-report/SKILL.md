@@ -3,8 +3,8 @@ name: dre-report
 description: Create or change a DRE report - the SQL files and report YAML, its tabs, variables and Sets, its output format (xlsx with number formats, formulas and totals rows, csv, fixed-width, parquet), its destinations (S3, GCS, Azure Blob, SFTP, FTP, Databricks Volumes, email, Slack) and its schedules (cron, iCalendar rules, shared timings). Use when the user wants a new report, to add a tab, a column format, a variable, a destination or a recipient to an existing one, or to schedule a report ("every 2nd Tuesday at 7"), in a dre project.
 license: GPL-3.0-only
 metadata:
-  version: "2.0.0"
-  dre: ">=0.2.0, <0.3.0"
+  version: "2.1.0"
+  dre: ">=0.2.1, <0.3.0"
 ---
 
 # Write or change a DRE report

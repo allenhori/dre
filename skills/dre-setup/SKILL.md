@@ -3,8 +3,8 @@ name: dre-setup
 description: Set up DRE step by step - pick and install the database plugin (DuckDB, Postgres, Databricks), write the connection profile in ~/.dre/profiles.yml with a safe sign-in, add destinations, create a starter project with `dre new` and check it with `dre validate`. Use when the user wants to connect dre to a database, add or change a profile, set up dev and prod environments, or start a DRE project.
 license: GPL-3.0-only
 metadata:
-  version: "2.0.0"
-  dre: ">=0.2.0, <0.3.0"
+  version: "2.1.0"
+  dre: ">=0.2.1, <0.3.0"
 ---
 
 # Set up a DRE connection and project
